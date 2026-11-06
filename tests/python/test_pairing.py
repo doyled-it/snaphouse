@@ -96,18 +96,53 @@ def test_pairing_window_runs_full_duration_and_closes_even_if_agent_exits_early(
     assert clock.t - start >= 120.0
     # The agent was started on the chosen controller.
     assert spawned == [CONTROLLER]
-    # The opening session selected the right controller, then made it
-    # discoverable and pairable. Selecting in the same session is what targets
-    # the receive adapter and not the hub's other dongle.
-    setup = sessions[0]
-    assert f"select {CONTROLLER}" in setup
-    assert "discoverable on" in setup
-    assert "pairable on" in setup
+    # One session selected the right controller, then made it discoverable and
+    # pairable. Selecting in the same session is what targets the receive adapter
+    # and not the hub's other dongle.
+    opened = next(i for i, s in enumerate(sessions) if "discoverable on" in s)
+    assert f"select {CONTROLLER}" in sessions[opened]
+    assert "pairable on" in sessions[opened]
     # A later session closed the adapter again.
     closed = next(i for i, s in enumerate(sessions) if "discoverable off" in s)
-    assert closed > 0
+    assert closed > opened
     assert f"select {CONTROLLER}" in sessions[closed]
     assert "pairable off" in sessions[closed]
+
+
+def test_pairing_window_trusts_only_devices_paired_during_the_window():
+    # A device is already paired before the window (an existing speaker). A new
+    # phone pairs during it. Only the new device should be trusted: opening the
+    # window must not hand trust to everything already paired.
+    old = "00:00:00:00:00:01"
+    new = "00:00:00:00:00:02"
+    paired_outputs = iter(
+        [
+            f"Device {old} OldSpeaker\n",  # snapshot before the window
+            f"Device {old} OldSpeaker\nDevice {new} NewPhone\n",  # after it
+        ]
+    )
+    sessions: list[list[str]] = []
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        if "paired-devices" in commands:
+            return next(paired_outputs)
+        return ""
+
+    clock = FakeClock()
+    pairing.run_pairing_window(
+        CONTROLLER,
+        duration=120.0,
+        session=session,
+        spawn_agent=lambda controller: FakeProc(exited=True),
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+    )
+
+    trust_sessions = [s for s in sessions if any(c.startswith("trust ") for c in s)]
+    assert len(trust_sessions) == 1
+    trusted = {c for c in trust_sessions[0] if c.startswith("trust ")}
+    assert trusted == {f"trust {new}"}
 
 
 def test_pairing_window_closes_the_adapter_even_when_the_wait_is_interrupted():

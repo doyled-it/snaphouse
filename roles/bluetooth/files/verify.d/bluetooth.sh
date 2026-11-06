@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # snaphouse bluetooth check: every adapter this host is configured to use is
-# present and none of them is left discoverable.
+# present and none of them is left open to pairing.
 #
 # Adapters are named in /etc/snaphouse/local.yml by address (bt_receive_adapter,
 # bt_send_adapter) and resolved to the current hciN, since the index can swap
 # across reboots. Pairing is opened only for a short window by `snaphouse pair`;
-# outside it the adapters must stay closed. Run by `snaphouse verify` from
-# /etc/snaphouse/verify.d.
+# outside it the adapters must stay closed, which here means neither discoverable
+# nor pairable. Run by `snaphouse verify` from /etc/snaphouse/verify.d.
 #
 # The work is in Python so it can reuse snaphouse.adapters (and read local.yml
 # with the same ruamel the CLI uses); the address itself never reaches stderr,
@@ -40,6 +40,8 @@ for key in ("bt_receive_adapter", "bt_send_adapter"):
     ).stdout
     if "Discoverable: yes" in shown:
         failures.append(f"adapter {hci} is discoverable")
+    if "Pairable: yes" in shown:
+        failures.append(f"adapter {hci} is pairable")
 
 for line in failures:
     print(line, file=sys.stderr)

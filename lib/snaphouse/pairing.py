@@ -90,21 +90,36 @@ def _stop_agent(proc: "Optional[subprocess.Popen]") -> None:
         proc.kill()
 
 
-def _paired_addresses(output: str) -> list[str]:
-    """The addresses from `paired-devices` output lines ("Device <mac> <name>")."""
-    addresses = []
+def _paired_devices(output: str) -> dict[str, str]:
+    """Map address to name from `paired-devices` output ("Device <mac> <name>")."""
+    devices: dict[str, str] = {}
     for line in output.splitlines():
-        parts = line.split()
+        parts = line.split(maxsplit=2)
         if len(parts) >= 2 and parts[0] == "Device":
-            addresses.append(parts[1])
-    return addresses
+            address = parts[1]
+            devices[address] = parts[2] if len(parts) >= 3 else address
+    return devices
 
 
-def _trust_paired(controller: str, session: Session) -> None:
-    """Trust every currently paired device so it reconnects on its own."""
-    addresses = _paired_addresses(session([f"select {controller}", "paired-devices"]))
-    if addresses:
-        session([f"select {controller}", *(f"trust {a}" for a in addresses)])
+def _snapshot_paired(controller: str, session: Session) -> dict[str, str]:
+    """The devices paired on controller right now, by address."""
+    return _paired_devices(session([f"select {controller}", "paired-devices"]))
+
+
+def _trust_new(controller: str, session: Session, before: dict[str, str]) -> None:
+    """Trust only devices that paired after the `before` snapshot was taken.
+
+    Opening the window must not hand trust to devices that were already paired;
+    only the ones a person added during this window are trusted, so they
+    reconnect on their own. Each newly trusted device is named on stdout.
+    """
+    after = _snapshot_paired(controller, session)
+    new = [address for address in after if address not in before]
+    if not new:
+        return
+    for address in new:
+        print(f"Trusting newly paired device: {after[address]} [{address}]")
+    session([f"select {controller}", *(f"trust {address}" for address in new)])
 
 
 def run_pairing_window(
@@ -120,22 +135,26 @@ def run_pairing_window(
     """Open the inbound pairing window on controller, then always close it.
 
     Powers the controller, starts the pairing agent, and makes the controller
-    discoverable and pairable for duration seconds. The discoverable/pairable
-    timeouts are cleared so the state holds for the whole window instead of
-    reverting on bluez's own timer. The window is driven only by the clock, so a
-    pairing agent that exits early does not shorten it. When the window ends for
-    any reason (timeout, agent death, or an interrupt during the wait), the
-    controller is made non-discoverable and non-pairable again, the agent is
-    stopped, and devices paired during the window are trusted.
+    discoverable and pairable for duration seconds. bluez's own discoverable and
+    pairable timeouts are set to the window length, so the adapter closes itself
+    even if this process is killed before cleanup runs: the open state can never
+    outlive the window. The window is driven by the clock, so a pairing agent
+    that exits early does not shorten it. When the window ends for any reason
+    (timeout, agent death, or an interrupt during the wait), the controller is
+    made non-discoverable and non-pairable again, the agent is stopped, and only
+    devices that paired during the window are trusted.
     """
+    window = int(duration)
     proc: "Optional[subprocess.Popen]" = None
+    before: dict[str, str] = {}
     try:
+        before = _snapshot_paired(controller, session)
         session(
             [
                 f"select {controller}",
                 "power on",
-                "discoverable-timeout 0",
-                "pairable-timeout 0",
+                f"discoverable-timeout {window}",
+                f"pairable-timeout {window}",
                 "pairable on",
                 "discoverable on",
             ]
@@ -148,7 +167,7 @@ def run_pairing_window(
     finally:
         session([f"select {controller}", "discoverable off", "pairable off"])
         _stop_agent(proc)
-        _trust_paired(controller, session)
+        _trust_new(controller, session, before)
 
 
 def write_speaker(path: Path, name: str, mac: str) -> None:
