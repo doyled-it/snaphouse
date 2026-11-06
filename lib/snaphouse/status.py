@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,10 @@ from typing import Literal
 # This repo is always "snaphouse" in the status file. nightstand writes the same
 # schema with its own repo name into its own public directory.
 REPO = "snaphouse"
+
+# Where this machine's published status file lives. Overridable with
+# SNAPHOUSE_STATUS so the self-update wrapper and the tests can redirect it.
+DEFAULT_STATUS = Path("/var/lib/snaphouse/public/status.json")
 
 
 def write_status(
@@ -78,3 +83,23 @@ def write_status(
         except OSError:
             pass
         raise
+
+
+def status_path() -> Path:
+    """The published status file (SNAPHOUSE_STATUS, else the on-device default)."""
+    return Path(os.environ.get("SNAPHOUSE_STATUS", str(DEFAULT_STATUS)))
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`snaphouse status`: print this machine's status JSON."""
+    path = status_path()
+    try:
+        sys.stdout.write(path.read_text())
+    except FileNotFoundError:
+        print(f"snaphouse status: no status file at {path}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

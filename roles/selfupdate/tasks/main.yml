@@ -1,3 +1,81 @@
 ---
-# The selfupdate role is implemented in a later task. No tasks yet.
-[]
+# The self-update machinery: the systemd service and timer that run `snaphouse
+# update` on a cadence, the on-device Python venv the CLI runs from, and this
+# role's own verify check. The CLI logic lives in lib/snaphouse (update.py,
+# verify.py); this role installs what runs it.
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the self-update verify check
+  ansible.builtin.copy:
+    src: verify.d/selfupdate.sh
+    dest: /etc/snaphouse/verify.d/selfupdate.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# The CLI runs from a uv-synced venv built from the committed pyproject.toml and
+# uv.lock, so later tasks can add runtime deps without touching bin/snaphouse.
+# uv is installed by the common role. Gated on a real systemd machine: the CI
+# container mounts the repo read-only at a different path and never runs the CLI,
+# and on a real machine the checkout is at /opt/snaphouse.
+- name: Sync the on-device Python venv
+  ansible.builtin.command:
+    cmd: uv sync --frozen --no-dev
+    chdir: /opt/snaphouse
+  environment:
+    # Use the system interpreter rather than letting uv download a managed one;
+    # outbound is limited and there are no runtime deps to fetch.
+    UV_PYTHON_PREFERENCE: only-system
+  # Idempotent prepare step; health is reported by verify, not by this task.
+  changed_when: false
+  when: common_systemd_init
+
+- name: Ensure the systemd unit directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the self-update service unit
+  ansible.builtin.template:
+    src: snaphouse-update.service.j2
+    dest: /etc/systemd/system/snaphouse-update.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd and restart the self-update timer
+
+- name: Install the self-update timer unit
+  ansible.builtin.template:
+    src: snaphouse-update.timer.j2
+    dest: /etc/systemd/system/snaphouse-update.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd and restart the self-update timer
+
+# Flush the reload handler now so the units are known before we enable the timer
+# on a first install. The handler is gated on systemd, so this is a no-op in the
+# CI container.
+- name: Reload systemd now if the units changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the self-update timer
+  ansible.builtin.systemd_service:
+    name: snaphouse-update.timer
+    enabled: true
+    state: started
+  # Only on a real systemd host; the CI container has no running init, so the
+  # timer is never started there (see common_systemd_init in the common role).
+  when: common_systemd_init
+  tags:
+    - service

@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from snaphouse import status as status_mod
 from snaphouse.status import write_status
 
 # The pinned contract keys, from docs/cross-repo-features.md "Pinned contracts".
@@ -174,3 +175,23 @@ def test_overwriting_leaves_one_complete_file(tmp_path):
     sample(path, commit="e" * 40)
     assert [entry.name for entry in tmp_path.iterdir()] == ["status.json"]
     assert read(path)["commit"] == "e" * 40
+
+
+def test_cli_prints_the_status_file(tmp_path, capsys, monkeypatch):
+    path = tmp_path / "status.json"
+    sample(path)
+    monkeypatch.setenv("SNAPHOUSE_STATUS", str(path))
+    rc = status_mod.main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert json.loads(out) == read(path)
+
+
+def test_cli_reports_a_missing_status_file(tmp_path, capsys, monkeypatch):
+    path = tmp_path / "status.json"
+    monkeypatch.setenv("SNAPHOUSE_STATUS", str(path))
+    rc = status_mod.main([])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert str(path) in captured.err

@@ -1,0 +1,11 @@
+[Unit]
+Description=snaphouse self-update (apply main, verify, fall back on failure)
+# Needs the network to fetch origin/main; failing to fetch is handled by the
+# wrapper, so this is a preference, not a hard requirement.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/snaphouse
+ExecStart=/opt/snaphouse/bin/snaphouse update

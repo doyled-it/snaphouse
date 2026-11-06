@@ -25,16 +25,30 @@ EOF
 # clear not-implemented message until the task that adds them lands.
 wired_command() {
     case "$1" in
-        update) return 0 ;;
+        update | verify | status) return 0 ;;
         *) return 1 ;;
     esac
 }
 
 reserved_command() {
     case "$1" in
-        pair | verify | status) return 0 ;;
+        pair) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# The interpreter that runs the handlers. On-device Python runs from the uv-synced
+# venv (built by the selfupdate role from pyproject.toml and uv.lock), so later
+# tasks can add runtime deps without touching this entry point. The first apply on
+# a fresh machine runs before the venv exists; the handlers wired today are
+# stdlib-only, so fall back to the system interpreter until the venv is in place.
+python_bin() {
+    local venv_python="${here}/.venv/bin/python"
+    if [ -x "${venv_python}" ]; then
+        echo "${venv_python}"
+    else
+        echo "python3"
+    fi
 }
 
 main() {
@@ -46,7 +60,7 @@ main() {
     shift
 
     if wired_command "${cmd}"; then
-        exec python3 -m "snaphouse.${cmd}" "$@"
+        exec "$(python_bin)" -m "snaphouse.${cmd}" "$@"
     elif reserved_command "${cmd}"; then
         echo "snaphouse ${cmd}: not implemented yet" >&2
         exit 1
