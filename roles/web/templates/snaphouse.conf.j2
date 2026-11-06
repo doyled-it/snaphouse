@@ -1,0 +1,32 @@
+# Managed by snaphouse (web role). Do not edit by hand.
+#
+# Serves this machine's status file and gives later roles a drop-in dir for
+# their own location blocks. LAN-only: no inbound access from the internet.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    root /var/lib/snaphouse/public;
+
+    # The cross-repo status contract: /status.json, readable from any origin so
+    # the room-picker page and nightstand can poll it across hosts.
+    location = /status.json {
+        add_header Access-Control-Allow-Origin "*" always;
+        default_type application/json;
+    }
+{% if snaphouse_host == "pi-bedroom" %}
+
+    # pi-bedroom also serves nightstand's own status file. nightstand owns the
+    # directory; snaphouse only exposes it, with the same open-origin header.
+    location /nightstand/ {
+        alias /var/lib/nightstand/public/;
+        add_header Access-Control-Allow-Origin "*" always;
+        autoindex off;
+    }
+{% endif %}
+
+    # Later roles (room picker, snapserver proxy, art share) drop their own
+    # location blocks in here.
+    include /etc/nginx/snaphouse.d/*.conf;
+}

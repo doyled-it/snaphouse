@@ -1,0 +1,6 @@
+// Managed by snaphouse (common role). Do not edit by hand.
+//
+// Refresh the package lists and run unattended-upgrades once a day. What may be
+// upgraded is set in 52snaphouse-unattended-upgrades: security origin only.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";

@@ -1,3 +1,75 @@
 ---
-# The web role is implemented in a later task. No tasks yet.
-[]
+# The machine's small web surface: nginx serving this host's status file, plus a
+# drop-in include dir that later roles add their own locations to. Everything
+# here is LAN-only; there is no inbound access from the internet (AGENTS.md).
+
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure the public web root exists
+  ansible.builtin.file:
+    path: /var/lib/snaphouse/public
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure the per-role nginx include dir exists
+  ansible.builtin.file:
+    path: /etc/nginx/snaphouse.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the snaphouse nginx site
+  ansible.builtin.template:
+    src: snaphouse.conf.j2
+    dest: /etc/nginx/sites-available/snaphouse.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable the snaphouse site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/snaphouse.conf
+    dest: /etc/nginx/sites-enabled/snaphouse.conf
+    state: link
+  notify: Reload nginx
+
+- name: Disable the default nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Install the web verify check
+  ansible.builtin.copy:
+    src: verify.d/web.sh
+    dest: /etc/snaphouse/verify.d/web.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure nginx is running
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
+  # Only on a real systemd host; the CI container has no running service.
+  when: common_systemd_init
+  tags:
+    - service

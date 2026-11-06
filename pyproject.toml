@@ -17,3 +17,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
+# The CLI code under test lives in lib/ and runs in place (see bin/snaphouse,
+# which puts lib/ on PYTHONPATH). Mirror that for the tests so they can import
+# the snaphouse package without an install step.
+pythonpath = ["lib"]

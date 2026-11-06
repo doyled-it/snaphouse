@@ -33,7 +33,7 @@ the last-good commit if the apply or verify fails.
 
 ```
 ansible.cfg            local-only defaults
-site.yml               the one play; applies hosts[snaphouse_host].roles in order
+site.yml               the one play; applies snaphouse_hosts[snaphouse_host].roles in order
 vars/hosts.yml         per host: roles, room_label, host_id, output, latency_ms
 vars/all.yml           shared settings (update cadence, reboot times, stream names)
 local.example.yml      documented placeholders for /etc/snaphouse/local.yml

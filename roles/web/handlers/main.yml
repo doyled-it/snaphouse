@@ -1,0 +1,11 @@
+---
+- name: Reload nginx
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  # A notified handler ignores --skip-tags, so the gate is the when: it reloads
+  # only where systemd is PID 1, never in the CI container. The service tag
+  # still marks it as a service action for a real-host --skip-tags service run.
+  when: common_systemd_init
+  tags:
+    - service

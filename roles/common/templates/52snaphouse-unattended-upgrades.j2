@@ -1,0 +1,12 @@
+// Managed by snaphouse (common role). Do not edit by hand.
+//
+// Security updates only: the single allowed origin is Debian-Security. Other
+// package upgrades are left to a deliberate change in this repo, never applied
+// automatically. When a security update needs a reboot the machine takes it
+// during its own quiet-hours slot, staggered per host in vars/all.yml so the
+// house is never fully down at once.
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+};
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "{{ reboot_times[snaphouse_host] }}";

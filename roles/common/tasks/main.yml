@@ -1,3 +1,48 @@
 ---
-# The common role is implemented in a later task. No tasks yet.
-[]
+# Base OS configuration every machine shares: the packages the rest of the
+# system leans on, this machine's hostname, and automatic security updates that
+# reboot only during the machine's quiet-hours slot.
+
+- name: Detect whether systemd is running as this machine's init
+  ansible.builtin.set_fact:
+    common_systemd_init: "{{ (lookup('ansible.builtin.file', '/proc/1/comm') | trim) == 'systemd' }}"
+  # Tasks that set the hostname or touch a running service only work where
+  # systemd is PID 1. The CI container runs the playbook under bash with no
+  # init, and ansible's own service-manager fact flips to systemd as soon as a
+  # package pulls in /run/systemd, so later roles gate on this instead: reading
+  # PID 1 directly stays accurate through the whole apply, in the container and
+  # on a real machine.
+
+- name: Install the base packages
+  ansible.builtin.apt:
+    name:
+      - avahi-daemon
+      - unattended-upgrades
+      - jq
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Set the hostname to this machine's snaphouse host name
+  ansible.builtin.hostname:
+    name: "{{ snaphouse_host }}"
+  # The hostname module uses hostnamectl on Debian, so it only applies where
+  # systemd is the init. Skipped in the CI container (no init).
+  when: common_systemd_init
+
+- name: Enable the daily unattended security upgrade
+  ansible.builtin.copy:
+    src: 20auto-upgrades
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure unattended-upgrades for security only, with a quiet-hours reboot
+  ansible.builtin.template:
+    src: 52snaphouse-unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/52snaphouse-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
