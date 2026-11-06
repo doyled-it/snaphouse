@@ -1,0 +1,19 @@
+[project]
+name = "snaphouse"
+version = "0.0.0"
+description = "Synced whole-house audio, configured by Ansible and kept current from this repo."
+requires-python = ">=3.11"
+
+# This project is not built or installed as a package. The CLI lives in bin/
+# and lib/ and runs in place; uv only manages the test toolchain below.
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pyyaml>=6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]

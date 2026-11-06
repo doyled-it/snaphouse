@@ -1,0 +1,28 @@
+---
+# Settings shared by every machine. Nothing identifying belongs here; that lives
+# in the untracked /etc/snaphouse/local.yml. Roles read these in later tasks.
+
+# Self-update timer: each machine runs ansible-pull against main on this cadence,
+# with a random spread so the three machines do not all wake at once.
+update_interval: "15min"
+update_randomized_delay: "120s"
+
+# Automatic security updates reboot during quiet hours, staggered per machine so
+# the house is never fully down at once.
+reboot_times:
+  zimablade: "03:15"
+  pi-office: "03:45"
+  pi-bedroom: "04:15"
+
+# Snapcast meta stream: AirPlay is listed before Bluetooth, so AirPlay wins a tie
+# when both senders are active. Both the AirPlay and Bluetooth sinks advertise as
+# "House".
+house_stream_name: "House"
+stream_priority:
+  - AirPlay
+  - Bluetooth
+
+# Pinned Snapcast release. The exact version is chosen on site in Task 5 as the
+# newest release that supports the meta stream, AirPlay metadata, and stream
+# control scripts, then recorded here with the reason.
+snapcast_version: null
