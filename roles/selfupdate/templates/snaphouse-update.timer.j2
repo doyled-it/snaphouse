@@ -1,0 +1,13 @@
+[Unit]
+Description=Run snaphouse self-update every {{ update_interval }}
+
+[Timer]
+# First run shortly after boot, then on the shared cadence from vars/all.yml. The
+# random delay spreads the three machines so they do not all wake at once.
+OnBootSec={{ update_interval }}
+OnUnitActiveSec={{ update_interval }}
+RandomizedDelaySec={{ update_randomized_delay }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
