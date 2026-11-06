@@ -21,19 +21,21 @@ commands:
 EOF
 }
 
-# Subcommands whose handler module exists today. Others are reserved and print a
-# clear not-implemented message until the task that adds them lands.
+# Subcommands whose handler module exists today. An unknown subcommand prints
+# usage and exits 2 (see main).
 wired_command() {
     case "$1" in
-        update | verify | status) return 0 ;;
+        pair | update | verify | status) return 0 ;;
         *) return 1 ;;
     esac
 }
 
-reserved_command() {
+# The lib/snaphouse module that handles a subcommand. It matches the command
+# name except for `pair`, whose logic lives in snaphouse.pairing.
+module_for() {
     case "$1" in
-        pair) return 0 ;;
-        *) return 1 ;;
+        pair) echo "pairing" ;;
+        *) echo "$1" ;;
     esac
 }
 
@@ -60,10 +62,7 @@ main() {
     shift
 
     if wired_command "${cmd}"; then
-        exec "$(python_bin)" -m "snaphouse.${cmd}" "$@"
-    elif reserved_command "${cmd}"; then
-        echo "snaphouse ${cmd}: not implemented yet" >&2
-        exit 1
+        exec "$(python_bin)" -m "snaphouse.$(module_for "${cmd}")" "$@"
     else
         echo "snaphouse: unknown command '${cmd}'" >&2
         usage

@@ -1,0 +1,19 @@
+---
+# Both handlers touch systemd, so they only run where it is PID 1 (a real
+# machine), never in the CI container. A notified handler ignores --skip-tags, so
+# the gate is the when:; the service tag still marks them for a real-host
+# --skip-tags service run.
+- name: Reload systemd for bluetooth
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Restart bluealsa
+  ansible.builtin.systemd_service:
+    name: bluealsa.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service
