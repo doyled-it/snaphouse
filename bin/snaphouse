@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# snaphouse command-line entry point.
+#
+# Dispatches a subcommand to its handler in lib/snaphouse. Handlers are added
+# task by task; this skeleton wires the dispatch and the error paths. An unknown
+# subcommand prints usage and exits 2.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="${here}/lib${PYTHONPATH:+:${PYTHONPATH}}"
+
+usage() {
+    cat >&2 <<'EOF'
+usage: snaphouse <command> [args...]
+
+commands:
+  pair      pair a phone (hub) or a speaker (vizio|jbl)
+  verify    run the on-device health checks
+  status    print this machine's status JSON
+  update    fetch main, apply site.yml, and verify (self-update)
+EOF
+}
+
+# Subcommands whose handler module exists today. Others are reserved and print a
+# clear not-implemented message until the task that adds them lands.
+wired_command() {
+    case "$1" in
+        update) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+reserved_command() {
+    case "$1" in
+        pair | verify | status) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+main() {
+    local cmd="${1:-}"
+    if [ -z "${cmd}" ]; then
+        usage
+        exit 2
+    fi
+    shift
+
+    if wired_command "${cmd}"; then
+        exec python3 -m "snaphouse.${cmd}" "$@"
+    elif reserved_command "${cmd}"; then
+        echo "snaphouse ${cmd}: not implemented yet" >&2
+        exit 1
+    else
+        echo "snaphouse: unknown command '${cmd}'" >&2
+        usage
+        exit 2
+    fi
+}
+
+main "$@"

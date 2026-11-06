@@ -1,0 +1,40 @@
+---
+# The one playbook. Each machine applies it to itself (connection: local), either
+# from the self-update timer or from bootstrap.sh on first run. The machine picks
+# its own role set out of vars/hosts.yml by hostname.
+- name: Configure this snaphouse machine
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - vars/all.yml
+    - vars/hosts.yml
+  vars:
+    # Which host block to apply. Defaults to this machine's hostname; override on
+    # the command line with -e snaphouse_host=<name> (used by the CI container
+    # apply, which runs every host in a generic container).
+    snaphouse_host: "{{ ansible_hostname }}"
+  pre_tasks:
+    - name: Fail early when this host is not in the inventory
+      ansible.builtin.assert:
+        that:
+          - snaphouse_host in snaphouse_hosts
+        fail_msg: >-
+          '{{ snaphouse_host }}' is not a host in vars/hosts.yml. Set a matching
+          hostname, or pass -e snaphouse_host=<name>.
+      tags:
+        - always
+
+    - name: Load the untracked local settings for this machine
+      ansible.builtin.include_vars:
+        file: /etc/snaphouse/local.yml
+      tags:
+        - always
+
+  tasks:
+    - name: Apply the roles configured for this host, in order
+      ansible.builtin.include_role:
+        name: "{{ snaphouse_role }}"
+      loop: "{{ snaphouse_hosts[snaphouse_host].roles }}"
+      loop_control:
+        loop_var: snaphouse_role

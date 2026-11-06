@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ansible-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ansible-core and ansible-lint
+        run: pip install ansible-core ansible-lint
+      - name: Lint playbooks and roles
+        run: ansible-lint
+
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ansible-core
+        run: pip install ansible-core
+      - name: Syntax-check the playbook
+        run: ansible-playbook --syntax-check site.yml
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Run the Python tests
+        run: uv run pytest tests/python
+
+  node-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run the JavaScript tests
+        run: |
+          shopt -s nullglob
+          files=(tests/js/*.test.js)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No JavaScript tests yet; skipping."
+            exit 0
+          fi
+          node --test tests/js
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Check shell scripts
+        run: |
+          shopt -s globstar nullglob
+          files=(bootstrap.sh bin/* roles/*/files/**/*.sh)
+          printf 'checking: %s\n' "${files[@]}"
+          shellcheck "${files[@]}"
+
+  container-apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply site.yml for every host in a container
+        run: tests/container/run.sh

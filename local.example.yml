@@ -1,0 +1,32 @@
+---
+# Example for /etc/snaphouse/local.yml
+#
+# This is the one untracked, per-machine file. bootstrap.sh copies it to
+# /etc/snaphouse/local.yml on first run, then you edit it by hand. Everything
+# that could identify the house lives here and NEVER in the repo: adapter and
+# speaker addresses, the hub address, and share passwords.
+#
+# Do not commit a filled-in copy. The repo ships only this example.
+
+# Bluetooth adapters, identified by their own address (six colon-separated hex
+# octets). Resolve adapters by address, never by hciN index, because the index
+# can swap across reboots. Fill the lines that apply to this machine.
+#
+#   bt_receive_adapter:  hub only, the dongle that receives A2DP from the phone
+#   bt_send_adapter:     hub and pi-bedroom, the adapter that sends to a speaker
+#
+# bt_receive_adapter: ""
+# bt_send_adapter: ""
+
+# Paired speaker addresses, written by `snaphouse pair speaker <name>`. Leave the
+# values empty until pairing fills them in.
+speakers:
+  vizio: ""   # living-room soundbar, paired from the hub
+  jbl: ""     # bedroom speaker, paired from pi-bedroom
+
+# Hub address override. Leave empty to use mDNS (the hub answers as its own
+# hostname with the .local suffix). Set it only if mDNS is not usable here.
+# hub_address: ""
+
+# Password for the writable Samba art share on the hub (art_share role).
+art_share_password: "change-me-before-first-apply"
