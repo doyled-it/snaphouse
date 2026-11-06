@@ -63,6 +63,15 @@ def test_all_values_are_strings(tmp_path):
     assert all(isinstance(value, str) for value in read(path).values())
 
 
+def test_written_file_is_readable_by_group_and_other(tmp_path):
+    # nginx (www-data) must be able to serve status.json; mkstemp's default 0600
+    # would hide it, so the writer widens the mode.
+    path = tmp_path / "status.json"
+    sample(path)
+    mode = path.stat().st_mode
+    assert mode & 0o044 == 0o044, oct(mode)
+
+
 def test_repo_is_always_snaphouse(tmp_path):
     path = tmp_path / "status.json"
     sample(path)

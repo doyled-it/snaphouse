@@ -42,7 +42,10 @@
   failed_when: false
 
 - name: Install the pinned uv release
-  when: uv_version not in (common_uv_installed.stdout | default(''))
+  # Compare the parsed version exactly (the second field of "uv <version>"), not
+  # as a substring, so a different version that happens to contain the pinned
+  # string does not count as installed. The slice is empty when uv is absent.
+  when: (common_uv_installed.stdout | default('')).split()[1:2] != [uv_version]
   block:
     - name: Create a private directory for the uv download
       ansible.builtin.tempfile:

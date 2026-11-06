@@ -67,6 +67,10 @@ def write_status(
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+            # mkstemp creates the file 0600 and os.replace keeps that mode, which
+            # would leave status.json unreadable by nginx (www-data). Widen it to
+            # 0644 so the web role can serve it.
+            os.fchmod(handle.fileno(), 0o644)
         os.replace(tmp_name, path)
     except BaseException:
         try:
