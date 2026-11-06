@@ -110,10 +110,13 @@ cancels it. Tuning those offsets is what makes three rooms sound like one.
   cloud-hosted control page.
 - Telemetry, or outbound calls beyond each machine's list below. This is a rule for what
   the code may call, not an enforced firewall (my call).
-  - `zimablade`, `pi-office`: GitHub (updates), OS package mirrors, NTP.
+  - `zimablade`, `pi-office`: GitHub (repo updates, and the uv binary release
+    downloads), the Python package index (PyPI, for Python packages installed with uv),
+    OS package mirrors, NTP. The PyPI and uv-release access follows from the owner's
+    uv-everywhere instruction (2026-11-06): on-device Python is managed with uv, so every
+    machine fetches uv from GitHub releases and its Python dependencies from PyPI.
   - `pi-bedroom`: the same, plus what `nightstand` lists in its design (MLB Stats API,
-    MLB's logo CDN, Open-Meteo, MusicBrainz and the Cover Art Archive, Python package
-    index).
+    MLB's logo CDN, Open-Meteo, MusicBrainz and the Cover Art Archive).
 - Bluetooth that stays open to pairing. Pairing happens only inside a short window the
   owner opens on purpose (see Pairing).
 - An update that can silently take the house offline with no easy way back.

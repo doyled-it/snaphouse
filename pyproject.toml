@@ -3,6 +3,13 @@ name = "snaphouse"
 version = "0.0.0"
 description = "Synced whole-house audio, configured by Ansible and kept current from this repo."
 requires-python = ">=3.11"
+# Runtime dependencies the on-device venv installs (uv sync --frozen --no-dev).
+# ruamel.yaml is the comment-preserving YAML round-tripper that `snaphouse pair
+# speaker` uses to write a paired address into /etc/snaphouse/local.yml without
+# dropping the file's hand-written comments.
+dependencies = [
+    "ruamel.yaml>=0.18",
+]
 
 # This project is not built or installed as a package. The CLI lives in bin/
 # and lib/ and runs in place; uv only manages the test toolchain below.

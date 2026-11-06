@@ -1,0 +1,16 @@
+[Unit]
+Description=snaphouse Bluetooth adapter lockdown (non-discoverable, non-pairable)
+# The controllers must exist and bluez must be up before we can set their state.
+After=bluetooth.service
+Wants=bluetooth.service
+# Re-run the lockdown whenever bluetooth.service restarts, not only at boot, so a
+# bluetoothd restart cannot leave the adapters open to pairing.
+PartOf=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/snaphouse-bt-lockdown.sh
+
+[Install]
+# Started at boot, and (via PartOf) again on each bluetooth.service restart.
+WantedBy=multi-user.target bluetooth.service

@@ -1,3 +1,102 @@
 ---
-# The bluetooth role is implemented in a later task. No tasks yet.
-[]
+# The Bluetooth stack for machines that send audio to a speaker (the hub to the
+# Vizio, pi-bedroom to the JBL) or receive it from a phone (the hub). It installs
+# BlueALSA with the A2DP profiles this host needs, keeps the adapters closed to
+# pairing except during a deliberate `snaphouse pair` window, and drops in the
+# on-device check. Which profiles a host runs is derived from its config: a host
+# with a Bluetooth output is an A2DP source, and a host with a receive adapter
+# (the hub) is also an A2DP sink.
+
+- name: Install the Bluetooth packages
+  ansible.builtin.apt:
+    name:
+      - bluez
+      - bluez-tools
+      - bluez-alsa-utils
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the bluetooth verify check
+  ansible.builtin.copy:
+    src: verify.d/bluetooth.sh
+    dest: /etc/snaphouse/verify.d/bluetooth.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the boot-time adapter lockdown script
+  ansible.builtin.copy:
+    src: snaphouse-bt-lockdown.sh
+    dest: /usr/local/lib/snaphouse-bt-lockdown.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure the systemd unit directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the adapter-lockdown service unit
+  ansible.builtin.copy:
+    src: snaphouse-bt-lockdown.service
+    dest: /etc/systemd/system/snaphouse-bt-lockdown.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for bluetooth
+
+- name: Ensure the bluealsa drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/bluealsa.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure the bluealsa A2DP profiles for this host
+  ansible.builtin.template:
+    src: bluealsa-profiles.conf.j2
+    dest: /etc/systemd/system/bluealsa.service.d/snaphouse.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for bluetooth
+    - Restart bluealsa
+
+# Make the units known before enabling them on a first install. The handlers are
+# gated on systemd, so this is a no-op in the CI container.
+- name: Reload systemd now if the units changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the boot-time adapter lockdown
+  ansible.builtin.systemd_service:
+    name: snaphouse-bt-lockdown.service
+    enabled: true
+    state: started
+  # Only on a real systemd host; the CI container has no running init.
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Enable and start bluealsa
+  ansible.builtin.systemd_service:
+    name: bluealsa.service
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service
