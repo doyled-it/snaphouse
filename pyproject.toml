@@ -7,8 +7,14 @@ requires-python = ">=3.11"
 # ruamel.yaml is the comment-preserving YAML round-tripper that `snaphouse pair
 # speaker` uses to write a paired address into /etc/snaphouse/local.yml without
 # dropping the file's hand-written comments.
+#
+# jeepney is a pure-Python D-Bus client with no dependencies, so it ships one
+# universal py3-none-any wheel that installs identically on the x86_64 hub and
+# the aarch64 Pis with no build toolchain. The Bluetooth metadata control script
+# (lib/snaphouse/avrcp_meta.py) uses it to watch BlueZ over the system bus.
 dependencies = [
     "ruamel.yaml>=0.18",
+    "jeepney>=0.9",
 ]
 
 # This project is not built or installed as a package. The CLI lives in bin/

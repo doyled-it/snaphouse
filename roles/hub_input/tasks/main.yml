@@ -1,3 +1,150 @@
 ---
-# The hub_input role is implemented in a later task. No tasks yet.
-[]
+# The hub's audio inputs. Only zimablade runs this role. It brings up the two
+# ways audio reaches the house and the Snapcast server that mixes them:
+#
+#   - AirPlay: snapserver's own airplay source launches shairport-sync, so Apple
+#     devices see one receiver named "House" that carries metadata and cover art.
+#   - Bluetooth: the phone's A2DP audio is decoded by bluealsa-aplay into the
+#     ALSA loopback; snapserver captures the other end of the loopback. The
+#     phone's AVRCP volume is applied to the audio here (--volume=software), so
+#     the whole house attenuates together.
+#   - snapserver itself, installed from the pinned release .deb, with a meta
+#     stream named "House" in front of the two inputs.
+#
+# Hardware (module load) and service (start/restart) steps are tagged and gated
+# on common_systemd_init so the CI container apply stays green.
+
+- name: Install shairport-sync for the AirPlay source
+  ansible.builtin.apt:
+    name: shairport-sync
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# snapserver runs its own shairport-sync under the airplay source, so the
+# packaged standalone service must not also hold the AirPlay name and RTSP port.
+- name: Stop and mask the standalone shairport-sync service
+  ansible.builtin.systemd_service:
+    name: shairport-sync.service
+    state: stopped
+    masked: true
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Map the CPU architecture to the snapserver .deb for this host
+  ansible.builtin.set_fact:
+    hub_input_deb_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"
+  # A KeyError here is the right failure: the hub is x86_64 and the Pis (which
+  # get snapclient in a later task) are aarch64, nothing else.
+
+- name: Name the snapserver .deb asset for this host
+  ansible.builtin.set_fact:
+    hub_input_deb_name: "snapserver_{{ snapcast_version }}-1_{{ hub_input_deb_arch }}_{{ snapcast_deb_distro }}.deb"
+    hub_input_deb_base: "https://github.com/badaix/snapcast/releases/download/v{{ snapcast_version }}"
+
+- name: Check the installed snapserver version
+  ansible.builtin.command: dpkg-query -W -f='${Version}' snapserver
+  register: hub_input_snapserver_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install the pinned snapserver release
+  # The .deb Version is "<snapcast_version>-1"; compare exactly so a different
+  # installed build is replaced. The string is empty when snapserver is absent.
+  when: hub_input_snapserver_installed.stdout != snapcast_version ~ '-1'
+  block:
+    - name: Create a private directory for the snapserver download
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: snaphouse-snapserver.
+      register: hub_input_deb_tmp
+
+    - name: Download the pinned snapserver .deb from GitHub
+      ansible.builtin.get_url:
+        url: "{{ hub_input_deb_base }}/{{ hub_input_deb_name }}"
+        dest: "{{ hub_input_deb_tmp.path }}/snapserver.deb"
+        # Verified against the digest pinned in vars/all.yml, not one fetched
+        # from the same origin as the artifact.
+        checksum: "sha256:{{ snapcast_server_sha256[hub_input_deb_arch] }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install snapserver and its dependencies
+      ansible.builtin.apt:
+        deb: "{{ hub_input_deb_tmp.path }}/snapserver.deb"
+  always:
+    - name: Remove the snapserver download directory
+      ansible.builtin.file:
+        path: "{{ hub_input_deb_tmp.path }}"
+        state: absent
+      when: hub_input_deb_tmp.path is defined
+
+- name: Load the ALSA loopback module at boot
+  ansible.builtin.copy:
+    content: "snd-aloop\n"
+    dest: /etc/modules-load.d/snaphouse-aloop.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Load configured kernel modules
+
+- name: Install the Bluetooth-input service unit
+  ansible.builtin.copy:
+    src: snaphouse-bt-in.service
+    dest: /etc/systemd/system/snaphouse-bt-in.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for hub input
+    - Restart the Bluetooth input
+
+- name: Write the snapserver configuration
+  ansible.builtin.template:
+    src: snapserver.conf.j2
+    dest: /etc/snapserver.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart snapserver
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the hub-input verify check
+  ansible.builtin.copy:
+    src: verify.d/hub_input.sh
+    dest: /etc/snaphouse/verify.d/hub_input.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# Make the units and module config known before enabling things on a first
+# install. The handlers are gated on systemd, so this is a no-op in CI.
+- name: Reload systemd and load modules now if anything changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the Bluetooth input
+  ansible.builtin.systemd_service:
+    name: snaphouse-bt-in.service
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Enable and start snapserver
+  ansible.builtin.systemd_service:
+    name: snapserver.service
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service

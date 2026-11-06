@@ -1,3 +1,51 @@
 ---
-# The metadata role is implemented in a later task. No tasks yet.
-[]
+# Track metadata for the Bluetooth stream. Only zimablade runs this role, after
+# hub_input. AirPlay metadata and cover art come for free from snapserver's
+# airplay source; this role wires the Bluetooth side: the AVRCP control script
+# (lib/snaphouse/avrcp_meta.py) that snapserver runs for the "Bluetooth" stream.
+#
+# The script ships in the repo checkout at /opt/snaphouse and carries a shebang
+# that points at the on-device uv venv, so snapserver runs it with the
+# interpreter that has the D-Bus library (jeepney, a runtime dependency in
+# pyproject.toml, installed by the selfupdate role's uv sync). This role makes
+# sure the script is executable and restarts snapserver when its contents change,
+# so an updated mapping takes effect on the next self-update rather than waiting
+# for a reboot. The "Restart snapserver" handler is defined in roles/hub_input.
+#
+# The /opt/snaphouse tasks are gated on common_systemd_init: that path is the
+# on-device checkout, absent in the CI container where the repo is read-only
+# elsewhere. The verify check is installed unconditionally; it only runs under
+# `snaphouse verify` on a real machine.
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the metadata verify check
+  ansible.builtin.copy:
+    src: verify.d/metadata.sh
+    dest: /etc/snaphouse/verify.d/metadata.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure the AVRCP control script is executable
+  ansible.builtin.file:
+    path: /opt/snaphouse/lib/snaphouse/avrcp_meta.py
+    mode: "0755"
+  when: common_systemd_init
+  notify: Restart snapserver
+
+- name: Record the control script digest so snapserver restarts when it changes
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/avrcp_meta.py') | hash('sha1') }}\n"
+    dest: /etc/snaphouse/avrcp_meta.sha1
+    owner: root
+    group: root
+    mode: "0644"
+  when: common_systemd_init
+  notify: Restart snapserver
