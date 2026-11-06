@@ -2,6 +2,12 @@
 # Settings shared by every machine. Nothing identifying belongs here; that lives
 # in the untracked /etc/snaphouse/local.yml. Roles read these in later tasks.
 
+# Python on every machine is managed with uv, never apt python3-* or pip. The
+# common role installs this pinned uv release from GitHub (idempotent); later
+# roles run their on-device Python from a uv-synced venv off pyproject.toml and
+# uv.lock. Bump this to upgrade uv across the house through the normal PR flow.
+uv_version: "0.13.7"
+
 # Self-update timer: each machine runs ansible-pull against main on this cadence,
 # with a random spread so the three machines do not all wake at once.
 update_interval: "15min"

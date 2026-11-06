@@ -17,12 +17,50 @@
   ansible.builtin.apt:
     name:
       - avahi-daemon
+      - ca-certificates
       - unattended-upgrades
       - jq
       - curl
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+# Python on the machines is managed with uv, never apt python3-* or pip. uv is a
+# single static binary pulled from GitHub (an allowed outbound target) and
+# pinned in vars/all.yml, so later roles can run their on-device Python from a
+# uv-synced venv. Downloaded only when the pinned version is not already present.
+- name: Map the CPU architecture to a uv release target
+  ansible.builtin.set_fact:
+    common_uv_arch: "{{ {'x86_64': 'x86_64', 'aarch64': 'aarch64'}[ansible_architecture] }}"
+  # A KeyError here is the right failure: the only machines are the x86_64 hub
+  # and the aarch64 Pis.
+
+- name: Check the installed uv version
+  ansible.builtin.command: uv --version
+  register: common_uv_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install the pinned uv release
+  when: uv_version not in (common_uv_installed.stdout | default(''))
+  block:
+    - name: Download the pinned uv release from GitHub
+      ansible.builtin.get_url:
+        url: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ common_uv_arch }}-unknown-linux-gnu.tar.gz"
+        dest: "/tmp/uv-{{ common_uv_arch }}-unknown-linux-gnu.tar.gz"
+        checksum: "sha256:https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ common_uv_arch }}-unknown-linux-gnu.tar.gz.sha256"
+        mode: "0644"
+
+    - name: Extract uv and uvx into /usr/local/bin
+      ansible.builtin.unarchive:
+        src: "/tmp/uv-{{ common_uv_arch }}-unknown-linux-gnu.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        extra_opts:
+          - --strip-components=1
+        owner: root
+        group: root
+        mode: "0755"
 
 - name: Set the hostname to this machine's snaphouse host name
   ansible.builtin.hostname:
