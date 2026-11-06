@@ -68,7 +68,7 @@ jobs:
       - name: Check shell scripts
         run: |
           shopt -s globstar nullglob
-          files=(bootstrap.sh bin/* roles/*/files/**/*.sh)
+          files=(bootstrap.sh bin/* tests/container/run.sh roles/*/files/**/*.sh)
           printf 'checking: %s\n' "${files[@]}"
           shellcheck "${files[@]}"
 

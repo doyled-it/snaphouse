@@ -1,3 +1,105 @@
 ---
-# The common role is implemented in a later task. No tasks yet.
-[]
+# Base OS configuration every machine shares: the packages the rest of the
+# system leans on, this machine's hostname, and automatic security updates that
+# reboot only during the machine's quiet-hours slot.
+
+- name: Detect whether systemd is running as this machine's init
+  ansible.builtin.set_fact:
+    common_systemd_init: "{{ (lookup('ansible.builtin.file', '/proc/1/comm') | trim) == 'systemd' }}"
+  # Tasks that set the hostname or touch a running service only work where
+  # systemd is PID 1. The CI container runs the playbook under bash with no
+  # init, and ansible's own service-manager fact flips to systemd as soon as a
+  # package pulls in /run/systemd, so later roles gate on this instead: reading
+  # PID 1 directly stays accurate through the whole apply, in the container and
+  # on a real machine.
+
+- name: Install the base packages
+  ansible.builtin.apt:
+    name:
+      - avahi-daemon
+      - ca-certificates
+      - unattended-upgrades
+      - jq
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Python on the machines is managed with uv, never apt python3-* or pip. uv is a
+# single static binary pulled from GitHub (an allowed outbound target) and
+# pinned in vars/all.yml, so later roles can run their on-device Python from a
+# uv-synced venv. Downloaded only when the pinned version is not already present.
+- name: Map the CPU architecture to a uv release target
+  ansible.builtin.set_fact:
+    common_uv_arch: "{{ {'x86_64': 'x86_64', 'aarch64': 'aarch64'}[ansible_architecture] }}"
+  # A KeyError here is the right failure: the only machines are the x86_64 hub
+  # and the aarch64 Pis.
+
+- name: Check the installed uv version
+  ansible.builtin.command: uv --version
+  register: common_uv_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install the pinned uv release
+  # Compare the parsed version exactly (the second field of "uv <version>"), not
+  # as a substring, so a different version that happens to contain the pinned
+  # string does not count as installed. The slice is empty when uv is absent.
+  when: (common_uv_installed.stdout | default('')).split()[1:2] != [uv_version]
+  block:
+    - name: Create a private directory for the uv download
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: snaphouse-uv.
+      register: common_uv_tmp
+
+    - name: Download the pinned uv release from GitHub
+      ansible.builtin.get_url:
+        url: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ common_uv_arch }}-unknown-linux-gnu.tar.gz"
+        dest: "{{ common_uv_tmp.path }}/uv.tar.gz"
+        # Verified against the digest pinned in vars/all.yml, not one fetched
+        # from the same origin as the artifact.
+        checksum: "sha256:{{ uv_sha256[common_uv_arch] }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Extract uv and uvx into /usr/local/bin
+      ansible.builtin.unarchive:
+        src: "{{ common_uv_tmp.path }}/uv.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        extra_opts:
+          - --strip-components=1
+        owner: root
+        group: root
+        mode: "0755"
+  always:
+    - name: Remove the uv download directory
+      ansible.builtin.file:
+        path: "{{ common_uv_tmp.path }}"
+        state: absent
+      when: common_uv_tmp.path is defined
+
+- name: Set the hostname to this machine's snaphouse host name
+  ansible.builtin.hostname:
+    name: "{{ snaphouse_host }}"
+  # The hostname module uses hostnamectl on Debian, so it only applies where
+  # systemd is the init. Skipped in the CI container (no init).
+  when: common_systemd_init
+
+- name: Enable the daily unattended security upgrade
+  ansible.builtin.copy:
+    src: 20auto-upgrades
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure unattended-upgrades for security only, with a quiet-hours reboot
+  ansible.builtin.template:
+    src: 52snaphouse-unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/52snaphouse-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"

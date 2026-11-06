@@ -33,7 +33,7 @@ the last-good commit if the apply or verify fails.
 
 ```
 ansible.cfg            local-only defaults
-site.yml               the one play; applies hosts[snaphouse_host].roles in order
+site.yml               the one play; applies snaphouse_hosts[snaphouse_host].roles in order
 vars/hosts.yml         per host: roles, room_label, host_id, output, latency_ms
 vars/all.yml           shared settings (update cadence, reboot times, stream names)
 local.example.yml      documented placeholders for /etc/snaphouse/local.yml
@@ -62,6 +62,12 @@ restart `service`, so the container check can skip them.
 
 - Python: `uv run pytest tests/python`. Dev deps (pytest, pyyaml) are in
   `pyproject.toml`; `uv.lock` is committed.
+- Python package management is always uv, on the machines too. Never install
+  Python libraries with apt (`python3-*`) or pip. The `common` role installs a
+  pinned uv from GitHub (`uv_version` in `vars/all.yml`); on-device Python runs
+  from a uv-synced venv off `pyproject.toml`/`uv.lock` (`uv sync --frozen
+  --no-dev`), with runtime deps kept separate from the dev group. Stdlib-only
+  modules (like `lib/snaphouse/status.py`) need no venv.
 - JavaScript: `node --test tests/js` (plain ES modules, no build step).
 - Ansible: `ansible-playbook --syntax-check site.yml`, and `ansible-lint`.
 - Shell: `shellcheck`.
