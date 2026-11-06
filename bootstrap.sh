@@ -28,11 +28,16 @@ else
     git clone "${repo_url}" "${repo_dir}"
 fi
 
-install -d -m 0755 "${local_dir}"
+# local.yml holds identifying values and the art-share password, so keep the
+# directory and file readable by root only (0700 dir, 0600 file). Fix the mode
+# on an already-present file too, so older installs are tightened on the next run.
+install -d -m 0700 -o root -g root "${local_dir}"
 if [ ! -f "${local_file}" ]; then
     echo "==> Creating ${local_file} from the example; opening it for editing"
-    cp "${repo_dir}/local.example.yml" "${local_file}"
+    install -m 0600 -o root -g root "${repo_dir}/local.example.yml" "${local_file}"
     "${EDITOR:-vi}" "${local_file}"
+else
+    chmod 0600 "${local_file}"
 fi
 
 echo "==> Running the first apply"
