@@ -47,6 +47,39 @@ git clone git@github.com:doyled-it/nightstand.git
 - **Docs.** Each repo's README and AGENTS.md describe its side of these seams. A change to
   a seam updates this file in the same PR set.
 
+## Pinned contracts
+
+**Machine status file.** Every machine serves `http://<host>.local/status.json`
+(nginx, `Access-Control-Allow-Origin: *`). nightstand serves its own at
+`http://pi-bedroom.local/nightstand/status.json`. Same schema everywhere:
+
+```json
+{
+  "host": "pi-office",
+  "repo": "snaphouse",
+  "commit": "<sha running now>",
+  "main_commit": "<sha of origin/main at last check>",
+  "last_good": "<sha that last passed verify>",
+  "verify": "pass",
+  "checked_at": "2026-11-06T21:15:00-08:00"
+}
+```
+
+`verify` is `"pass"` or `"fail"`. A machine is healthy when `verify == "pass"` and
+`commit == main_commit`. snaphouse writes `/var/lib/snaphouse/public/status.json`;
+nightstand writes `/var/lib/nightstand/public/status.json`, and snaphouse's nginx on
+`pi-bedroom` serves that directory at `/nightstand/`.
+
+**Art listing.** The hub serves the art folder read-only at `http://zimablade.local/art/`
+with nginx `autoindex on; autoindex_format json;`. Each entry is
+`{"name": str, "type": "file" | "directory", "mtime": str, "size": int}`. nightstand
+mirrors files one level deep and ignores directories. Sidecar captions are files named
+`<image file>.txt` (line 1 title, line 2 artist) in the same folder.
+
+**snapserver API.** `http://zimablade.local/jsonrpc` is proxied by nginx on the hub to
+snapserver's JSON-RPC (port 1780). Port 1780 itself stays reachable on the LAN for
+Snapweb. nightstand calls port 1780 directly.
+
 ## Feature type to surface
 
 | Change | snaphouse | nightstand |
