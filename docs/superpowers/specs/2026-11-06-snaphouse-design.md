@@ -85,6 +85,9 @@ cancels it. Tuning those offsets is what makes three rooms sound like one.
    switched off and on.
 7. Per-room latency offsets live in the repo, so a rebuilt machine keeps its tuning.
 8. A shared art folder on the hub that `nightstand` reads from (see the cross-repo doc).
+9. Volume buttons on the sending device (phone or Mac) change house volume: every playing
+   room moves together, keeping their relative levels. Per-room sliders on the room
+   picker still set each room. (Owner's answer, 2026-11-06.)
 
 ## Non-goals (this version)
 
@@ -105,8 +108,12 @@ cancels it. Tuning those offsets is what makes three rooms sound like one.
   examples of local files, never the real ones.
 - Any opening from the internet into the home network: no tunnels, no port forwards, no
   cloud-hosted control page.
-- Telemetry or third-party calls beyond what the machines need: GitHub for updates, the OS
-  package mirrors, and nothing else.
+- Telemetry, or outbound calls beyond each machine's list below. This is a rule for what
+  the code may call, not an enforced firewall (my call).
+  - `zimablade`, `pi-office`: GitHub (updates), OS package mirrors, NTP.
+  - `pi-bedroom`: the same, plus what `nightstand` lists in its design (MLB Stats API,
+    MLB's logo CDN, Open-Meteo, MusicBrainz and the Cover Art Archive, Python package
+    index).
 - Bluetooth that stays open to pairing. Pairing happens only inside a short window the
   owner opens on purpose (see Pairing).
 - An update that can silently take the house offline with no easy way back.
@@ -169,7 +176,10 @@ same applies to the Vizio if it drops the link.
 
 A small static page served from the hub on the LAN. It talks to snapserver's JSON-RPC API
 directly. Per room it shows an on/off toggle (mute or unmute that client) and a volume
-slider, and it shows what's playing. It has no login. Anyone on the home network can use
+slider, and it shows what's playing. Turning the living room off only mutes it; the
+Bluetooth link to the Vizio stays up. The owner has confirmed the TV still plays through
+the soundbar while a Bluetooth device is connected. The page also shows each machine's
+health (see Self-update safety). It has no login. Anyone on the home network can use
 it, which is acceptable here. Snapweb (snapserver's built-in UI) stays available for
 latency tuning.
 
@@ -195,7 +205,23 @@ call; it must be read-only and need no credentials stored in the repo.
   bullet).
 - Each machine has a `snaphouse verify` command that checks its services are running and
   its audio path is wired. The update timer runs it after each apply and logs the result.
-- Rollback is `git revert` on `main`. Machines pick it up on the next timer tick.
+- If an apply fails or `verify` fails afterward, the machine goes back to the last commit
+  that passed `verify` on that machine, stays there, and records the failure. It tries
+  `main` again only when `main` moves. (My call.)
+- Failures reach the owner on screens they already look at, with no outside notification
+  service: a warning per machine on the room-picker page, and a small marker in a corner
+  of the frame (shown by `nightstand`, read from the hub). Each machine publishes its
+  status (current commit, last-good commit, last `verify` result) somewhere the hub can
+  serve. The mechanism is the builder's call. (My call.)
+- Deliberate rollback is `git revert` on `main`. Machines pick it up on the next tick.
+
+### OS updates
+
+Security updates install automatically on all three machines (unattended-upgrades or the
+Raspberry Pi OS equivalent). When one needs a reboot, the machine reboots during quiet
+hours, between 03:00 and 05:00, and the machines don't all reboot on the same night
+slot. Other OS package versions are not pinned. Reverting `main` rolls back this repo's
+configuration, not OS patches. (My call.)
 
 ### Living room output: Bluetooth to the Vizio, unless optical is free
 
