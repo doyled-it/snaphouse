@@ -22,8 +22,11 @@ the repo.
 from __future__ import annotations
 
 import argparse
+import os
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -146,9 +149,14 @@ def run_pairing_window(
     """
     window = int(duration)
     proc: "Optional[subprocess.Popen]" = None
-    before: dict[str, str] = {}
+
+    # Snapshot the already-paired devices before the try, so a failure here
+    # aborts before the window opens and never falls through to the finally. If
+    # we cannot read the paired set, we also cannot tell new devices from old
+    # ones, so trusting anything would be trusting blind.
+    before = _snapshot_paired(controller, session)
+
     try:
-        before = _snapshot_paired(controller, session)
         session(
             [
                 f"select {controller}",
@@ -162,8 +170,14 @@ def run_pairing_window(
         proc = spawn_agent(controller)
 
         deadline = monotonic() + duration
-        while monotonic() < deadline:
-            sleep(min(poll_interval, deadline - monotonic()))
+        while True:
+            # Read the remaining time once: the while-check and the sleep
+            # argument must not be two separate clock reads, or the deadline
+            # could cross between them and hand sleep a negative duration.
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
+            sleep(min(poll_interval, remaining))
     finally:
         session([f"select {controller}", "discoverable off", "pairable off"])
         _stop_agent(proc)
@@ -176,6 +190,12 @@ def write_speaker(path: Path, name: str, mac: str) -> None:
     Uses a round-tripping YAML load/dump so the file's hand-written comments and
     every other key survive. The `speakers` mapping (and its entry for name) is
     created if missing, so this works on a freshly written local.yml too.
+
+    The write is atomic: the new document is staged in a temporary file in the
+    same directory, flushed to disk, then renamed over path. local.yml is the
+    household's only copy of its addresses, so a crash mid-write must never
+    truncate or empty it; it either stays as it was or becomes the complete new
+    version. The original file's mode is preserved.
     """
     yaml = YAML()
     yaml.preserve_quotes = True
@@ -187,8 +207,22 @@ def write_speaker(path: Path, name: str, mac: str) -> None:
         speakers = CommentedMap()
         data["speakers"] = speakers
     speakers[name] = mac
-    with path.open("w") as handle:
-        yaml.dump(data, handle)
+
+    mode = stat.S_IMODE(path.stat().st_mode)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.dump(data, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+            os.fchmod(handle.fileno(), mode)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _load_local(path: Path) -> dict:
