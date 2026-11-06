@@ -7,6 +7,13 @@
 # roles run their on-device Python from a uv-synced venv off pyproject.toml and
 # uv.lock. Bump this to upgrade uv across the house through the normal PR flow.
 uv_version: "0.13.7"
+# SHA-256 of each uv release tarball, pinned in the repo rather than fetched from
+# the same origin as the download, so a tampered mirror cannot swap the artifact
+# and its checksum together. Update both when bumping uv_version, from the
+# release's uv-<arch>-unknown-linux-gnu.tar.gz.sha256 files.
+uv_sha256:
+  x86_64: "c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83"
+  aarch64: "71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc"
 
 # Self-update timer: each machine runs ansible-pull against main on this cadence,
 # with a random spread so the three machines do not all wake at once.

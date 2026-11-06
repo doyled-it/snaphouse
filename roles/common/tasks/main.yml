@@ -44,16 +44,26 @@
 - name: Install the pinned uv release
   when: uv_version not in (common_uv_installed.stdout | default(''))
   block:
+    - name: Create a private directory for the uv download
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: snaphouse-uv.
+      register: common_uv_tmp
+
     - name: Download the pinned uv release from GitHub
       ansible.builtin.get_url:
         url: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ common_uv_arch }}-unknown-linux-gnu.tar.gz"
-        dest: "/tmp/uv-{{ common_uv_arch }}-unknown-linux-gnu.tar.gz"
-        checksum: "sha256:https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ common_uv_arch }}-unknown-linux-gnu.tar.gz.sha256"
+        dest: "{{ common_uv_tmp.path }}/uv.tar.gz"
+        # Verified against the digest pinned in vars/all.yml, not one fetched
+        # from the same origin as the artifact.
+        checksum: "sha256:{{ uv_sha256[common_uv_arch] }}"
+        owner: root
+        group: root
         mode: "0644"
 
     - name: Extract uv and uvx into /usr/local/bin
       ansible.builtin.unarchive:
-        src: "/tmp/uv-{{ common_uv_arch }}-unknown-linux-gnu.tar.gz"
+        src: "{{ common_uv_tmp.path }}/uv.tar.gz"
         dest: /usr/local/bin
         remote_src: true
         extra_opts:
@@ -61,6 +71,12 @@
         owner: root
         group: root
         mode: "0755"
+  always:
+    - name: Remove the uv download directory
+      ansible.builtin.file:
+        path: "{{ common_uv_tmp.path }}"
+        state: absent
+      when: common_uv_tmp.path is defined
 
 - name: Set the hostname to this machine's snaphouse host name
   ansible.builtin.hostname:
