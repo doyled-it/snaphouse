@@ -1,0 +1,23 @@
+{#
+  The machines the hub's house-status poll fetches, built from the inventory so
+  no hostname is hardcoded: every host's own status file, by its inventory key,
+  plus the nightstand frame's status file that the hub serves on the bedroom
+  machine. The bedroom machine is found by its stable host_id (unchanged by any
+  hostname rename), so this follows a rename of the key automatically.
+
+  The frame is labelled "nightstand-frame", not "nightstand", so it does not
+  collide with the bedroom machine once that machine's key is renamed to
+  nightstand. The "/nightstand/" path is the nginx alias the web role serves and
+  is unrelated to the hostname.
+
+  snaphouse.housestatus reads this file and writes house-status.json, which the
+  room-picker page reads same-origin. Hostnames are mDNS .local names from the
+  cross-repo status contract; nothing identifying.
+#}
+{% set targets = [] %}
+{% for name in snaphouse_hosts.keys() %}
+{% set _ = targets.append({'name': name, 'url': 'http://' ~ name ~ '.local/status.json'}) %}
+{% endfor %}
+{% set bedroom_host = (snaphouse_hosts | dict2items | selectattr('value.host_id', 'equalto', 'bedroom') | map(attribute='key') | first) %}
+{% set _ = targets.append({'name': 'nightstand-frame', 'url': 'http://' ~ bedroom_host ~ '.local/nightstand/status.json'}) %}
+{{ targets | to_nice_json }}

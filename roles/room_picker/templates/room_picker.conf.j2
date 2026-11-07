@@ -14,9 +14,17 @@ location / {
     try_files $uri $uri/ =404;
 }
 
-# The room list and health targets the page reads at startup, served as JSON.
+# The room list the page reads at startup, served as JSON.
 location = /rooms.json {
     root /var/lib/snaphouse/room-picker;
+    default_type application/json;
+}
+
+# The house health file the hub writes every 60 s. It lives in the public web
+# root (where the web role puts status.json), so the page reads it same-origin
+# and the browser never has to resolve another machine's .local name.
+location = /house-status.json {
+    root /var/lib/snaphouse/public;
     default_type application/json;
 }
 

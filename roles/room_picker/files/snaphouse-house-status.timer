@@ -1,0 +1,13 @@
+[Unit]
+Description=Poll every machine's status into house-status.json every 60 seconds
+
+[Timer]
+# Every 60 s, so the room-picker health line is at most a minute stale. The first
+# run is shortly after boot.
+OnBootSec=20s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=snaphouse-house-status.service
+
+[Install]
+WantedBy=timers.target

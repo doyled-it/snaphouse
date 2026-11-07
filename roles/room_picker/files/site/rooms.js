@@ -13,6 +13,7 @@ import {
   nowPlaying,
   toggleRequest,
   volumeRequest,
+  groupUnmuteRequest,
   healthBanner,
 } from "./rooms-model.js";
 
@@ -29,8 +30,9 @@ const els = {
 };
 
 const state = {
-  config: { rooms: [], health: [] },
+  config: { rooms: [] },
   cards: new Map(), // room id -> { card, toggle, slider, dragging }
+  rooms: new Map(), // room id -> latest row from roomsFromStatus
   socket: null,
   pollTimer: null,
   reconnectTimer: null,
@@ -54,6 +56,25 @@ async function start() {
   connect();
   refreshHealth();
   setInterval(refreshHealth, HEALTH_MS);
+
+  // A phone that was asleep or backgrounded comes back with a dead socket and
+  // stale cards. On return to the foreground, reconnect if needed, re-read the
+  // full status, and refresh the health line so the page is current at a glance.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") {
+      return;
+    }
+    const socket = state.socket;
+    if (!socket || socket.readyState === WebSocket.CLOSED) {
+      // The socket died while backgrounded; bring it back now.
+      connect();
+    } else if (socket.readyState === WebSocket.OPEN) {
+      // Still up: just re-read, the picture may be stale.
+      requestStatus();
+    }
+    // CONNECTING or CLOSING: leave the in-flight transition alone.
+    refreshHealth();
+  });
 }
 
 async function loadConfig() {
@@ -236,6 +257,7 @@ function render(status) {
 
   const rooms = roomsFromStatus(status, state.config.rooms);
   for (const room of rooms) {
+    state.rooms.set(room.id, room);
     const entry = state.cards.get(room.id);
     if (!entry) {
       continue;
@@ -275,16 +297,23 @@ function renderNowPlaying(playing) {
 }
 
 function onToggle(id) {
-  const rooms = state.cards.get(id);
-  if (!rooms) {
+  const entry = state.cards.get(id);
+  if (!entry) {
     return;
   }
-  const nowOn = rooms.toggle.getAttribute("aria-checked") === "true";
+  const nowOn = entry.toggle.getAttribute("aria-checked") === "true";
   const next = !nowOn;
   // Optimistic: flip the control now, snapserver's notification confirms it.
-  rooms.toggle.setAttribute("aria-checked", next ? "true" : "false");
-  rooms.toggle.textContent = next ? "On" : "Off";
-  rooms.card.classList.toggle("off", !next);
+  entry.toggle.setAttribute("aria-checked", next ? "true" : "false");
+  entry.toggle.textContent = next ? "On" : "Off";
+  entry.card.classList.toggle("off", !next);
+
+  const room = state.rooms.get(id);
+  // Turning a room on whose group is muted must unmute the group too, or the
+  // client unmute alone leaves it silent and the control snaps back to Off.
+  if (next && room && room.groupMuted && room.groupId) {
+    sendControl(groupUnmuteRequest(room.groupId));
+  }
   sendControl(toggleRequest(id, next));
 }
 
@@ -296,20 +325,22 @@ function onVolume(id, percent, entry) {
 }
 
 async function refreshHealth() {
-  const targets = state.config.health || [];
-  const entries = await Promise.all(
-    targets.map(async (target) => {
-      try {
-        const response = await fetch(target.url, { cache: "no-store" });
-        if (!response.ok) {
-          return { host: target.host, status: null };
-        }
-        return { host: target.host, status: await response.json() };
-      } catch (err) {
-        return { host: target.host, status: null };
-      }
-    })
-  );
+  // One same-origin file the hub writes every 60 s. The browser never resolves
+  // other machines' .local names (Android Chrome often cannot), so all the
+  // cross-machine fetching happens on the hub, not here.
+  let entries;
+  try {
+    const response = await fetch("house-status.json", { cache: "no-store" });
+    const doc = await response.json();
+    entries = (doc.machines || []).map((machine) => ({
+      host: machine.name,
+      status: machine.status,
+    }));
+  } catch (err) {
+    // The hub itself is unreachable; leave the banner as it was rather than
+    // flashing a false all-clear or a false alarm.
+    return;
+  }
   const message = healthBanner(entries);
   if (message) {
     els.health.textContent = message;

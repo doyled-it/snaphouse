@@ -13,6 +13,7 @@ import {
   nowPlaying,
   toggleRequest,
   volumeRequest,
+  groupUnmuteRequest,
   healthBanner,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
@@ -113,7 +114,26 @@ test("roomsFromStatus keeps a room snapserver has never seen, marked off and dis
     assert.equal(room.connected, false);
     assert.equal(room.on, false);
     assert.equal(room.volume, 0);
+    assert.equal(room.groupId, null);
+    assert.equal(room.groupMuted, false);
   }
+});
+
+test("roomsFromStatus exposes each room's group id and group mute", () => {
+  const rooms = roomsFromStatus(statusFixture(), LABELS);
+  const living = rooms.find((r) => r.id === "living");
+  assert.equal(living.groupId, "g1");
+  assert.equal(living.groupMuted, false);
+  const bedroom = rooms.find((r) => r.id === "bedroom");
+  assert.equal(bedroom.groupId, "g2");
+  assert.equal(bedroom.groupMuted, true);
+});
+
+test("groupUnmuteRequest unmutes a group so a room in it can be turned on", () => {
+  assert.deepEqual(groupUnmuteRequest("g2"), {
+    method: "Group.SetMute",
+    params: { id: "g2", mute: false },
+  });
 });
 
 test("nowPlaying returns title and joined artist for the playing stream", () => {
@@ -134,6 +154,21 @@ test("nowPlaying is null when the playing stream carries no title", () => {
   const status = statusFixture();
   delete status.server.streams[0].properties.metadata;
   assert.equal(nowPlaying(status), null);
+});
+
+test("nowPlaying prefers the stream the rooms' groups play, not the first playing one", () => {
+  const status = statusFixture();
+  // An inner source is playing ahead of House in the array, with no title. The
+  // groups are assigned to House, so House's metadata is what should show.
+  status.server.streams.unshift({
+    id: "Bluetooth",
+    status: "playing",
+    properties: { playbackStatus: "playing" },
+  });
+  assert.deepEqual(nowPlaying(status), {
+    title: "A Song",
+    artist: "Artist One, Artist Two",
+  });
 });
 
 test("toggleRequest mutes when turning a room off and unmutes when on", () => {
@@ -169,46 +204,46 @@ function healthy(host, commit = "abc123") {
 
 test("healthBanner returns null when every host passes and is up to date", () => {
   const banner = healthBanner([
-    healthy("zimablade"),
-    healthy("pi-office"),
-    healthy("pi-bedroom"),
+    healthy("house"),
+    healthy("office"),
     healthy("nightstand"),
+    healthy("nightstand-frame"),
   ]);
   assert.equal(banner, null);
 });
 
 test("healthBanner names a host whose verify failed", () => {
   const banner = healthBanner([
-    healthy("zimablade"),
-    { host: "pi-office", status: { verify: "fail", commit: "abc", main_commit: "abc" } },
-    healthy("pi-bedroom"),
+    healthy("house"),
+    { host: "office", status: { verify: "fail", commit: "abc", main_commit: "abc" } },
+    healthy("nightstand"),
   ]);
   assert.notEqual(banner, null);
-  assert.match(banner, /pi-office/);
-  assert.doesNotMatch(banner, /zimablade/);
+  assert.match(banner, /office/);
+  assert.doesNotMatch(banner, /house/);
 });
 
 test("healthBanner names a host that is behind main", () => {
   const banner = healthBanner([
-    healthy("zimablade"),
-    { host: "pi-bedroom", status: { verify: "pass", commit: "old", main_commit: "new" } },
+    healthy("house"),
+    { host: "nightstand", status: { verify: "pass", commit: "old", main_commit: "new" } },
   ]);
-  assert.match(banner, /pi-bedroom/);
+  assert.match(banner, /nightstand/);
 });
 
 test("healthBanner names an unreachable host", () => {
   const banner = healthBanner([
-    healthy("zimablade"),
-    { host: "nightstand", status: null },
+    healthy("house"),
+    { host: "nightstand-frame", status: null },
   ]);
-  assert.match(banner, /nightstand/);
+  assert.match(banner, /nightstand-frame/);
 });
 
 test("healthBanner names several troubled hosts together", () => {
   const banner = healthBanner([
-    { host: "pi-office", status: { verify: "fail", commit: "a", main_commit: "a" } },
-    { host: "nightstand", status: null },
+    { host: "office", status: { verify: "fail", commit: "a", main_commit: "a" } },
+    { host: "nightstand-frame", status: null },
   ]);
-  assert.match(banner, /pi-office/);
-  assert.match(banner, /nightstand/);
+  assert.match(banner, /office/);
+  assert.match(banner, /nightstand-frame/);
 });

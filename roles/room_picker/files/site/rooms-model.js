@@ -26,7 +26,7 @@ export function roomsFromStatus(status, labels) {
   return labels.map(({ id, label }) => {
     const found = byId.get(id);
     if (!found) {
-      return { id, label, connected: false, on: false, volume: 0 };
+      return { id, label, connected: false, on: false, volume: 0, groupId: null, groupMuted: false };
     }
     const { client, group } = found;
     const volume = client.config?.volume ?? {};
@@ -38,6 +38,10 @@ export function roomsFromStatus(status, labels) {
       connected: client.connected === true,
       on: !clientMuted && !groupMuted,
       volume: typeof volume.percent === "number" ? volume.percent : 0,
+      // The group this client is in: the page unmutes it when a room in a muted
+      // group is turned on, so a tap on On always makes the room audible.
+      groupId: group.id ?? null,
+      groupMuted,
     };
   });
 }
@@ -56,13 +60,26 @@ function clientsById(status) {
 
 // What is playing right now, or null.
 //
-// The House meta stream carries a playbackStatus and, when the sender published
-// it, a metadata block with a title and an artist list. A sender that plays but
-// publishes no track (the "playing, no title" case the metadata bridge leaves
-// bare) is treated as nothing to show. The artist list is joined for display.
+// The rooms play the House meta stream, which carries a playbackStatus and, when
+// the sender published it, a metadata block with a title and an artist list. The
+// stream the groups are assigned to is preferred over any other, so an inner
+// source (AirPlay or Bluetooth) that happens to be playing without a title does
+// not mask House's metadata. A playing stream with no track (the "playing, no
+// title" case the metadata bridge leaves bare) is treated as nothing to show.
+// The artist list is joined for display.
 export function nowPlaying(status) {
   const streams = status?.server?.streams ?? [];
-  const playing = streams.find(isPlaying);
+  const groups = status?.server?.groups ?? [];
+  const groupStreamIds = new Set(
+    groups.map((group) => group.stream_id).filter((id) => id)
+  );
+  // The streams the rooms actually play come first; everything else is a
+  // fallback for the unusual case where no group stream is playing.
+  const ordered = [
+    ...streams.filter((stream) => groupStreamIds.has(stream.id)),
+    ...streams.filter((stream) => !groupStreamIds.has(stream.id)),
+  ];
+  const playing = ordered.find(isPlaying);
   if (!playing) {
     return null;
   }
@@ -86,6 +103,16 @@ export function toggleRequest(id, on) {
   return {
     method: "Client.SetVolume",
     params: { id, volume: { muted: !on } },
+  };
+}
+
+// The JSON-RPC request that unmutes a group. Turning on a room whose group is
+// muted sends this alongside the client unmute, so the room actually becomes
+// audible instead of flipping On and snapping back to Off on the next refresh.
+export function groupUnmuteRequest(groupId) {
+  return {
+    method: "Group.SetMute",
+    params: { id: groupId, mute: false },
   };
 }
 
