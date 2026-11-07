@@ -29,9 +29,28 @@ class FakeSnapserver:
     requests were sent.
     """
 
-    def __init__(self, clients_state: dict[str, dict]):
+    def __init__(
+        self,
+        clients_state: dict[str, dict],
+        *,
+        groups: list[dict] | None = None,
+        stream: str = "House",
+    ):
         # clients_state maps client id -> {"name": str, "latency": int}.
         self.clients_state = clients_state
+        # groups, when given, is a list of {"id", "stream_id", "clients": [ids]}.
+        # The default is one group holding every client, on `stream`, which keeps
+        # the name/latency tests unconcerned with groups (they are all on House,
+        # so no Group.SetStream fires).
+        if groups is None:
+            groups = [
+                {
+                    "id": "group-all",
+                    "stream_id": stream,
+                    "clients": list(clients_state),
+                }
+            ]
+        self.groups = groups
         self.calls: list[tuple[str, dict]] = []
 
     def __call__(self, method: str, params: dict) -> dict:
@@ -44,25 +63,31 @@ class FakeSnapserver:
         if method == "Client.SetLatency":
             self.clients_state[params["id"]]["latency"] = params["latency"]
             return {"id": params["id"], "latency": params["latency"]}
+        if method == "Group.SetStream":
+            for group in self.groups:
+                if group["id"] == params["id"]:
+                    group["stream_id"] = params["stream_id"]
+            return {"id": params["id"], "stream_id": params["stream_id"]}
         raise AssertionError(f"unexpected method {method}")
+
+    def _client_obj(self, client_id: str) -> dict:
+        state = self.clients_state[client_id]
+        return {
+            "id": client_id,
+            "connected": True,
+            "config": {"name": state["name"], "latency": state["latency"]},
+        }
 
     def _status(self) -> dict:
         return {
             "server": {
                 "groups": [
                     {
-                        "clients": [
-                            {
-                                "id": client_id,
-                                "connected": True,
-                                "config": {
-                                    "name": state["name"],
-                                    "latency": state["latency"],
-                                },
-                            }
-                            for client_id, state in self.clients_state.items()
-                        ]
+                        "id": group["id"],
+                        "stream_id": group["stream_id"],
+                        "clients": [self._client_obj(c) for c in group["clients"]],
                     }
+                    for group in self.groups
                 ]
             }
         }
@@ -141,6 +166,217 @@ def test_is_idempotent_on_a_second_run():
 
     assert second == []
     assert server.set_calls() == []
+
+
+# --------------------------------------------------------------------------- #
+# Group stream assignment: move every room onto the House meta stream
+# --------------------------------------------------------------------------- #
+
+
+def test_moves_each_rooms_group_onto_house_when_on_another_stream():
+    # Names and latencies already match, so only the stream moves are sent. living
+    # and office sit on the bare AirPlay input; bedroom is already on House.
+    server = FakeSnapserver(
+        {
+            "living": {"name": "Living room", "latency": 0},
+            "office": {"name": "Office", "latency": 0},
+            "bedroom": {"name": "Bedroom", "latency": 0},
+        },
+        groups=[
+            {"id": "g-living", "stream_id": "AirPlay", "clients": ["living"]},
+            {"id": "g-office", "stream_id": "AirPlay", "clients": ["office"]},
+            {"id": "g-bedroom", "stream_id": "House", "clients": ["bedroom"]},
+        ],
+    )
+    desired = {
+        "living": {"label": "Living room", "latency_ms": 0},
+        "office": {"label": "Office", "latency_ms": 0},
+        "bedroom": {"label": "Bedroom", "latency_ms": 0},
+    }
+
+    changed = clients.apply_client_settings(server, desired)
+
+    assert server.set_calls() == [
+        ("Group.SetStream", {"id": "g-living", "stream_id": "House"}),
+        ("Group.SetStream", {"id": "g-office", "stream_id": "House"}),
+    ]
+    assert set(changed) == {"living", "office"}
+
+
+def test_leaves_a_group_already_on_house_alone():
+    server = FakeSnapserver(
+        {"living": {"name": "Living room", "latency": 0}},
+        groups=[{"id": "g-living", "stream_id": "House", "clients": ["living"]}],
+    )
+
+    changed = clients.apply_client_settings(
+        server, {"living": {"label": "Living room", "latency_ms": 0}}
+    )
+
+    assert server.set_calls() == []
+    assert changed == []
+
+
+def test_group_reassignment_is_idempotent_on_a_second_run():
+    server = FakeSnapserver(
+        {"living": {"name": "Living room", "latency": 0}},
+        groups=[{"id": "g-living", "stream_id": "AirPlay", "clients": ["living"]}],
+    )
+    desired = {"living": {"label": "Living room", "latency_ms": 0}}
+
+    first = clients.apply_client_settings(server, desired)
+    assert first == ["living"]
+    assert server.set_calls() == [
+        ("Group.SetStream", {"id": "g-living", "stream_id": "House"})
+    ]
+
+    # The server now holds the group on House. A second run sends nothing.
+    server.calls.clear()
+    second = clients.apply_client_settings(server, desired)
+    assert second == []
+    assert server.set_calls() == []
+
+
+def test_moves_a_shared_group_once():
+    # Two rooms in one group on AirPlay: one Group.SetStream, both reported moved.
+    server = FakeSnapserver(
+        {
+            "living": {"name": "Living room", "latency": 0},
+            "office": {"name": "Office", "latency": 0},
+        },
+        groups=[{"id": "g-both", "stream_id": "AirPlay", "clients": ["living", "office"]}],
+    )
+    desired = {
+        "living": {"label": "Living room", "latency_ms": 0},
+        "office": {"label": "Office", "latency_ms": 0},
+    }
+
+    changed = clients.apply_client_settings(server, desired)
+
+    assert server.set_calls() == [
+        ("Group.SetStream", {"id": "g-both", "stream_id": "House"})
+    ]
+    assert set(changed) == {"living", "office"}
+
+
+def test_moves_a_group_on_the_tonetest_sandbox_stream_too():
+    # The reassignment has no stream special-cases: a group on the ToneTest
+    # diagnostic stream is moved to House like any other non-House stream. The
+    # live ToneTest experiment is cleaned up before this ever runs on the hub.
+    server = FakeSnapserver(
+        {"office": {"name": "Office", "latency": 0}},
+        groups=[{"id": "g-office", "stream_id": "ToneTest", "clients": ["office"]}],
+    )
+
+    changed = clients.apply_client_settings(
+        server, {"office": {"label": "Office", "latency_ms": 0}}
+    )
+
+    assert server.set_calls() == [
+        ("Group.SetStream", {"id": "g-office", "stream_id": "House"})
+    ]
+    assert changed == ["office"]
+
+
+def test_does_not_touch_the_group_of_a_room_snapserver_has_never_seen():
+    # bedroom is in the repo but absent from the server. Its group is unknown, so
+    # no Group.SetStream is sent for it.
+    server = FakeSnapserver(
+        {"office": {"name": "Office", "latency": 0}},
+        groups=[{"id": "g-office", "stream_id": "AirPlay", "clients": ["office"]}],
+    )
+    desired = {
+        "office": {"label": "Office", "latency_ms": 0},
+        "bedroom": {"label": "Bedroom", "latency_ms": 0},
+    }
+
+    changed = clients.apply_client_settings(server, desired)
+
+    assert server.set_calls() == [
+        ("Group.SetStream", {"id": "g-office", "stream_id": "House"})
+    ]
+    assert changed == ["office"]
+
+
+# --------------------------------------------------------------------------- #
+# Tolerant reading of a status bloated with inline cover art
+# --------------------------------------------------------------------------- #
+
+
+def test_rpc_result_tolerates_control_characters_in_art_data():
+    # snapserver embeds cover art and track metadata in Server.GetStatus, and the
+    # artData can carry unescaped control characters that strict JSON (and jq)
+    # reject. The hub-side reader must still parse it, or the apply and verify
+    # fail and the hub rolls back to its last-good commit.
+    art = "iVBORw0KGgo" + "".join(chr(c) for c in range(0, 32)) + "A" * 2048
+    body = (
+        '{"id":1,"jsonrpc":"2.0","result":{"server":{'
+        '"streams":[{"id":"House"}],'
+        '"groups":[{"id":"g","stream_id":"House","clients":[]}]},'
+        '"properties":{"metadata":{"artData":{"data":"' + art + '"}}}}}'
+    )
+
+    result = clients.rpc_result(body, "Server.GetStatus")
+
+    assert result["server"]["streams"][0]["id"] == "House"
+    assert result["server"]["groups"][0]["stream_id"] == "House"
+
+
+def test_rpc_result_raises_on_a_jsonrpc_error():
+    body = '{"id":1,"jsonrpc":"2.0","error":{"code":-32601,"message":"nope"}}'
+    try:
+        clients.rpc_result(body, "Server.GetStatus")
+    except RuntimeError as exc:
+        assert "nope" in str(exc)
+    else:
+        raise AssertionError("expected a RuntimeError on a JSON-RPC error")
+
+
+# --------------------------------------------------------------------------- #
+# Stream presence / format check used by the hub's verify scripts
+# --------------------------------------------------------------------------- #
+
+
+def _streams_rpc(streams: list[dict]) -> clients.Rpc:
+    def rpc(method: str, params: dict) -> dict:
+        assert method == "Server.GetStatus"
+        return {"server": {"streams": streams}}
+
+    return rpc
+
+
+def test_check_streams_passes_when_all_present_and_bt_format_right():
+    rpc = _streams_rpc(
+        [
+            {"id": "AirPlay"},
+            {"id": "Bluetooth", "uri": {"query": {"sampleformat": "44100:16:2"}}},
+            {"id": "House"},
+        ]
+    )
+    assert clients.check_streams(rpc) == []
+
+
+def test_check_streams_reports_a_missing_stream():
+    rpc = _streams_rpc(
+        [
+            {"id": "AirPlay"},
+            {"id": "Bluetooth", "uri": {"query": {"sampleformat": "44100:16:2"}}},
+        ]
+    )
+    assert clients.check_streams(rpc) == ["snapserver is missing streams: House"]
+
+
+def test_check_streams_reports_a_wrong_bluetooth_sampleformat():
+    rpc = _streams_rpc(
+        [
+            {"id": "AirPlay"},
+            {"id": "Bluetooth", "uri": {"query": {"sampleformat": "48000:16:2"}}},
+            {"id": "House"},
+        ]
+    )
+    assert clients.check_streams(rpc) == [
+        "Bluetooth stream sample format is '48000:16:2', expected 44100:16:2"
+    ]
 
 
 # --------------------------------------------------------------------------- #
