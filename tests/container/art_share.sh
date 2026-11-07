@@ -28,14 +28,30 @@ apt-get update -qq
 apt-get install -y -qq git ansible-core python3 >/dev/null
 
 # Placeholder local settings, the same shape bootstrap.sh would write. The
-# art-share password is a throwaway value that never leaves the container.
+# art-share password is a throwaway value that never leaves the container. Both
+# passwords below deliberately carry a double quote, a dollar sign, a backtick
+# and a backslash, the characters a shell would mangle, to prove the role sets
+# them verbatim (it feeds smbpasswd on stdin, no shell interpolation).
 mkdir -p /etc/snaphouse
 cp /repo/local.example.yml /etc/snaphouse/local.yml
+
+pw1='Qu"x$y`z\1'
+pw2='Nu"w$v`t\2'
+
+# Rewrite the art_share_password line in place. The value is single-quoted for
+# YAML (none of these passwords contain a single quote), and "$1" is a literal
+# expansion so the shell never re-interprets its $ or backtick.
+set_art_password() {
+    sed -i '/^art_share_password:/d' /etc/snaphouse/local.yml
+    printf "art_share_password: '%s'\n" "$1" >> /etc/snaphouse/local.yml
+}
 
 # The hub is whichever host carries the art_share role; read it from the
 # inventory rather than hardcoding a hostname, so a later hostname change needs
 # no edit here.
 host="$(python3 -c "import yaml; h=yaml.safe_load(open('/repo/vars/hosts.yml'))['snaphouse_hosts']; print(next(k for k, v in h.items() if 'art_share' in v['roles']))")"
+
+set_art_password "${pw1}"
 echo "==> Applying site.yml for ${host} (the art-share host)"
 ansible-playbook site.yml -e "snaphouse_host=${host}" --skip-tags hardware,service
 
@@ -56,4 +72,44 @@ done
 echo "==> Running the art-share verify"
 /etc/snaphouse/verify.d/art_share.sh
 echo "==> Art-share verify passed"
+
+# The share account exists in Samba's passdb.
+pdbedit -L | grep -q '^art:'
+echo "==> art account present in the passdb"
+
+# Authenticate as art with the first password and write a file through the share,
+# then confirm it shows up in the read-only JSON listing.
+echo "hello from the art share" > /tmp/art-upload.txt
+echo "==> Writing a file over SMB with the first password"
+smbclient //localhost/art -U "art%${pw1}" -c 'put /tmp/art-upload.txt uploaded1.txt'
+curl -fsS http://localhost/art/ | jq -e 'any(.[]; .name == "uploaded1.txt")' >/dev/null
+echo "==> First password authenticates and the upload is listed"
+
+# Rotate the password in local.yml and re-apply. local.yml is the source of
+# truth, so the role must notice the change and re-set the SMB password.
+set_art_password "${pw2}"
+echo "==> Re-applying after rotating the password"
+ansible-playbook site.yml -e "snaphouse_host=${host}" --skip-tags hardware,service
+
+echo "==> The old password must now be rejected"
+if smbclient //localhost/art -U "art%${pw1}" -c 'ls' >/dev/null 2>&1; then
+    echo "!!! the old password still works after rotation" >&2
+    exit 1
+fi
+echo "==> Writing a file over SMB with the rotated password"
+smbclient //localhost/art -U "art%${pw2}" -c 'put /tmp/art-upload.txt uploaded2.txt'
+curl -fsS http://localhost/art/ | jq -e 'any(.[]; .name == "uploaded2.txt")' >/dev/null
+echo "==> Rotated password authenticates; password path verified"
+
+# With the password unchanged in local.yml, a re-apply must set nothing: the
+# rotation check compares the stored hash to the configured one and stays quiet.
+echo "==> A re-apply with the same password must change nothing"
+recap="$(ansible-playbook site.yml -e "snaphouse_host=${host}" --skip-tags hardware,service \
+    | grep 'PLAY RECAP' -A1 | tail -1)"
+echo "==> Unchanged re-apply recap: ${recap}"
+if ! echo "${recap}" | grep -q 'changed=0'; then
+    echo "!!! art_share was not idempotent on an unchanged password: ${recap}" >&2
+    exit 1
+fi
+echo "==> Unchanged re-apply is a no-op; idempotency verified"
 INNER

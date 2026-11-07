@@ -16,6 +16,10 @@
     name:
       - samba
       - smbclient
+      # openssl provides the MD4 (legacy provider) the rotation check hashes
+      # with; it is normally present already, listed here so the role is
+      # self-contained.
+      - openssl
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -48,10 +52,12 @@
 
 - name: Define the writable SMB art share
   # Appended to the stock Debian smb.conf, which already carries a sane [global].
-  # LAN-only: hosts allow lists loopback and the private ranges and takes
-  # precedence over the catch-all deny, so the share is unreachable off the LAN
-  # even though the machine has no inbound internet access anyway. valid users
-  # and force user keep every write owned by the art account.
+  # LAN-only by a hosts allow/deny pair: allow lists loopback and the private
+  # ranges, both IPv4 (RFC1918) and IPv6 (fe80::/10 link-local and fc00::/7 ULA,
+  # the usual path when a Mac or phone reaches the hub over .local mDNS), and
+  # takes precedence over the catch-all deny of all IPv4 and IPv6. The share is
+  # unreachable off the LAN; the machine has no inbound internet access anyway.
+  # valid users and force user keep every write owned by the art account.
   ansible.builtin.blockinfile:
     path: /etc/samba/smb.conf
     marker: "# {mark} ANSIBLE MANAGED BLOCK art_share"
@@ -66,29 +72,58 @@
          force group = art
          create mask = 0664
          directory mask = 2775
-         hosts allow = 127.0.0.1 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
-         hosts deny = 0.0.0.0/0
+         hosts allow = 127.0.0.1 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fe80::/10 fc00::/7
+         hosts deny = 0.0.0.0/0 ::/0
     validate: testparm -s %s
   notify: Reload smbd for art_share
 
-- name: Check whether the art SMB user already exists
-  # smbpasswd is not idempotent, so only set the password when Samba does not yet
-  # know the art account. This keeps re-applies from reporting a change (and from
-  # logging the password) on every run.
-  ansible.builtin.command: pdbedit --list --user=art
-  register: art_share_smb_user
+- name: Read the art account's stored SMB password hash
+  # pdbedit prints the account in smbpasswd format; field 4 is the stored NT
+  # hash. The output is empty (rc still 0) when Samba does not yet know the
+  # account, which the rotation compare below treats as "no hash yet".
+  ansible.builtin.command: pdbedit --list --smbpasswd-style --user=art
+  register: art_share_pdbedit
   changed_when: false
   failed_when: false
 
-- name: Set the art SMB password from local settings
+- name: Note the stored NT hash for the art account
+  ansible.builtin.set_fact:
+    art_share_stored_nt: "{{ (art_share_pdbedit.stdout | trim).split(':')[3] if (art_share_pdbedit.stdout | trim) else '' }}"
+  no_log: true
+
+- name: Work out the NT hash of the configured share password
+  # The NT hash is MD4 of the UTF-16LE password, the form Samba stores. Computed
+  # from art_share_password so local.yml is the source of truth: when the password
+  # there changes, this hash changes and the set-password task runs again. The
+  # password is fed on stdin, never interpolated into the command, so a value with
+  # quotes, $, backticks or backslashes is hashed verbatim and the pipeline stays
+  # constant. MD4 is a legacy algorithm, so OpenSSL's legacy provider is loaded
+  # alongside the default. pipefail (hence bash) surfaces an iconv or openssl
+  # failure instead of letting the trailing tr mask it.
   ansible.builtin.shell:
     cmd: >-
       set -o pipefail;
-      printf '%s\n%s\n' "{{ art_share_password }}" "{{ art_share_password }}"
-      | smbpasswd -s -a art
+      iconv -f UTF-8 -t UTF-16LE
+      | openssl dgst -md4 -provider legacy -provider default -r
+      | cut -d' ' -f1
+      | tr '[:lower:]' '[:upper:]'
     executable: /bin/bash
-  when: art_share_smb_user.rc != 0
-  # Only runs when Samba does not yet know the account, and adding it is a change.
+    stdin: "{{ art_share_password }}"
+    stdin_add_newline: false
+  register: art_share_want_nt
+  changed_when: false
+  no_log: true
+
+- name: Set the art SMB password from local settings
+  # Only when the stored hash differs from the configured one (first install, or
+  # a rotation in local.yml), so re-applies with an unchanged password stay
+  # quiet. The password goes to smbpasswd on stdin, twice and newline separated,
+  # again with no shell in the path.
+  ansible.builtin.command:
+    cmd: smbpasswd -s -a art
+    stdin: "{{ art_share_password }}\n{{ art_share_password }}\n"
+    stdin_add_newline: false
+  when: (art_share_want_nt.stdout | trim | upper) != (art_share_stored_nt | upper)
   changed_when: true
   no_log: true
 
