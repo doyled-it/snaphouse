@@ -1,6 +1,6 @@
 ---
 # The Bluetooth stack for machines that send audio to a speaker (the hub to the
-# Vizio, pi-bedroom to the JBL) or receive it from a phone (the hub). It installs
+# Vizio, nightstand to the JBL) or receive it from a phone (the hub). It installs
 # BlueALSA with the A2DP profiles this host needs, keeps the adapters closed to
 # pairing except during a deliberate `snaphouse pair` window, and drops in the
 # on-device check. Which profiles a host runs is derived from its config: a host

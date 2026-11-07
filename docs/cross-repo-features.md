@@ -18,13 +18,13 @@ git clone git@github.com:doyled-it/nightstand.git
 ## The repos and what they own
 
 - **snaphouse**: whole-house audio and the machines it runs on. Owns the hub
-  (`zimablade`: snapserver, AirPlay and Bluetooth inputs, room-picker page, art share),
+  (`house`: snapserver, AirPlay and Bluetooth inputs, room-picker page, art share),
   the two Pi audio clients, base OS configuration on all three machines, and the first
-  bootstrap of every device, including `pi-bedroom`. Exposes snapserver's JSON-RPC and
+  bootstrap of every device, including `nightstand`. Exposes snapserver's JSON-RPC and
   HTTP API on the LAN, and the art share.
-- **nightstand**: the bedside e-ink frame on `pi-bedroom`. Consumes snapserver's API and
+- **nightstand**: the bedside e-ink frame on the `nightstand` host. Consumes snapserver's API and
   the art share. After its first install (run by the snaphouse bootstrap) it owns
-  everything display-specific on `pi-bedroom`: SPI/I2C, the `inky` library, its service,
+  everything display-specific on that host: SPI/I2C, the `inky` library, its service,
   its self-update timer, and its art sync.
 
 ## The seams (where features leak)
@@ -39,14 +39,14 @@ git clone git@github.com:doyled-it/nightstand.git
 - **Art share (snaphouse produces, nightstand consumes).** One folder on the hub,
   `/srv/snaphouse/art`, exposed two ways on the LAN. People drop images in over a writable
   Samba share (`[art]`, one account whose password lives only in the hub's local settings).
-  `pi-bedroom` reads it over HTTP: nginx serves the same folder read-only at `/art/` with
+  the `nightstand` host reads it over HTTP: nginx serves the same folder read-only at `/art/` with
   `autoindex on; autoindex_format json;`, the "Art listing" contract below. nightstand
   syncs that listing to a local cache on a timer.
-- **Device ownership on `pi-bedroom`.** snaphouse bootstrap installs the OS base and
+- **Device ownership on `nightstand`.** snaphouse bootstrap installs the OS base and
   audio, clones nightstand, and runs its installer once. Both repos self-update on their
   own timers. Neither repo's playbook or installer may change files the other owns.
 - **Hub address.** nightstand reads the hub address from its local config, defaulting to
-  `zimablade.local` (mDNS). The hostname is set in snaphouse.
+  `house.local` (mDNS). The hostname is set in snaphouse.
 - **Docs.** Each repo's README and AGENTS.md describe its side of these seams. A change to
   a seam updates this file in the same PR set.
 
@@ -54,11 +54,11 @@ git clone git@github.com:doyled-it/nightstand.git
 
 **Machine status file.** Every machine serves `http://<host>.local/status.json`
 (nginx, `Access-Control-Allow-Origin: *`). nightstand serves its own at
-`http://pi-bedroom.local/nightstand/status.json`. Same schema everywhere:
+`http://nightstand.local/nightstand/status.json`. Same schema everywhere:
 
 ```json
 {
-  "host": "pi-office",
+  "host": "office",
   "repo": "snaphouse",
   "commit": "<sha running now>",
   "main_commit": "<sha of origin/main at last check>",
@@ -72,15 +72,15 @@ git clone git@github.com:doyled-it/nightstand.git
 successful verify; consumers treat an empty value as "no last-good commit yet". A machine
 is healthy when `verify == "pass"` and `commit == main_commit`. snaphouse writes `/var/lib/snaphouse/public/status.json`;
 nightstand writes `/var/lib/nightstand/public/status.json`, and snaphouse's nginx on
-`pi-bedroom` serves that directory at `/nightstand/`.
+the `nightstand` host serves that directory at `/nightstand/`.
 
-**Art listing.** The hub serves the art folder read-only at `http://zimablade.local/art/`
+**Art listing.** The hub serves the art folder read-only at `http://house.local/art/`
 with nginx `autoindex on; autoindex_format json;`. Each entry is
 `{"name": str, "type": "file" | "directory", "mtime": str, "size": int}`. nightstand
 mirrors files one level deep and ignores directories. Sidecar captions are files named
 `<image file>.txt` (line 1 title, line 2 artist) in the same folder.
 
-**snapserver API.** `http://zimablade.local/jsonrpc` is proxied by nginx on the hub to
+**snapserver API.** `http://house.local/jsonrpc` is proxied by nginx on the hub to
 snapserver's JSON-RPC (port 1780). Port 1780 itself stays reachable on the LAN for
 Snapweb. nightstand calls port 1780 directly.
 

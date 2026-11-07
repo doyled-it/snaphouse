@@ -1,5 +1,7 @@
 # snaphouse Implementation Plan
 
+> **Note:** Hostnames were renamed on 2026-11-06 (zimablade->house, pi-office->office, pi-bedroom->nightstand); this plan uses the original names.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Each task maps to one GitHub issue, one Orca worktree, and one PR. Tasks labeled `needs-owner` run over SSH with the owner present; never wipe, reinstall, or remove anything on a machine without the owner's explicit go-ahead in that session.
 
 **Goal:** Synced audio in three rooms from AirPlay and Bluetooth senders, a room-picker page, and machines that rebuild from one bootstrap command and update themselves from `main` with a safe fallback.

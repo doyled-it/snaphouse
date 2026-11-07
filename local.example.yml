@@ -13,7 +13,7 @@
 # can swap across reboots. Fill the lines that apply to this machine.
 #
 #   bt_receive_adapter:  hub only, the dongle that receives A2DP from the phone
-#   bt_send_adapter:     hub and pi-bedroom, the adapter that sends to a speaker
+#   bt_send_adapter:     hub and nightstand, the adapter that sends to a speaker
 #
 # bt_receive_adapter: ""
 # bt_send_adapter: ""
@@ -22,7 +22,7 @@
 # values empty until pairing fills them in.
 speakers:
   vizio: ""   # living-room soundbar, paired from the hub
-  jbl: ""     # bedroom speaker, paired from pi-bedroom
+  jbl: ""     # bedroom speaker, paired from nightstand
 
 # Hub address override. Leave empty to use mDNS (the hub answers as its own
 # hostname with the .local suffix). Set it only if mDNS is not usable here.

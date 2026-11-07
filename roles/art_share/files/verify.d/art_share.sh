@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # snaphouse art-share check, managed by Ansible (roles/art_share). The hub serves
 # the art folder two ways on the LAN: a read-only JSON listing over nginx that
-# pi-bedroom pulls from, and a writable SMB share people drop images into. This
+# nightstand pulls from, and a writable SMB share people drop images into. This
 # check proves both surfaces are up. Run by `snaphouse verify` from
 # /etc/snaphouse/verify.d.
 #

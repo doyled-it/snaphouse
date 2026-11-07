@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Art-share container check (Task 8).
 #
-# Applies site.yml for the hub (zimablade) inside a debian:bookworm container the
+# Applies site.yml for the hub (house) inside a debian:bookworm container the
 # way a real machine would (connection: local), then brings up nginx and smbd as
 # plain processes (the container has no systemd, so the service tasks are gated
 # off) and runs the on-device art-share verify. The verify asserts the read-only

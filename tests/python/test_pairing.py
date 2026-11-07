@@ -255,7 +255,7 @@ bt_send_adapter: "11:22:33:44:55:66"
 # Paired speaker addresses, written by `snaphouse pair speaker <name>`.
 speakers:
   vizio: ""   # living-room soundbar, paired from the hub
-  jbl: ""     # bedroom speaker, paired from pi-bedroom
+  jbl: ""     # bedroom speaker, paired from nightstand
 
 art_share_password: "change-me"
 """

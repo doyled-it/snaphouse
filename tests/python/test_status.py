@@ -36,7 +36,7 @@ PACIFIC = timezone(timedelta(hours=-8))
 def sample(path: Path, **overrides) -> dict:
     """Write a status file with sensible defaults; return the arguments used."""
     args = dict(
-        host="pi-office",
+        host="office",
         commit="a" * 40,
         main_commit="b" * 40,
         last_good="c" * 40,
@@ -83,7 +83,7 @@ def test_values_are_written_verbatim(tmp_path):
     path = tmp_path / "status.json"
     args = sample(path)
     data = read(path)
-    assert data["host"] == "pi-office"
+    assert data["host"] == "office"
     assert data["commit"] == args["commit"]
     assert data["main_commit"] == args["main_commit"]
     assert data["last_good"] == args["last_good"]
@@ -111,7 +111,7 @@ def test_rejects_naive_datetime(tmp_path):
     with pytest.raises(ValueError):
         write_status(
             path,
-            host="pi-office",
+            host="office",
             commit="a" * 40,
             main_commit="b" * 40,
             last_good="c" * 40,

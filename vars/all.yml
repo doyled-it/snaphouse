@@ -23,9 +23,9 @@ update_randomized_delay: "120s"
 # Automatic security updates reboot during quiet hours, staggered per machine so
 # the house is never fully down at once.
 reboot_times:
-  zimablade: "03:15"
-  pi-office: "03:45"
-  pi-bedroom: "04:15"
+  house: "03:15"
+  office: "03:45"
+  nightstand: "04:15"
 
 # Snapcast meta stream: AirPlay is listed before Bluetooth, so AirPlay wins a tie
 # when both senders are active. Both the AirPlay and Bluetooth sinks advertise as

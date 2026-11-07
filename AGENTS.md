@@ -8,7 +8,7 @@ contracts are in `docs/cross-repo-features.md`.
 ## What this repo is
 
 Synced whole-house audio on Snapcast across three rooms: a ZimaBlade hub
-(`zimablade`, living room) and two Raspberry Pis (`pi-office`, `pi-bedroom`).
+(`house`, living room) and two Raspberry Pis (`office`, `nightstand`).
 The repo is the whole system written down. Each machine applies this repo to
 itself with Ansible in pull mode: a systemd timer fetches `main`, runs
 `site.yml` with `connection: local`, runs `snaphouse verify`, and falls back to
@@ -25,7 +25,7 @@ the last-good commit if the apply or verify fails.
 - **No em dashes** in code, comments, docs, commit messages, or UI text.
 - **No inbound access from the internet.** No tunnels, port forwards, or
   cloud-hosted control. Outbound is limited per machine (GitHub, OS mirrors,
-  NTP; plus nightstand's list on `pi-bedroom`).
+  NTP; plus nightstand's list on the `nightstand` host).
 - **TDD.** Write the failing test, watch it fail, implement, watch it pass. Run
   the focused test while iterating and the full suite before committing.
 
@@ -79,7 +79,7 @@ land by PR with CI green.
 ## Cross-repo
 
 `snaphouse` is the hub of a two-repo system; `nightstand` (the bedside e-ink
-frame on `pi-bedroom`) consumes snapserver's API and the art share. The seams
+frame on the `nightstand` host) consumes snapserver's API and the art share. The seams
 and pinned contracts (status file schema, art listing, `/jsonrpc` proxy) are in
 `docs/cross-repo-features.md`. A change to a seam updates that file and both
 repos' docs in the same PR set. The pull-request template carries the

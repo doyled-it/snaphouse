@@ -15,9 +15,9 @@ server {
         add_header Access-Control-Allow-Origin "*" always;
         default_type application/json;
     }
-{% if snaphouse_host == "pi-bedroom" %}
+{% if snaphouse_host == "nightstand" %}
 
-    # pi-bedroom also serves nightstand's own status file. nightstand owns the
+    # the nightstand host also serves nightstand's own status file. nightstand owns the
     # directory; snaphouse only exposes it, with the same open-origin header.
     location /nightstand/ {
         alias /var/lib/nightstand/public/;
