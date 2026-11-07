@@ -1,9 +1,12 @@
 # snaphouse Bluetooth input. Plays the connected phone's A2DP audio into the ALSA
 # loopback, where snapserver captures it (hw:Loopback,1,0) as the "Bluetooth"
-# stream. The all-zero address is bluealsa-aplay's wildcard for "any connected
-# device", so whichever phone is paired and playing is forwarded. --volume=software
-# applies the phone's AVRCP volume to the audio itself, so the house attenuates at
-# the source and every room keeps its relative level. Installed by roles/hub_input.
+# stream. It writes through the snaphouse_btloop plug device (see the ALSA drop-in
+# this role installs), which resamples to the shared sample format so both ends of
+# snd-aloop agree. The all-zero address is bluealsa-aplay's wildcard for "any
+# connected device", so whichever phone is paired and playing is forwarded.
+# --volume=software applies the phone's AVRCP volume to the audio itself, so the
+# house attenuates at the source and every room keeps its relative level.
+# Installed by roles/hub_input.
 [Unit]
 Description=snaphouse Bluetooth input (A2DP to the Snapcast loopback)
 # bluealsa exposes the A2DP PCMs; snd-aloop provides the loopback sink.
@@ -12,7 +15,7 @@ Wants=bluealsa.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/bluealsa-aplay --pcm=hw:Loopback,0,0 --profile-a2dp --volume=software 00:00:00:00:00:00
+ExecStart=/usr/bin/bluealsa-aplay --pcm=snaphouse_btloop --profile-a2dp --volume=software 00:00:00:00:00:00
 Restart=on-failure
 RestartSec=2
 

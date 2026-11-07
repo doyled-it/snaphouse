@@ -8,15 +8,23 @@
 # The pinned snapcast_version and the reason are in vars/all.yml.
 
 [stream]
+# Every member of the meta stream shares one sample format. snapserver fixes the
+# AirPlay source at 44100:16:2, so the global default and the Bluetooth source are
+# pinned to the same value; otherwise the House stream mixes mismatched rates and
+# plays at the wrong pitch. See house_sample_format in vars/all.yml.
+sampleformat = {{ house_sample_format }}
+
 # AirPlay in: snapserver launches shairport-sync and advertises it as the house.
 # shairport-sync carries track metadata and cover art into the stream properties.
 source = airplay:///shairport-sync?name=AirPlay&devicename={{ house_stream_name }}
 
-# Bluetooth in: bluealsa-aplay decodes the phone's A2DP into hw:Loopback,0,0; this
-# captures the other end of the loopback. The control script bridges the phone's
-# AVRCP title/artist into the stream properties. It carries a venv shebang, so
-# snapserver runs it with the on-device uv venv (which has the D-Bus library).
-source = alsa:///?name=Bluetooth&device=hw:Loopback,1,0&controlscript=/opt/snaphouse/lib/snaphouse/avrcp_meta.py
+# Bluetooth in: bluealsa-aplay decodes the phone's A2DP into the loopback at the
+# shared sample format (hw:Loopback,0,0 via the snaphouse_btloop ALSA device);
+# this captures the other end (hw:Loopback,1,0) at the same format, so both ends
+# of snd-aloop agree. The control script bridges the phone's AVRCP title/artist
+# into the stream properties. It carries a venv shebang, so snapserver runs it
+# with the on-device uv venv (which has the D-Bus library).
+source = alsa:///?name=Bluetooth&device=hw:Loopback,1,0&sampleformat={{ house_sample_format }}&controlscript=/opt/snaphouse/lib/snaphouse/avrcp_meta.py
 
 # The stream the rooms play: the active input, AirPlay winning a tie.
 source = meta:///AirPlay/Bluetooth?name={{ house_stream_name }}

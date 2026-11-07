@@ -90,6 +90,24 @@
     mode: "0644"
   notify: Load configured kernel modules
 
+- name: Ensure the ALSA system config drop-in dir exists
+  ansible.builtin.file:
+    path: /etc/alsa/conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the Bluetooth loopback ALSA device
+  ansible.builtin.template:
+    src: snaphouse-btloop.conf.j2
+    dest: /etc/alsa/conf.d/99-snaphouse-btloop.conf
+    owner: root
+    group: root
+    mode: "0644"
+  # bluealsa-aplay reads this at start, so pick up a format change on restart.
+  notify: Restart the Bluetooth input
+
 - name: Install the Bluetooth-input service unit
   ansible.builtin.copy:
     src: snaphouse-bt-in.service

@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 from typing import Any, Iterable
 
 
@@ -181,9 +182,18 @@ def handle_request(request: dict, player: Player) -> dict | None:
     }
 
 
+# stdout is written from two threads at runtime (the main event loop and the
+# D-Bus reader's error path), so every write is serialized under this lock. One
+# JSON-RPC message is composed into a single line first, then written and flushed
+# while holding the lock, so two messages can never interleave on the wire.
+_WRITE_LOCK = threading.Lock()
+
+
 def write_message(out: Any, message: dict) -> None:
-    out.write(json.dumps(message) + "\n")
-    out.flush()
+    line = json.dumps(message) + "\n"
+    with _WRITE_LOCK:
+        out.write(line)
+        out.flush()
 
 
 def process_event(player: Player, event: tuple, out: Any) -> None:
@@ -291,7 +301,6 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover
     """Run the control script against stdin and the live BlueZ signal stream."""
     import queue
-    import threading
 
     _parse_args(argv)
     out = sys.stdout

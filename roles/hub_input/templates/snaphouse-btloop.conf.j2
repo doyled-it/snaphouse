@@ -1,0 +1,19 @@
+# snaphouse Bluetooth loopback feed. Managed by Ansible (roles/hub_input).
+#
+# bluealsa-aplay has no option to set the output rate, so it would write the
+# phone's A2DP audio into the loopback at whatever rate the phone negotiated
+# (often 44100, sometimes 48000). snd-aloop ties snapserver's capture rate to
+# what is written here, and the meta stream needs every member at one format, so
+# this plug device resamples whatever bluealsa-aplay plays to {{ house_sample_format }}
+# before it reaches hw:Loopback,0,0. The format comes from house_sample_format in
+# vars/all.yml, the same value the snapserver Bluetooth source is pinned to.
+{% set _fmt = house_sample_format.split(':') %}
+pcm.snaphouse_btloop {
+    type plug
+    slave {
+        pcm "hw:Loopback,0,0"
+        format {{ {'8': 'S8', '16': 'S16_LE', '24': 'S24_LE', '32': 'S32_LE'}[_fmt[1]] }}
+        rate {{ _fmt[0] }}
+        channels {{ _fmt[2] }}
+    }
+}

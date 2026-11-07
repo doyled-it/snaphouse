@@ -23,3 +23,15 @@ if [ "${#missing[@]}" -ne 0 ]; then
     echo "snapserver is missing streams: ${missing[*]}" >&2
     exit 1
 fi
+
+# The Bluetooth source must report the shared 44100:16:2 sample format, matching
+# the fixed-rate AirPlay source and both ends of the snd-aloop loopback. A
+# mismatch here means the House meta stream would play Bluetooth at the wrong
+# pitch, or the loopback capture would fail to open.
+bt_format="$(printf '%s' "${status}" \
+    | jq -r '.result.server.streams[] | select(.id == "Bluetooth") | .uri.query.sampleformat')"
+
+if [ "${bt_format}" != "44100:16:2" ]; then
+    echo "Bluetooth stream sample format is '${bt_format}', expected 44100:16:2" >&2
+    exit 1
+fi

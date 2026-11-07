@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import io
 import json
+import threading
+import time
 
 from snaphouse import avrcp_meta
 
@@ -140,3 +142,55 @@ def test_a_track_change_without_metadata_notifies_without_a_title():
     last = notices[-1]["params"]
     assert last["playbackStatus"] == "playing"
     assert "metadata" not in last
+
+
+class _NonAtomicStream:
+    """A stream whose write is deliberately non-atomic: it appends one character
+    at a time and yields the interpreter between characters.
+
+    At runtime the control script writes stdout from two threads (the event loop
+    and the D-Bus reader's error path). If write_message did not serialize its
+    writes, two messages written through a stream like this would interleave
+    their characters and produce corrupt, unparseable lines. With the writes
+    serialized, every line stays whole no matter how the threads are scheduled.
+    """
+
+    def __init__(self) -> None:
+        self.chars: list[str] = []
+
+    def write(self, text: str) -> None:
+        for char in text:
+            self.chars.append(char)
+            time.sleep(0)  # a yield point, so an unserialized writer interleaves
+
+    def flush(self) -> None:
+        pass
+
+    def getvalue(self) -> str:
+        return "".join(self.chars)
+
+
+def test_concurrent_writes_never_interleave_json_lines():
+    out = _NonAtomicStream()
+    threads_count = 16
+    per_thread = 40
+
+    def writer(thread_id: int) -> None:
+        for n in range(per_thread):
+            avrcp_meta.write_message(
+                out, {"jsonrpc": "2.0", "id": f"{thread_id}-{n}", "value": thread_id}
+            )
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(threads_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    lines = [line for line in out.getvalue().splitlines() if line]
+    # Every line parses as whole JSON (no interleaving corrupted any of them)...
+    parsed = [json.loads(line) for line in lines]
+    # ...and exactly the messages that were written came out, each once.
+    expected = {f"{i}-{n}" for i in range(threads_count) for n in range(per_thread)}
+    assert {message["id"] for message in parsed} == expected
+    assert len(parsed) == threads_count * per_thread
