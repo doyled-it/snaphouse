@@ -1,3 +1,67 @@
 ---
-# The bt_speaker role is implemented in a later task. No tasks yet.
-[]
+# Keep the bedroom's Bluetooth speaker connected. The JBL is off most of the
+# time; a 30-second timer runs the keepalive, which reconnects it whenever it
+# powers on and logs only when the connection state changes. Days with the
+# speaker off leave one log line rather than a loop of errors, and the speaker
+# returns within a tick or two (design: "Bluetooth speakers that come and go",
+# Review Focus 1). Only pi-bedroom runs this role.
+#
+# The keepalive and its verify check pass the speaker name (jbl); the address is
+# the household's and is read from local.yml on the device. Service steps are
+# gated on common_systemd_init so the CI container apply stays green.
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the speaker keepalive verify check
+  ansible.builtin.copy:
+    src: verify.d/bt_speaker.sh
+    dest: /etc/snaphouse/verify.d/bt_speaker.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure the systemd unit directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the speaker keepalive service unit
+  ansible.builtin.template:
+    src: snaphouse-bt-keepalive.service.j2
+    dest: /etc/systemd/system/snaphouse-bt-keepalive.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for bt_speaker
+
+- name: Install the speaker keepalive timer unit
+  ansible.builtin.copy:
+    src: snaphouse-bt-keepalive.timer
+    dest: /etc/systemd/system/snaphouse-bt-keepalive.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for bt_speaker
+
+# Make the units known before enabling the timer on a first install. The handler
+# is gated on systemd, so this is a no-op in the CI container.
+- name: Reload systemd now if the units changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the speaker keepalive timer
+  ansible.builtin.systemd_service:
+    name: snaphouse-bt-keepalive.timer
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service

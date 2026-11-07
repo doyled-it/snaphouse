@@ -1,0 +1,23 @@
+{#
+  ALSA alias for a Bluetooth room output, managed by Ansible (roles/snapclient).
+  snapclient plays into the PCM named "snaphouse_bt"; bluealsa routes it over
+  A2DP to this room's speaker. The plug layer converts snapclient's stream to
+  whatever the A2DP link negotiates.
+
+  The speaker's address is the household's, so it is read from the untracked
+  /etc/snaphouse/local.yml (speakers.<name>) at apply time and never written to
+  the repo. `speakers` is loaded from local.yml by site.yml.
+#}
+{% set speaker = snaphouse_hosts[snaphouse_host].output.speaker %}
+pcm.snaphouse_bt {
+    type plug
+    slave.pcm {
+        type bluealsa
+        device "{{ speakers[speaker] }}"
+        profile "a2dp"
+    }
+    hint {
+        show on
+        description "snaphouse Bluetooth speaker"
+    }
+}

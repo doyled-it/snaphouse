@@ -1,0 +1,35 @@
+{#
+  systemd drop-in for the packaged snapclient.service. It replaces the packaged
+  ExecStart with this room's command and never touches /etc/default/snapclient,
+  so the whole command is here in one place.
+
+    --host      the hub (snapserver). hub_address overrides mDNS when set in
+                local.yml; otherwise the hub answers as zimablade.local.
+    --hostID    this room's stable id (living/office/bedroom), which is also the
+                client id the hub addresses in apply_client_settings.
+    --player    alsa.
+    --soundcard this room's output:
+                  bluetooth -> the snaphouse_bt bluealsa alias (asound.conf)
+                  alsa      -> the USB adapter's ALSA card name (vars/hosts.yml,
+                               filled during the pi-office build); "default"
+                               until it is set.
+
+  A Bluetooth speaker comes and goes, so snapclient is restarted on failure
+  rather than left dead; the keepalive timer (roles/bt_speaker) brings the link
+  back, and the next restart opens the device. RestartSec keeps that from
+  becoming a tight loop while the speaker is off.
+#}
+{% set host = snaphouse_hosts[snaphouse_host] %}
+{% set server = hub_address | default('zimablade.local', true) %}
+{% if host.output.kind == 'bluetooth' %}
+{% set soundcard = 'snaphouse_bt' %}
+{% elif host.output.device %}
+{% set soundcard = host.output.device %}
+{% else %}
+{% set soundcard = 'default' %}
+{% endif %}
+[Service]
+ExecStart=
+ExecStart=/usr/bin/snapclient --host {{ server }} --hostID {{ host.host_id }} --player alsa --soundcard {{ soundcard }}
+Restart=always
+RestartSec=10

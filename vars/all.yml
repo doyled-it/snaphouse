@@ -69,3 +69,13 @@ snapcast_deb_distro: "bookworm"
 snapcast_server_sha256:
   amd64: "afb012318bb8cbf82c63c2084de3b290f53108c49976ff364100882cd8816b41"
   arm64: "526cded407fad5940e834d77cf66a3b7ebac68931a530be55179f60d327044fd"
+
+# SHA-256 of each snapclient release .deb, pinned the same way as the snapserver
+# digests above. These are the plain snapclient_0.35.0-1_<arch>_bookworm.deb
+# assets; snapclient runs on all three machines (the hub to the Vizio, and both
+# Pis), so both architectures are pinned. Update all of these when bumping
+# snapcast_version or snapcast_deb_distro; compute them by downloading the
+# release asset and running sha256sum.
+snapcast_client_sha256:
+  amd64: "b71575bcc2b4541f5004c73a0a1f43374e852bf5d5f2162aa1b230f3c209d9f3"
+  arm64: "83afa0910cce99c0e6d4a52ec1849240c9956f5147e0743d60d4dd5f3b11af1a"
