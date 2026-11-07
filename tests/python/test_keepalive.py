@@ -1,6 +1,6 @@
 """Tests for keepalive, the Bluetooth speaker reconnect and snapclient lifecycle.
 
-On a Bluetooth-output host (pi-bedroom's JBL, the hub's Vizio) snapclient is not
+On a Bluetooth-output host (nightstand's JBL, the hub's Vizio) snapclient is not
 enabled at boot. Instead a systemd timer runs keepalive every 30 seconds, and
 keepalive owns snapclient's lifecycle: it starts snapclient when the speaker
 connects and stops it when the speaker drops, so a speaker that is off for days

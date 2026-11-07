@@ -1,6 +1,6 @@
 ---
 # First-boot bootstrap of the nightstand frame on this host (design "Device
-# ownership on pi-bedroom", cross-repo doc). snaphouse installs the OS base and
+# ownership on nightstand", cross-repo doc). snaphouse installs the OS base and
 # audio, then hands the display off to nightstand: it clones the repo and runs
 # nightstand's own installer once. From then on nightstand owns everything
 # display-specific and self-updates on its own timer, so this role never touches

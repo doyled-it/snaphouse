@@ -4,14 +4,14 @@
   so the whole command is here in one place.
 
     --host      the hub (snapserver). hub_address overrides mDNS when set in
-                local.yml; otherwise the hub answers as zimablade.local.
+                local.yml; otherwise the hub answers as house.local.
     --hostID    this room's stable id (living/office/bedroom), which is also the
                 client id the hub addresses in apply_client_settings.
     --player    alsa.
     --soundcard this room's output:
                   bluetooth -> the snaphouse_bt bluealsa alias (asound.conf)
                   alsa      -> the USB adapter's ALSA card name (vars/hosts.yml,
-                               filled during the pi-office build); "default"
+                               filled during the office build); "default"
                                until it is set.
 
   Restart policy depends on the output:
@@ -28,7 +28,7 @@
       reconnect to snapserver (for example after snapserver itself restarts).
 #}
 {% set host = snaphouse_hosts[snaphouse_host] %}
-{% set server = hub_address | default('zimablade.local', true) %}
+{% set server = hub_address | default('house.local', true) %}
 {% if host.output.kind == 'bluetooth' %}
 {% set soundcard = 'snaphouse_bt' %}
 {% elif host.output.device %}

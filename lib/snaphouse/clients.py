@@ -8,7 +8,7 @@ Two jobs that both live on the snapclient side of snaphouse:
     offsets (`latency_ms`) are pushed into it over the JSON-RPC control API. It
     sends only the requests that change something and is a no-op on a re-run.
 
-  - `keepalive` runs on pi-bedroom every 30 seconds from a systemd timer. The JBL
+  - `keepalive` runs on nightstand every 30 seconds from a systemd timer. The JBL
     is off most of the time; keepalive reconnects it whenever it powers on and
     logs only when the connection state changes, so days with the speaker off
     leave one log line, not a loop of errors, and the speaker returns within a

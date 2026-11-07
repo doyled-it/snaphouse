@@ -1,8 +1,8 @@
 ---
 # snapclient on every machine: the room's player. It connects to snapserver on
 # the hub and plays the House stream through this room's output, either a
-# wired/USB ALSA card (pi-office) or a Bluetooth speaker reached through a
-# bluealsa ALSA alias (the hub to the Vizio, pi-bedroom to the JBL).
+# wired/USB ALSA card (office) or a Bluetooth speaker reached through a
+# bluealsa ALSA alias (the hub to the Vizio, nightstand to the JBL).
 #
 # On the hub this role also pushes every room's name and tuned latency into
 # snapserver once it is up (hub_input runs earlier in the apply), so the repo's

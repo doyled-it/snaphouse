@@ -24,6 +24,10 @@ ROLES_DIR = REPO_ROOT / "roles"
 BASE_ROLES_IN_ORDER = ["common", "web", "selfupdate"]
 VALID_HOST_IDS = {"living", "office", "bedroom"}
 
+# The machine hostnames after the 2026-11-06 rename. These are the inventory
+# keys in hosts.yml; the host ids (living, office, bedroom) are unchanged.
+EXPECTED_INVENTORY_KEYS = {"house", "office", "nightstand"}
+
 # A MAC is six colon-separated hex octets. The all-zero address is a wildcard
 # used by tooling (for example bluealsa-aplay) and is not identifying.
 MAC_RE = re.compile(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", re.IGNORECASE)
@@ -60,6 +64,14 @@ def scanned_files() -> list[Path]:
 
 def macs_in(text: str) -> list[str]:
     return [m for m in MAC_RE.findall(text) if m.upper() != MAC_WILDCARD.upper()]
+
+
+def test_inventory_keys_are_the_renamed_hosts():
+    hosts = load_hosts()
+    assert set(hosts) == EXPECTED_INVENTORY_KEYS, (
+        f"inventory keys must be exactly {EXPECTED_INVENTORY_KEYS}, "
+        f"got {set(hosts)}"
+    )
 
 
 def test_every_host_starts_with_the_base_roles():

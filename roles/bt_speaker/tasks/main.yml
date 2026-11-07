@@ -6,7 +6,7 @@
 # state changes. A speaker off for days leaves one log line rather than a restart
 # loop filling the journal, and it recovers within a tick plus the start (design:
 # "Bluetooth speakers that come and go", Review Focus 1). Both Bluetooth-output
-# hosts run this role: pi-bedroom (jbl) and the hub (vizio).
+# hosts run this role: nightstand (jbl) and the hub (vizio).
 #
 # The keepalive and its verify check pass the speaker name (derived from this
 # host's output.speaker); the address is the household's and is read from

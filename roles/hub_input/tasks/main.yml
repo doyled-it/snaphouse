@@ -1,5 +1,5 @@
 ---
-# The hub's audio inputs. Only zimablade runs this role. It brings up the two
+# The hub's audio inputs. Only `house` runs this role. It brings up the two
 # ways audio reaches the house and the Snapcast server that mixes them:
 #
 #   - AirPlay: snapserver's own airplay source launches shairport-sync, so Apple

@@ -1,5 +1,5 @@
 ---
-# Track metadata for the Bluetooth stream. Only zimablade runs this role, after
+# Track metadata for the Bluetooth stream. Only `house` runs this role, after
 # hub_input. AirPlay metadata and cover art come for free from snapserver's
 # airplay source; this role wires the Bluetooth side: the AVRCP control script
 # (lib/snaphouse/avrcp_meta.py) that snapserver runs for the "Bluetooth" stream.

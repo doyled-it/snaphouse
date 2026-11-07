@@ -21,9 +21,9 @@ The repo is public on GitHub (`doyled-it/snaphouse`).
 
 | Room | Machine | Hostname | Plays through |
 |---|---|---|---|
-| Living room | ZimaBlade (Intel, wired to router) | `zimablade` | Vizio soundbar + sub |
-| Office | Raspberry Pi 5, 1 GB, official case + fan | `pi-office` | aux-only speakers via USB audio adapter (Adafruit #1475) |
-| Bedroom | Raspberry Pi 5, 1 GB, mounted behind the e-ink frame | `pi-bedroom` | JBL Bluetooth speaker, which is only on sometimes |
+| Living room | ZimaBlade (Intel, wired to router) | `house` | Vizio soundbar + sub |
+| Office | Raspberry Pi 5, 1 GB, official case + fan | `office` | aux-only speakers via USB audio adapter (Adafruit #1475) |
+| Bedroom | Raspberry Pi 5, 1 GB, mounted behind the e-ink frame | `nightstand` | JBL Bluetooth speaker, which is only on sometimes |
 
 The ZimaBlade is also the hub: it receives music from phones and computers, runs
 `snapserver`, and hosts the room-picker page. It has two USB Bluetooth dongles (CSR8510)
@@ -56,11 +56,11 @@ tie-break if Snapcast's meta stream makes another one natural.
 Android ── Bluetooth A2DP ──► dongle 1 ─► BlueALSA ─┐
 iPhone / Macs ── AirPlay ──► shairport-sync ────────┤
                                                      ▼
-                                 snapserver on zimablade (meta stream "House")
+                                 snapserver on house (meta stream "House")
                                    │   JSON-RPC + HTTP on the LAN
           ┌────────────────────────┼─────────────────────────────┐
           ▼                        ▼                             ▼
-  snapclient (local)       snapclient on pi-office       snapclient on pi-bedroom
+  snapclient (local)       snapclient on office          snapclient on nightstand
   ─► dongle 2 Bluetooth    ─► USB audio adapter          ─► Bluetooth ─► JBL
   ─► Vizio soundbar        ─► aux speakers
 ```
@@ -110,12 +110,12 @@ cancels it. Tuning those offsets is what makes three rooms sound like one.
   cloud-hosted control page.
 - Telemetry, or outbound calls beyond each machine's list below. This is a rule for what
   the code may call, not an enforced firewall (my call).
-  - `zimablade`, `pi-office`: GitHub (repo updates, and the uv binary release
+  - `house`, `office`: GitHub (repo updates, and the uv binary release
     downloads), the Python package index (PyPI, for Python packages installed with uv),
     OS package mirrors, NTP. The PyPI and uv-release access follows from the owner's
     uv-everywhere instruction (2026-11-06): on-device Python is managed with uv, so every
     machine fetches uv from GitHub releases and its Python dependencies from PyPI.
-  - `pi-bedroom`: the same, plus what `nightstand` lists in its design (MLB Stats API,
+  - `nightstand`: the same, plus what `nightstand` lists in its design (MLB Stats API,
     MLB's logo CDN, Open-Meteo, MusicBrainz and the Cover Art Archive).
 - Bluetooth that stays open to pairing. Pairing happens only inside a short window the
   owner opens on purpose (see Pairing).
@@ -142,8 +142,8 @@ cancels it. Tuning those offsets is what makes three rooms sound like one.
 
 Each machine runs `ansible-pull` against this repo from a systemd timer, every 15 minutes
 by default. There is no control machine. A machine's hostname picks its playbook or role
-set: `zimablade` is the hub and living-room client, `pi-office` is a wired client, and
-`pi-bedroom` is a Bluetooth client plus the `nightstand` host.
+set: `house` is the hub and living-room client, `office` is a wired client, and
+`nightstand` is a Bluetooth client that also hosts the nightstand frame.
 
 ### Local, untracked settings
 
@@ -165,13 +165,13 @@ Pairing needs a human to put a device into pairing mode, so it stays a manual co
 example `snaphouse pair`. Inbound pairing (an Android phone pairing to the hub) works by
 opening a short window, about two minutes, during which the hub is discoverable and
 auto-accepts. Outside that window it is neither. Outbound pairing (hub to Vizio,
-`pi-bedroom` to JBL) scans, pairs, trusts, and records the speaker's MAC in the local
+`nightstand` to JBL) scans, pairs, trusts, and records the speaker's MAC in the local
 settings file. The handoff called for an always-on auto-accept agent; the window is my
 call, for security.
 
 ### Bluetooth speakers that come and go
 
-The JBL is off most of the time. `pi-bedroom` must reconnect automatically whenever the
+The JBL is off most of the time. `nightstand` must reconnect automatically whenever the
 JBL powers on, and must not log errors in a loop or wedge snapclient while it is off. The
 same applies to the Vizio if it drops the link.
 
@@ -195,7 +195,7 @@ the repo. A rebuilt machine gets them back.
 ### Art share
 
 The hub exposes one folder two ways on the LAN: a writable SMB share, so the owner and
-partner can drop images in from a Mac or phone, and a read-only path that `pi-bedroom`
+partner can drop images in from a Mac or phone, and a read-only path that `nightstand`
 pulls from. The pull mechanism (an rsync daemon module, HTTP, or NFS) is the builder's
 call; it must be read-only and need no credentials stored in the repo.
 
@@ -250,10 +250,10 @@ Each step is verified before the next. Steps marked (owner) need the owner prese
    `Server.GetStatus`.
 4. Hub output: local snapclient to the Vizio, over Bluetooth on dongle 2 or optical,
    whichever was chosen. First room working.
-5. Flash both Pis (owner, or with the owner's Imager settings). Bootstrap `pi-office`:
+5. Flash both Pis (owner, or with the owner's Imager settings). Bootstrap `office`:
    remove the old Bluetooth receiver from the speakers, wire the USB adapter to aux, start
    snapclient. Second room.
-6. Bootstrap `pi-bedroom`: pair the JBL (owner), start snapclient over Bluetooth, and
+6. Bootstrap `nightstand`: pair the JBL (owner), start snapclient over Bluetooth, and
    confirm it recovers when the JBL is switched off and on. Third room.
 7. Room-picker page.
 8. Tune latency in Snapweb (owner walks the house), then commit the offsets.
