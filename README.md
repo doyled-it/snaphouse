@@ -4,6 +4,26 @@ Synced whole-house audio on Snapcast: a ZimaBlade hub and two Raspberry Pis that
 
 The design is in `docs/superpowers/specs/2026-11-06-snaphouse-design.md`.
 
+## Bootstrapping a machine
+
+On a freshly flashed machine, clone this repo and run `sudo ./bootstrap.sh`. It
+installs the tools, writes the local settings file, runs the first apply, and
+turns on the self-update timer.
+
+A machine selects its config by hostname, so it must already be named after its
+inventory key in `vars/hosts.yml` (`house`, `office`, or `nightstand`). When you
+repurpose a machine that still carries another name (the ZimaBlade shipped as
+`casaos`), name it during bootstrap:
+
+```
+sudo ./bootstrap.sh --host office
+```
+
+`--host` validates the name against `vars/hosts.yml`, then sets the hostname
+(and the `127.0.1.1` line in `/etc/hosts`) before the first apply. It is
+idempotent: run it again and a matching hostname is left untouched. Without
+`--host`, the current hostname is used unchanged.
+
 ## The room picker
 
 The hub serves a room-picker page on the LAN: one on/off toggle and a volume
