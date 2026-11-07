@@ -42,6 +42,20 @@ and, if a role ever needs it, in the untracked `/etc/snaphouse/local.yml`. The
 page itself fetches only same-origin paths, so once it loads it needs no further
 name resolution from the phone: the hub polls every machine for the health line.
 
+If the page will not load on a phone even by IP address ("Unable to connect"),
+check these, in this order:
+
+- **Android's per-app local network permission.** Recent Android versions block
+  apps, browsers included, from reaching devices on the home network until
+  allowed: Settings, Apps, the browser, Permissions, then "Nearby devices" or
+  "Local network", set to Allow.
+- **A VPN with a kill switch.** It can block local traffic. Turn on the VPN
+  app's "allow LAN connections" option (and reconnect the VPN), or make sure
+  Android's own "Block connections without VPN" is off. The same applies to a
+  laptop: if nothing on the home network answers, check its VPN first.
+- **HTTPS-only browser modes.** The page is plain `http` on the LAN. Type the
+  `http://` address explicitly and accept the browser's "not secure" prompt once.
+
 ## Part of a multi-repo system
 
 `snaphouse` is one of several repos. A feature usually spans repos; before calling
