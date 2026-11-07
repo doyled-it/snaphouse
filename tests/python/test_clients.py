@@ -141,3 +141,22 @@ def test_is_idempotent_on_a_second_run():
 
     assert second == []
     assert server.set_calls() == []
+
+
+# --------------------------------------------------------------------------- #
+# snapclient verify logic on a Bluetooth-output host
+# --------------------------------------------------------------------------- #
+
+
+def test_snapclient_verify_ok_covers_all_four_combinations():
+    # On a Bluetooth host snapclient's lifecycle follows the speaker, so verify
+    # passes only when the two agree: speaker connected with snapclient active, or
+    # speaker absent with snapclient inactive. The speaker simply being off (the
+    # JBL's normal state) must never fail verify, or self-update would roll the
+    # machine back whenever the speaker is off.
+    assert clients.snapclient_verify_ok(speaker_connected=True, client_active=True) is True
+    assert clients.snapclient_verify_ok(speaker_connected=False, client_active=False) is True
+    # Disagreement is a real fault: the link is up but the player is down, or the
+    # player is up while the speaker is gone.
+    assert clients.snapclient_verify_ok(speaker_connected=True, client_active=False) is False
+    assert clients.snapclient_verify_ok(speaker_connected=False, client_active=True) is False

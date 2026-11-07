@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# snaphouse snapclient check, managed by Ansible (roles/snapclient).
+#
+# On a wired host snapclient is enabled and always running, so this is a plain
+# is-active. On a Bluetooth-output host snapclient is not enabled at boot; the
+# keepalive timer starts it when the speaker connects and stops it when the
+# speaker drops. There "active" is correct only when the speaker is connected, so
+# the check passes when the two agree (speaker connected and snapclient active, or
+# speaker absent and snapclient inactive) and fails otherwise. A speaker that is
+# simply switched off is healthy and must never fail verify, or self-update would
+# roll this machine back whenever the speaker is off. The speaker name (not its
+# address) is passed; snaphouse.clients reads the address from local.yml.
+#
+# Run by `snaphouse verify` from /etc/snaphouse/verify.d.
+set -euo pipefail
+{% if snaphouse_hosts[snaphouse_host].output.kind == 'bluetooth' %}
+PYTHONPATH=/opt/snaphouse/lib \
+    exec /opt/snaphouse/.venv/bin/python -m snaphouse.clients \
+    verify-snapclient {{ snaphouse_hosts[snaphouse_host].output.speaker }}
+{% else %}
+systemctl is-active --quiet snapclient.service
+{% endif %}

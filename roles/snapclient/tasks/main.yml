@@ -59,8 +59,8 @@
     mode: "0755"
 
 - name: Install the snapclient verify check
-  ansible.builtin.copy:
-    src: verify.d/snapclient.sh
+  ansible.builtin.template:
+    src: snapclient-verify.sh.j2
     dest: /etc/snaphouse/verify.d/snapclient.sh
     owner: root
     group: root
@@ -71,12 +71,29 @@
 - name: Reload systemd now if the drop-in changed
   ansible.builtin.meta: flush_handlers
 
-- name: Enable and start snapclient
+# A wired room is always present, so snapclient is enabled and started here.
+- name: Enable and start snapclient on a wired host
   ansible.builtin.systemd_service:
     name: snapclient.service
     enabled: true
     state: started
-  when: common_systemd_init
+  when:
+    - common_systemd_init
+    - snaphouse_hosts[snaphouse_host].output.kind != 'bluetooth'
+  tags:
+    - service
+
+# A Bluetooth speaker comes and goes, so snapclient must not start at boot into a
+# device that is not there. It is left disabled; the keepalive timer (the
+# bt_speaker role, applied right after this one) owns its start and stop so it
+# only ever runs while the speaker is actually connected.
+- name: Do not enable snapclient at boot on a Bluetooth host
+  ansible.builtin.systemd_service:
+    name: snapclient.service
+    enabled: false
+  when:
+    - common_systemd_init
+    - snaphouse_hosts[snaphouse_host].output.kind == 'bluetooth'
   tags:
     - service
 

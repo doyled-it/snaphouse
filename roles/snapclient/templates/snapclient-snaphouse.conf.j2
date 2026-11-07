@@ -14,10 +14,18 @@
                                filled during the pi-office build); "default"
                                until it is set.
 
-  A Bluetooth speaker comes and goes, so snapclient is restarted on failure
-  rather than left dead; the keepalive timer (roles/bt_speaker) brings the link
-  back, and the next restart opens the device. RestartSec keeps that from
-  becoming a tight loop while the speaker is off.
+  Restart policy depends on the output:
+
+    - A Bluetooth speaker comes and goes. snapclient is not enabled at boot on
+      these hosts; the keepalive timer (roles/bt_speaker) starts it when the
+      speaker connects and stops it when the speaker drops. So the only restart
+      that matters is the short window after a speaker vanishes mid-play and
+      before the next keepalive tick stops the service. Restart=on-failure with a
+      long RestartSec keeps that window from becoming a tight loop that fills the
+      journal, and the start rate limiter is disabled so keepalive always stays in
+      control of the lifecycle.
+    - A wired card is always present, so snapclient is restarted promptly to
+      reconnect to snapserver (for example after snapserver itself restarts).
 #}
 {% set host = snaphouse_hosts[snaphouse_host] %}
 {% set server = hub_address | default('zimablade.local', true) %}
@@ -28,8 +36,18 @@
 {% else %}
 {% set soundcard = 'default' %}
 {% endif %}
+{% if host.output.kind == 'bluetooth' %}
+[Unit]
+StartLimitIntervalSec=0
+
+{% endif %}
 [Service]
 ExecStart=
 ExecStart=/usr/bin/snapclient --host {{ server }} --hostID {{ host.host_id }} --player alsa --soundcard {{ soundcard }}
+{% if host.output.kind == 'bluetooth' %}
+Restart=on-failure
+RestartSec=30
+{% else %}
 Restart=always
 RestartSec=10
+{% endif %}

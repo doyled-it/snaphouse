@@ -48,8 +48,10 @@ DEFAULT_STATE_PATH = Path("/run/snaphouse/bt-keepalive.state")
 
 # The connection states keepalive reports.
 CONNECTED = "connected"
-CONNECTING = "connecting"
 ABSENT = "absent"
+
+# The snapclient service keepalive drives on a Bluetooth-output host.
+SNAPCLIENT_SERVICE = "snapclient.service"
 
 # Injectable seams.
 Rpc = Callable[[str, dict], dict]
@@ -184,29 +186,50 @@ def keepalive(
     *,
     is_connected: Probe,
     connect: Probe,
+    is_client_active: Callable[[], bool],
+    start_client: Callable[[], None],
+    stop_client: Callable[[], None],
     state_path: Path = DEFAULT_STATE_PATH,
     log: Log = lambda message: print(message, flush=True),
 ) -> str:
-    """Reconnect the speaker if needed and log only when its state changes.
+    """Reconnect the speaker if needed, own snapclient's lifecycle, log on change.
 
-    Returns one of "connected", "connecting", or "absent":
+    Returns "connected" or "absent":
 
-      - connected:  the link is already up; no connect command is issued.
-      - connecting: the link was down and a connect attempt was accepted (the
-                    speaker is powered on; it will show connected on the next tick).
+      - connected:  the link is up, either already or because a connect attempt
+                    just took (bluetoothctl connect is synchronous, so a success
+                    means the speaker is connected now).
       - absent:     the link is down and a connect attempt did not take, which is
                     the normal resting state while the speaker is switched off.
 
+    On a Bluetooth-output host snapclient is not enabled at boot; keepalive drives
+    it, so it only ever runs while the speaker is actually there:
+
+      - speaker up, snapclient not running   -> start it (recovery within one tick)
+      - speaker gone, snapclient still running -> stop it, so a speaker that
+        vanished cannot leave snapclient in a restart loop filling the journal.
+
+    The reconcile is against snapclient's real state, so a run where it already
+    matches the link sends no start or stop command (no churn on every tick). A
+    connect command is issued only when the speaker is not already connected.
+
     The last-seen state is persisted to `state_path`, so across the fresh process
-    the timer starts each tick, a log line is written only on a transition. A long
+    the timer starts each tick a log line is written only on a transition. A long
     stretch of absence logs once; the speaker returning logs once.
     """
     if is_connected(mac):
         state = CONNECTED
     elif connect(mac):
-        state = CONNECTING
+        # bluetoothctl connect is synchronous: a success means the link is up now.
+        state = CONNECTED
     else:
         state = ABSENT
+
+    link_up = state == CONNECTED
+    if link_up and not is_client_active():
+        start_client()
+    elif not link_up and is_client_active():
+        stop_client()
 
     previous = _read_state(state_path)
     if state != previous:
@@ -216,6 +239,20 @@ def keepalive(
         )
         _write_state(state_path, state)
     return state
+
+
+def snapclient_verify_ok(*, speaker_connected: bool, client_active: bool) -> bool:
+    """Whether snapclient's state is healthy on a Bluetooth-output host.
+
+    snapclient follows the speaker there, so the two must agree: the link is up
+    and the player is running, or the speaker is absent and the player is stopped.
+    A speaker that is simply switched off (the JBL's normal state) is healthy and
+    must never fail verify, or the self-update timer would roll the machine back
+    to its last-good commit every time the speaker is off. Disagreement is a real
+    fault: the link is up but the player is down, or the player is up while the
+    speaker is gone.
+    """
+    return speaker_connected == client_active
 
 
 def _bluetoothctl(*args: str) -> subprocess.CompletedProcess:
@@ -238,6 +275,22 @@ def _connect(mac: str) -> bool:
     """
     completed = _bluetoothctl("connect", mac)
     return "Connection successful" in (completed.stdout + completed.stderr)
+
+
+def _client_is_active() -> bool:
+    """True when systemd reports snapclient active."""
+    completed = subprocess.run(
+        ["systemctl", "is-active", "--quiet", SNAPCLIENT_SERVICE], check=False
+    )
+    return completed.returncode == 0
+
+
+def _start_client() -> None:
+    subprocess.run(["systemctl", "start", SNAPCLIENT_SERVICE], check=False)
+
+
+def _stop_client() -> None:
+    subprocess.run(["systemctl", "stop", SNAPCLIENT_SERVICE], check=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -271,16 +324,46 @@ def _cmd_apply_clients(args: argparse.Namespace) -> int:
 def _cmd_keepalive(args: argparse.Namespace) -> int:
     mac = _speaker_mac(args.name, Path(args.settings))
     if mac is None:
-        # Nothing paired yet: nothing to keep alive, and not an error.
+        # Nothing paired yet (for example the hub before the Vizio is paired in
+        # build step 6). There is no speaker to reach, so snapclient must stay
+        # stopped; make sure it is, then leave. Not an error.
+        if _client_is_active():
+            _stop_client()
         print(f"bt-keepalive: speaker {args.name!r} is not paired yet")
         return 0
     keepalive(
         mac,
         is_connected=_is_connected,
         connect=_connect,
+        is_client_active=_client_is_active,
+        start_client=_start_client,
+        stop_client=_stop_client,
         state_path=Path(args.state),
     )
     return 0
+
+
+def _cmd_verify_snapclient(args: argparse.Namespace) -> int:
+    """Verify snapclient on a Bluetooth-output host (both states must agree).
+
+    Passes when the speaker is connected and snapclient is active, or the speaker
+    is absent and snapclient is inactive. The speaker being off is healthy. An
+    unpaired speaker counts as absent.
+    """
+    mac = _speaker_mac(args.name, Path(args.settings))
+    speaker_connected = mac is not None and _is_connected(mac)
+    client_active = _client_is_active()
+    if snapclient_verify_ok(
+        speaker_connected=speaker_connected, client_active=client_active
+    ):
+        return 0
+    speaker_word = "connected" if speaker_connected else "absent"
+    client_word = "active" if client_active else "inactive"
+    print(
+        f"snapclient is {client_word} but the {args.name} speaker is {speaker_word}",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def _cmd_speaker_state(args: argparse.Namespace) -> int:
@@ -324,6 +407,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     state.add_argument("name", help="which speaker (a key under speakers in local.yml)")
     state.add_argument("--settings", default=str(LOCAL_SETTINGS))
     state.set_defaults(func=_cmd_speaker_state)
+
+    verify = sub.add_parser(
+        "verify-snapclient", help="check snapclient matches the speaker (verify)"
+    )
+    verify.add_argument("name", help="which speaker (a key under speakers in local.yml)")
+    verify.add_argument("--settings", default=str(LOCAL_SETTINGS))
+    verify.set_defaults(func=_cmd_verify_snapclient)
 
     args = parser.parse_args(argv)
     return args.func(args)
