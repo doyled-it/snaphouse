@@ -37,7 +37,7 @@ site.yml               the one play; applies snaphouse_hosts[snaphouse_host].rol
 vars/hosts.yml         per host: roles, room_label, host_id, output, latency_ms
 vars/all.yml           shared settings (update cadence, reboot times, stream names)
 local.example.yml      documented placeholders for /etc/snaphouse/local.yml
-bootstrap.sh           first run on a fresh machine (root)
+bootstrap.sh           first run on a fresh machine (root); --host <key> names it first
 bin/snaphouse          CLI: pair | verify | status | update
 lib/snaphouse/         Python behind the CLI (status, update, pairing, metadata, ...)
 roles/<name>/          one role per capability; empty roles are filled task by task
@@ -57,6 +57,12 @@ from `snaphouse_hosts[snaphouse_host]` in `vars/hosts.yml` (the top-level key is
 and is applied in order; the first three are always `common`, `web`,
 `selfupdate`. Tag every hardware task `hardware` and every service start or
 restart `service`, so the container check can skip them.
+
+Because selection is by hostname, a machine must already be named after its
+inventory key before the first apply. A repurposed machine still carrying
+another name (the ZimaBlade shipped as `casaos`) is named with
+`bootstrap.sh --host <key>`, which validates the key against `vars/hosts.yml`
+and sets the hostname before applying.
 
 ## Tooling
 
