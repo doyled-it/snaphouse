@@ -429,6 +429,22 @@ def test_named_devices_deduplicates_repeated_entries():
     assert pairing._named_devices(output) == [("AA:BB:CC:DD:EE:01", "JBL Flip 6")]
 
 
+def test_paired_devices_reads_addresses_through_ansi_and_dash_names():
+    # The trust path diffs paired-devices snapshots by address, so this parse must
+    # survive the same ANSI colour and dash-form names that #40 fixed in
+    # _named_devices. If it does not, both snapshots come back empty, _trust_new
+    # sees no new device, and the phone just paired in the window is never trusted
+    # (review Important #1). Unnamed devices keep the address as their name.
+    output = (
+        f"{ESC}[0;92mDevice{ESC}[0m AA:BB:CC:DD:EE:01 JBL Flip 6\n"
+        f"{ESC}[0;92mDevice{ESC}[0m AA:BB:CC:DD:EE:02 AA-BB-CC-DD-EE-02\n"
+    )
+    assert pairing._paired_devices(output) == {
+        "AA:BB:CC:DD:EE:01": "JBL Flip 6",
+        "AA:BB:CC:DD:EE:02": "AA-BB-CC-DD-EE-02",
+    }
+
+
 def test_service_allowed_covers_a2dp_and_avrcp_only():
     # The inbound agent authorizes only the audio services the phone needs: A2DP
     # (source/sink) and AVRCP. Anything else is declined.

@@ -107,6 +107,14 @@ def _strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
 
 
+# A bluetoothctl device line, matched anywhere on an ANSI-stripped line (it may
+# be prefixed with a status tag or prompt): "Device <addr> <name>". Shared by the
+# paired-devices snapshot (the trust path) and the scan listing.
+_DEVICE_LINE = re.compile(
+    r"Device\s+((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s+(.*)"
+)
+
+
 # The Bluetooth services the inbound agent authorizes for a phone: A2DP (audio
 # sink and source) and AVRCP (remote control), the 0x110a..0x110f assigned
 # numbers. The phone plays audio over these; anything else it asks for is
@@ -259,13 +267,21 @@ def _stop_agent(proc: "Optional[subprocess.Popen]") -> None:
 
 
 def _paired_devices(output: str) -> dict[str, str]:
-    """Map address to name from `paired-devices` output ("Device <mac> <name>")."""
+    """Map address to name from `paired-devices` output ("Device <mac> <name>").
+
+    Parsed through the same ANSI stripping and anywhere-on-the-line match as the
+    scan listing (issue #40): bluetoothctl colours this output too, and an
+    unparsed snapshot would leave both the before and after sets in
+    run_pairing_window empty, so a phone paired in the window would never be seen
+    as new and never trusted. An unnamed device keeps its address as the name.
+    """
     devices: dict[str, str] = {}
     for line in output.splitlines():
-        parts = line.split(maxsplit=2)
-        if len(parts) >= 2 and parts[0] == "Device":
-            address = parts[1]
-            devices[address] = parts[2] if len(parts) >= 3 else address
+        match = _DEVICE_LINE.search(_strip_ansi(line))
+        if match is None:
+            continue
+        address, name = match.group(1), match.group(2).strip()
+        devices[address] = name or address
     return devices
 
 
@@ -435,11 +451,6 @@ def pair_phone(*, settings: Path = LOCAL_SETTINGS) -> int:
         return 1
     print("Pairing window closed. The adapter is no longer discoverable.")
     return 0
-
-
-_DEVICE_LINE = re.compile(
-    r"Device\s+((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s+(.*)"
-)
 
 
 def _named_devices(output: str) -> list[tuple[str, str]]:

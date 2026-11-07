@@ -96,8 +96,9 @@ def track_to_metadata(track: dict) -> dict:
 
     track_number = _clean_int(track.get("TrackNumber"))
     if track_number is not None:
-        # Snapcast's trackNumber is a string.
-        metadata["trackNumber"] = str(track_number)
+        # Snapcast wants trackNumber as a number; a string makes snapserver 0.35
+        # log "failed to read tag trackNumber: type must be number, but is string".
+        metadata["trackNumber"] = track_number
 
     duration_ms = _clean_int(track.get("Duration"))
     if duration_ms:

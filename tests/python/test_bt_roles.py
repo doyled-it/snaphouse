@@ -25,8 +25,10 @@ REPO = Path(__file__).resolve().parents[2]
 
 BT_IN_SERVICE = REPO / "roles/hub_input/files/snaphouse-bt-in.service"
 BT_TASKS = REPO / "roles/bluetooth/tasks/main.yml"
+BT_HANDLERS = REPO / "roles/bluetooth/handlers/main.yml"
 LOCKDOWN = REPO / "roles/bluetooth/files/snaphouse-bt-lockdown.sh"
 VERIFY = REPO / "roles/bluetooth/files/verify.d/bluetooth.sh"
+UDEV_RULE = REPO / "roles/bluetooth/files/snaphouse-bt-lockdown.rules"
 
 
 def _exec_start(service_text: str) -> str:
@@ -109,3 +111,72 @@ def test_verify_check_asserts_pairable_and_discoverable_off_on_every_adapter():
     assert "bluetoothctl" in text and "list" in text
     assert "Discoverable: yes" in text
     assert "Pairable: yes" in text
+
+
+def test_lockdown_strips_ansi_before_parsing_the_controller_list():
+    text = LOCKDOWN.read_text()
+    # verify.d strips ANSI from the same `bluetoothctl list`; the lockdown must
+    # too, or a coloured address field is mangled into an unselectable token and
+    # that controller is never closed (review Important #2).
+    assert "bluetoothctl list" in text
+    list_at = text.index("bluetoothctl list")
+    awk_at = text.index("awk", list_at)
+    # An ANSI-stripping step sits between the list and the field extraction.
+    assert "sed" in text[list_at:awk_at]
+
+
+def _lineinfile_main_conf() -> list[tuple[dict, dict]]:
+    out = []
+    for task in _tasks():
+        module, args = _module(task)
+        if module.endswith("lineinfile") and "main.conf" in str(args.get("path", "")):
+            out.append((task, args))
+    return out
+
+
+def test_role_sets_daemon_level_pairable_defaults_in_main_conf():
+    tasks = _lineinfile_main_conf()
+    assert tasks, "no task edits /etc/bluetooth/main.conf"
+    # The keys may be a loop, so scan the whole task, not just a static `line`.
+    blob = " ".join(str(task) for task, _args in tasks)
+    # Pairable is off by default at the daemon, and a stray pairable-on reverts.
+    assert "AlwaysPairable" in blob and "false" in blob.lower()
+    assert "PairableTimeout" in blob
+    for task, args in tasks:
+        # Each edit restarts bluetooth, and only when the file changes (a handler).
+        assert "bluetooth" in str(task.get("notify", "")).lower()
+        # The keys land under [General], not appended into some other section.
+        assert "General" in str(args.get("insertafter", ""))
+
+
+def _handlers() -> list[dict]:
+    return yaml.safe_load(BT_HANDLERS.read_text())
+
+
+def test_bluetooth_restart_handler_is_gated_on_real_systemd():
+    restart = [
+        handler
+        for handler in _handlers()
+        if "bluetooth" in str(handler).lower() and "restart" in str(handler).lower()
+    ]
+    assert restart, "no handler restarts bluetooth"
+    # A notified handler still must not run in the CI container.
+    assert any("common_systemd_init" in str(h.get("when")) for h in restart)
+
+
+def test_role_installs_a_udev_rule_that_relocks_a_replugged_adapter():
+    # A USB re-plug does not restart bluetooth.service, so PartOf does not cover
+    # it; a udev add event on an hci device re-runs the lockdown oneshot.
+    assert UDEV_RULE.exists(), "no udev rule shipped"
+    rule = UDEV_RULE.read_text()
+    assert 'ACTION=="add"' in rule
+    assert 'SUBSYSTEM=="bluetooth"' in rule
+    assert "hci" in rule
+    assert "snaphouse-bt-lockdown.service" in rule
+    installed = [
+        task
+        for task in _tasks()
+        if _module(task)[0].endswith("copy")
+        and "rules.d" in str(_module(task)[1].get("dest", ""))
+    ]
+    assert installed, "no task installs the udev rule into /etc/udev/rules.d"

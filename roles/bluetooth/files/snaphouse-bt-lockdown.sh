@@ -8,7 +8,12 @@
 # command flips it on briefly and restores it.
 set -euo pipefail
 
-controllers="$(bluetoothctl list | awk '{print $2}')"
+# bluetoothctl can colour its output; strip the escape codes before awk so a
+# coloured address field is not mangled into a token that `select` cannot use,
+# which would leave that controller open. The verify check strips the same
+# `bluetoothctl list` output. The pattern matches the Python _ANSI regex.
+esc="$(printf '\033')"
+controllers="$(bluetoothctl list | sed -E "s/${esc}\[[0-9;]*[A-Za-z]//g" | awk '{print $2}')"
 if [ -z "${controllers}" ]; then
     echo "no Bluetooth controllers present" >&2
     exit 0

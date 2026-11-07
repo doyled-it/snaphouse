@@ -1,0 +1,11 @@
+# Re-close every Bluetooth controller when one is added.
+#
+# snaphouse-bt-lockdown.service carries PartOf=bluetooth.service, so the lockdown
+# re-runs whenever bluetoothd restarts, but a USB re-plug (or any hci hotplug)
+# does not restart bluetooth.service, and bluetoothd brings a freshly added
+# adapter up pairable by default. This runs the lockdown again on an hci add.
+#
+# It starts the lockdown oneshot through systemd rather than running bluetoothctl
+# from udev directly: udev kills long-running RUN commands, and the service is
+# already ordered After=bluetooth.service. Installed by roles/bluetooth.
+ACTION=="add", SUBSYSTEM=="bluetooth", KERNEL=="hci[0-9]*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="snaphouse-bt-lockdown.service"
