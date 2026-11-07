@@ -1,0 +1,16 @@
+{#
+  The room list the page reads at startup, built from the inventory so
+  vars/hosts.yml stays the single source of truth. One entry per room, in
+  inventory order (living, office, bedroom), each { id, label } where id is the
+  snapclient hostID / snapserver client id.
+
+  Health is not here: the page reads the hub-aggregated house-status.json, and
+  the hub's poll targets are in house-status-targets.json.
+
+  Rendered with Ansible's to_nice_json so the file is readable and valid JSON.
+#}
+{% set rooms = [] %}
+{% for name, host in snaphouse_hosts.items() %}
+{% set _ = rooms.append({'id': host.host_id, 'label': host.room_label}) %}
+{% endfor %}
+{{ {'rooms': rooms} | to_nice_json }}

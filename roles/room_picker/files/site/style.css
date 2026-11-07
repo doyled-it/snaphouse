@@ -1,0 +1,229 @@
+/* Room picker styling: a clean, high-contrast utility page with large tap
+   targets, meant for a phone on the wall or in the hand. No external fonts or
+   assets (privacy and offline LAN use); the system font stack only. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #111417;
+  --surface: #1b1f24;
+  --surface-off: #15181c;
+  --text: #f2f4f6;
+  --muted: #9aa4ad;
+  --line: #2c333a;
+  --accent: #4ac08a;
+  --accent-text: #06231a;
+  --warn-bg: #4a2a12;
+  --warn-text: #ffd9a8;
+  --radius: 16px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f6f8;
+    --surface: #ffffff;
+    --surface-off: #eef1f4;
+    --text: #15181c;
+    --muted: #5b646d;
+    --line: #d7dde3;
+    --accent: #1f8f5f;
+    --accent-text: #ffffff;
+    --warn-bg: #fde7cf;
+    --warn-text: #7a3d00;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  padding: max(16px, env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.3;
+  max-width: 720px;
+  margin-inline: auto;
+}
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 16px;
+}
+
+.house {
+  font-size: 1.5rem;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.now-playing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+.np-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.np-artist::before {
+  content: "\00b7";
+  margin-right: 10px;
+  color: var(--line);
+}
+
+.np-idle {
+  font-style: italic;
+}
+
+.health,
+.connection {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 0.95rem;
+}
+
+.health {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-weight: 600;
+}
+
+.connection {
+  background: var(--surface-off);
+  color: var(--muted);
+}
+
+.rooms {
+  display: grid;
+  gap: 12px;
+}
+
+.room {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "label toggle"
+    "volume volume";
+  gap: 16px;
+  align-items: center;
+}
+
+.room.off {
+  background: var(--surface-off);
+}
+
+.room.disconnected {
+  opacity: 0.55;
+}
+
+.room-label {
+  grid-area: label;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.toggle {
+  grid-area: toggle;
+  min-width: 96px;
+  min-height: 56px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-off);
+  color: var(--muted);
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.toggle[aria-checked="true"] {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.toggle:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.volume {
+  grid-area: volume;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.volume:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* A tall, finger-sized track and thumb, drawn the same in both engines. */
+.volume::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.volume::-moz-range-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 32px;
+  height: 32px;
+  margin-top: -11px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid var(--bg);
+}
+
+.volume::-moz-range-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid var(--bg);
+}
+
+.volume:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 999px;
+}

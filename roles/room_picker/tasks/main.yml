@@ -1,3 +1,135 @@
 ---
-# The room_picker role is implemented in a later task. No tasks yet.
-[]
+# The room picker: a small static page served from the hub on the LAN. It shows
+# one on/off toggle and a volume slider per room, what is playing, and a health
+# line per machine. It talks to snapserver over the /jsonrpc proxy (a WebSocket
+# for live updates, a 5 s poll as fallback).
+#
+# This role is in the hub's roles list only, so the page and the JSON-RPC proxy
+# exist only where snapserver runs. Everything here is file config plus an nginx
+# reload; the reload handler (web role) is gated on a real systemd host, so the
+# CI container applies this cleanly.
+
+- name: Ensure the room picker web root exists
+  ansible.builtin.file:
+    path: /var/lib/snaphouse/room-picker
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the room picker static site
+  ansible.builtin.copy:
+    src: site/
+    dest: /var/lib/snaphouse/room-picker/
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Write the room list and health targets from the inventory
+  ansible.builtin.template:
+    src: rooms.json.j2
+    dest: /var/lib/snaphouse/room-picker/rooms.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Write the house status poll targets from the inventory
+  ansible.builtin.template:
+    src: house-status-targets.json.j2
+    dest: /etc/snaphouse/house-status-targets.json
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the room picker nginx locations
+  ansible.builtin.template:
+    src: room_picker.conf.j2
+    dest: /etc/nginx/snaphouse.d/room_picker.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Install the JSON-RPC WebSocket upgrade map
+  ansible.builtin.copy:
+    src: jsonrpc-upgrade-map.conf
+    dest: /etc/nginx/conf.d/snaphouse-jsonrpc.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the room picker verify check
+  ansible.builtin.copy:
+    src: verify.d/room_picker.sh
+    dest: /etc/snaphouse/verify.d/room_picker.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# The hub polls every machine's status into house-status.json on a 60 s timer, so
+# the browser never resolves another machine's .local name (Android Chrome often
+# cannot). Units ship here; the enable and the first run are gated on a real
+# systemd host so the CI container applies cleanly.
+
+- name: Ensure the systemd unit directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the house status poll service unit
+  ansible.builtin.copy:
+    src: snaphouse-house-status.service
+    dest: /etc/systemd/system/snaphouse-house-status.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for room_picker
+
+- name: Install the house status poll timer unit
+  ansible.builtin.copy:
+    src: snaphouse-house-status.timer
+    dest: /etc/systemd/system/snaphouse-house-status.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for room_picker
+
+# Make the units known before enabling the timer on a first install. The handler
+# is gated on systemd, so this is a no-op in the CI container.
+- name: Reload systemd now if the units changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the house status poll timer
+  ansible.builtin.systemd_service:
+    name: snaphouse-house-status.timer
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service
+
+# Write house-status.json once now, so the page has a health file before the
+# first timer tick and before `snaphouse verify` runs at the end of this apply.
+# A oneshot start blocks until it finishes; the poll exits 0 even when a peer is
+# unreachable (that machine's status is simply null).
+- name: Poll the house status now
+  ansible.builtin.systemd_service:
+    name: snaphouse-house-status.service
+    state: started
+  when: common_systemd_init
+  tags:
+    - service

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>House</title>
+    <meta name="description" content="Turn each room on or off and set its volume." />
+    <meta name="theme-color" content="#111417" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="House" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icon.svg" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <h1 class="house">House</h1>
+      <div id="now-playing" class="now-playing" aria-live="polite"></div>
+    </header>
+
+    <p id="health" class="health" role="status" hidden></p>
+    <p id="connection" class="connection" role="status" hidden></p>
+
+    <main id="rooms" class="rooms"></main>
+
+    <script type="module" src="rooms.js"></script>
+  </body>
+</html>

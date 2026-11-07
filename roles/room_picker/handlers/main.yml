@@ -1,0 +1,11 @@
+---
+# Gated on common_systemd_init (real machine only) and tagged service, so the
+# reload never runs in the CI container but is still marked for a real-host
+# --skip-tags service run.
+
+- name: Reload systemd for room_picker
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: common_systemd_init
+  tags:
+    - service

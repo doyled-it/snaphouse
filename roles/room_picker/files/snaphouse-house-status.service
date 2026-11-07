@@ -1,0 +1,15 @@
+# Oneshot poll of every machine's status, fired by the matching timer. It runs
+# on the hub only (the room_picker role), fetches each machine's status.json over
+# the LAN with a short timeout, and writes
+# /var/lib/snaphouse/public/house-status.json, which nginx serves same-origin to
+# the room-picker page. snaphouse.housestatus is stdlib-only; it runs from the
+# on-device uv venv for one consistent interpreter with the rest of the CLI.
+[Unit]
+Description=snaphouse house status poll (writes house-status.json)
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/snaphouse/lib
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.housestatus
