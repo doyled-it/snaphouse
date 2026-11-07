@@ -227,3 +227,126 @@ body {
   outline-offset: 4px;
   border-radius: 999px;
 }
+
+/* On the frame: the current piece as a card, then a compact list of what was
+   shown before it. Same surface, border, and radius as the room cards. */
+.art {
+  margin-top: 24px;
+}
+
+.art-heading {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.art-figure {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.art-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--surface-off);
+}
+
+.art-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 14px 16px;
+}
+
+.art-title {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.art-artist {
+  color: var(--muted);
+}
+
+.art-recent-heading {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 20px 0 10px;
+}
+
+.art-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.art-item {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 14px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+
+.art-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--surface-off);
+}
+
+.art-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+
+.art-item-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.art-item-artist {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.art-when {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* The title link keeps the body colors; the frame, not the browser default blue,
+   is the look. The focus ring still marks it for keyboard use. */
+.art-title,
+.art-item-title {
+  color: var(--text);
+}
+
+a.art-title,
+a.art-item-title {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--line);
+}
+
+a.art-title:focus-visible,
+a.art-item-title:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

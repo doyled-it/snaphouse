@@ -27,8 +27,11 @@ idempotent: run it again and a matching hostname is left untouched. Without
 ## The room picker
 
 The hub serves a room-picker page on the LAN: one on/off toggle and a volume
-slider per room, what is playing, and a per-machine health line. Open it in any
-browser on the home network.
+slider per room, what is playing, and a per-machine health line. It also has an
+"On the frame" section showing the piece currently on the nightstand frame and a
+"Recently shown" list of what came before it; the hub republishes the frame's
+art history same-origin, so the section appears only when the frame has shown
+something. Open it in any browser on the home network.
 
 Reach it by the hub's IP address, not `house.local`. Android Chrome often
 cannot resolve `.local` mDNS names, so a phone may fail to load the page by name.

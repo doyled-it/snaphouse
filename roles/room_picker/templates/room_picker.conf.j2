@@ -28,6 +28,16 @@ location = /house-status.json {
     default_type application/json;
 }
 
+# The frame's art history, written by the same hub timer from the nightstand
+# host's art-history.json (the pinned contract in docs/cross-repo-features.md).
+# It lives in the public web root too, so the page reads it same-origin. The
+# file may not exist yet (no frame reached, or nothing shown); a 404 then makes
+# the page hide the "On the frame" section cleanly.
+location = /art-history.json {
+    root /var/lib/snaphouse/public;
+    default_type application/json;
+}
+
 # snapserver's JSON-RPC, proxied with the WebSocket upgrade so the page can hold
 # a notification socket open and also POST plain JSON-RPC calls. Port 1780 stays
 # reachable on the LAN directly for Snapweb and the nightstand frame (the

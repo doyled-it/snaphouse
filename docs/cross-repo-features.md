@@ -42,6 +42,14 @@ git clone git@github.com:doyled-it/nightstand.git
   the `nightstand` host reads it over HTTP: nginx serves the same folder read-only at `/art/` with
   `autoindex on; autoindex_format json;`, the "Art listing" contract below. nightstand
   syncs that listing to a local cache on a timer.
+- **Art history (nightstand produces, snaphouse consumes).** nightstand writes an
+  art-history file each time it pushes the ART screen to the panel, served by snaphouse's
+  nginx on the `nightstand` host at `http://nightstand.local/nightstand/art-history.json`
+  (the "Art history file" contract below). The hub's house-status timer fetches it with the
+  same hardening as the status poll and republishes it same-origin at
+  `http://house.local/art-history.json`, so the room-picker page shows what is on the frame
+  without the browser resolving the frame's `.local` name. A change to the file's shape
+  updates the contract below and both repos in the same PR set.
 - **Device ownership on `nightstand`.** snaphouse bootstrap installs the OS base and
   audio, clones nightstand, and runs its installer once. Both repos self-update on their
   own timers. Neither repo's playbook or installer may change files the other owns.
@@ -79,6 +87,35 @@ with nginx `autoindex on; autoindex_format json;`. Each entry is
 `{"name": str, "type": "file" | "directory", "mtime": str, "size": int}`. nightstand
 mirrors files one level deep and ignores directories. Sidecar captions are files named
 `<image file>.txt` (line 1 title, line 2 artist) in the same folder.
+
+**Art history file.** nightstand produces, snaphouse consumes. nightstand writes
+`/var/lib/nightstand/public/art-history.json` atomically (0644) each time the ART screen
+is actually pushed to the panel; snaphouse's nginx on the `nightstand` host serves it at
+`http://nightstand.local/nightstand/art-history.json`. Shape:
+
+```json
+{
+  "current": {
+    "file": "aic-12345.jpg",
+    "title": "A Still Life",
+    "artist": "A Painter",
+    "source_url": "https://www.artic.edu/artworks/12345",
+    "shown_at": "2026-11-06T21:14:00-08:00"
+  },
+  "history": [ { "...": "Piece" } ]
+}
+```
+
+`history` is newest first, at most 50 entries, and `current` is also `history[0]`
+(`current` is `null` and `history` is `[]` when nothing has been shown). A `Piece` is
+`{"file", "title", "artist": str|null, "source_url": str|null, "shown_at": ISO-8601 with
+offset}`. `file` is a bare image file name in the art share (no path separators).
+`source_url` is an https URL to the museum object page, or `null`; consumers drop a
+non-https value. Captions come from the sidecar `<image file>.txt` files of the "Art
+listing" contract (line 1 title, line 2 artist, optional line 3 an https source URL that
+is ignored unless it parses as https). The hub republishes a validated copy same-origin at
+`http://house.local/art-history.json`, keeping only these fields, capping history at 50,
+and keeping the last good copy when a fetch fails.
 
 **snapserver API.** `http://house.local/jsonrpc` is proxied by nginx on the hub to
 snapserver's JSON-RPC (port 1780). Port 1780 itself stays reachable on the LAN for

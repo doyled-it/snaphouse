@@ -15,6 +15,7 @@ import {
   volumeRequest,
   groupUnmuteRequest,
   healthBanner,
+  artFromHistory,
 } from "./rooms-model.js";
 
 const POLL_MS = 5000;
@@ -27,6 +28,10 @@ const els = {
   health: document.getElementById("health"),
   rooms: document.getElementById("rooms"),
   connection: document.getElementById("connection"),
+  art: document.getElementById("art"),
+  artCurrent: document.getElementById("art-current"),
+  artRecentHeading: document.getElementById("art-recent-heading"),
+  artHistory: document.getElementById("art-history"),
 };
 
 const state = {
@@ -55,7 +60,9 @@ async function start() {
   buildCards();
   connect();
   refreshHealth();
+  refreshArt();
   setInterval(refreshHealth, HEALTH_MS);
+  setInterval(refreshArt, HEALTH_MS);
 
   // A phone that was asleep or backgrounded comes back with a dead socket and
   // stale cards. On return to the foreground, reconnect if needed, re-read the
@@ -74,6 +81,7 @@ async function start() {
     }
     // CONNECTING or CLOSING: leave the in-flight transition alone.
     refreshHealth();
+    refreshArt();
   });
 }
 
@@ -349,6 +357,167 @@ async function refreshHealth() {
     els.health.hidden = true;
     els.health.textContent = "";
   }
+}
+
+// The art on the nightstand frame, refreshed on the health cadence. Like the
+// health file, it is one same-origin file the hub writes; the browser never
+// resolves the frame's .local name. A missing file (404) hides the section; a
+// transient hub error leaves the last render in place rather than flashing the
+// section away and back.
+async function refreshArt() {
+  let art;
+  try {
+    const response = await fetch("art-history.json", { cache: "no-store" });
+    if (!response.ok) {
+      renderArt({ current: null, history: [] });
+      return;
+    }
+    art = artFromHistory(await response.json());
+  } catch (err) {
+    return;
+  }
+  renderArt(art);
+}
+
+function renderArt(art) {
+  const current = art.current;
+  // The producer keeps current as history[0]; showing it both as the hero and as
+  // the first thumbnail would look like a bug, so the "Recently shown" list is
+  // the pieces other than the current one.
+  const recent = art.history.filter((piece) => !samePiece(piece, current));
+
+  if (!current && recent.length === 0) {
+    els.art.hidden = true;
+    els.artCurrent.replaceChildren();
+    els.artHistory.replaceChildren();
+    els.artRecentHeading.hidden = true;
+    return;
+  }
+
+  els.art.hidden = false;
+  renderArtCurrent(current);
+
+  els.artHistory.replaceChildren();
+  for (const piece of recent) {
+    els.artHistory.append(historyItem(piece));
+  }
+  els.artRecentHeading.hidden = recent.length === 0;
+}
+
+function samePiece(a, b) {
+  return Boolean(a && b && a.file === b.file && a.shown_at === b.shown_at);
+}
+
+function renderArtCurrent(current) {
+  els.artCurrent.replaceChildren();
+  if (!current) {
+    return;
+  }
+  const figure = document.createElement("figure");
+  figure.className = "art-figure";
+
+  const img = document.createElement("img");
+  img.className = "art-image";
+  img.src = artUrl(current.file);
+  img.alt = current.title;
+  figure.append(img);
+
+  const caption = document.createElement("figcaption");
+  caption.className = "art-caption";
+  caption.append(titleNode(current, "art-title"));
+  if (current.artist) {
+    const artist = document.createElement("span");
+    artist.className = "art-artist";
+    artist.textContent = current.artist;
+    caption.append(artist);
+  }
+  figure.append(caption);
+  els.artCurrent.append(figure);
+}
+
+function historyItem(piece) {
+  const li = document.createElement("li");
+  li.className = "art-item";
+
+  const thumb = document.createElement("img");
+  thumb.className = "art-thumb";
+  thumb.src = artUrl(piece.file);
+  thumb.alt = piece.title;
+  thumb.loading = "lazy";
+  thumb.decoding = "async";
+  li.append(thumb);
+
+  const meta = document.createElement("div");
+  meta.className = "art-meta";
+  meta.append(titleNode(piece, "art-item-title"));
+  if (piece.artist) {
+    const artist = document.createElement("span");
+    artist.className = "art-item-artist";
+    artist.textContent = piece.artist;
+    meta.append(artist);
+  }
+  const when = relativeTime(piece.shown_at);
+  if (when) {
+    const time = document.createElement("time");
+    time.className = "art-when";
+    time.dateTime = piece.shown_at;
+    time.textContent = when;
+    meta.append(time);
+  }
+  li.append(meta);
+  return li;
+}
+
+// The title, as a link to the museum page when the piece carries an https
+// source_url, otherwise plain text. The URL is only ever set as an href (never
+// interpolated into markup), and the link opens detached from this page.
+function titleNode(piece, className) {
+  if (piece.source_url) {
+    const link = document.createElement("a");
+    link.className = className;
+    link.textContent = piece.title;
+    link.href = piece.source_url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    return link;
+  }
+  const span = document.createElement("span");
+  span.className = className;
+  span.textContent = piece.title;
+  return span;
+}
+
+// The same-origin path to an art-share image. encodeURIComponent keeps a file
+// name with spaces or reserved characters a single path segment (the model has
+// already rejected any name with a separator).
+function artUrl(file) {
+  return `art/${encodeURIComponent(file)}`;
+}
+
+// A short, human relative time for when a piece was shown. Returns "" for an
+// unparseable stamp so the page simply omits it.
+function relativeTime(iso) {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) {
+    return "";
+  }
+  const seconds = Math.round((Date.now() - then) / 1000);
+  if (seconds < 45) {
+    return "just now";
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes} min ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours} hr ago`;
+  }
+  const days = Math.round(hours / 24);
+  if (days < 7) {
+    return `${days} day${days === 1 ? "" : "s"} ago`;
+  }
+  return new Date(then).toLocaleDateString();
 }
 
 function setConnection(message) {
