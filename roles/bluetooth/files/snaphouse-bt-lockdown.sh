@@ -14,9 +14,14 @@ if [ -z "${controllers}" ]; then
     exit 0
 fi
 
+# Power the controller on before closing it: pairable/discoverable off only
+# sticks on a powered adapter, and an adapter that comes up powered later can
+# otherwise default to pairable (the Pairable: yes seen on the hub). The snaphouse
+# adapters are meant to be powered anyway (A2DP sink and source).
 for controller in ${controllers}; do
     bluetoothctl <<EOF
 select ${controller}
+power on
 discoverable off
 pairable off
 EOF

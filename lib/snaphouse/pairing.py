@@ -4,11 +4,14 @@ Pairing needs a person to put a device into pairing mode, so it stays a manual
 command. There are two directions:
 
   - `snaphouse pair phone` (hub): open a short window on the receive adapter
-    during which the hub is discoverable, pairable, and auto-accepts a "just
-    works" pairing (bt-agent with NoInputNoOutput). The window always closes the
-    adapter again, even if the agent dies early or the operator hits Ctrl-C: the
-    hub must never be left discoverable. Devices paired during the window are
-    trusted so they reconnect on their own.
+    during which the hub is discoverable and pairable. Pairing is supervised: an
+    agent the CLI drives (a bluetoothctl agent with the DisplayYesNo capability)
+    shows the 6-digit passkey and asks the person at the keyboard to confirm it
+    matches the phone, declining if nobody answers. Android uses this numeric
+    comparison, so the old always-accept NoInputNoOutput agent failed it. The
+    window always closes the adapter again, even if the agent dies early or the
+    operator hits Ctrl-C: the hub must never be left discoverable. Devices paired
+    during the window are trusted so they reconnect on their own.
   - `snaphouse pair speaker {vizio|jbl}`: scan on the send adapter, let the
     operator pick the speaker by name, then pair, trust, and connect it, and
     record its address in /etc/snaphouse/local.yml.
@@ -23,10 +26,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import select
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -92,9 +98,152 @@ def _check_select(output: str) -> str:
     return output
 
 
-def _spawn_agent(controller: str) -> "subprocess.Popen":
-    """Start a bt-agent that auto-accepts just-works pairings."""
-    return subprocess.Popen(["bt-agent", "-c", "NoInputNoOutput"])
+# bluetoothctl colours its output; the escape sequences carry no information and
+# only break token matching, so every line is stripped before it is parsed.
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text)
+
+
+# The Bluetooth services the inbound agent authorizes for a phone: A2DP (audio
+# sink and source) and AVRCP (remote control), the 0x110a..0x110f assigned
+# numbers. The phone plays audio over these; anything else it asks for is
+# declined, so a paired phone cannot reach other profiles on the hub.
+_ALLOWED_SERVICE_UUIDS = frozenset(
+    f"0000110{suffix}-0000-1000-8000-00805f9b34fb" for suffix in "abcdef"
+)
+
+# The DisplayYesNo capability makes BlueZ ask us to confirm a passkey both
+# devices display (numeric comparison), which is how Android pairs. The old
+# NoInputNoOutput agent could not answer that and Android pairing failed.
+AGENT_CAPABILITY = "DisplayYesNo"
+
+# How long the confirmation prompt waits for the operator before declining.
+CONFIRM_TIMEOUT = 30.0
+
+# bluetoothctl's agent prompts, after ANSI is stripped. The passkey is shown
+# zero-padded to six digits; the service is a full 128-bit UUID.
+_CONFIRM_PROMPT = re.compile(r"Confirm passkey (\d+)")
+_SERVICE_PROMPT = re.compile(
+    r"Authorize service ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
+
+
+def _service_allowed(uuid: str) -> bool:
+    """True if uuid is an A2DP or AVRCP service the inbound agent authorizes."""
+    return uuid.lower() in _ALLOWED_SERVICE_UUIDS
+
+
+def _parse_confirmation_prompt(line: str) -> Optional[int]:
+    """The passkey from a bluetoothctl "Confirm passkey" prompt, or None."""
+    match = _CONFIRM_PROMPT.search(_strip_ansi(line))
+    return int(match.group(1)) if match else None
+
+
+def _parse_service_prompt(line: str) -> Optional[str]:
+    """The UUID from a bluetoothctl "Authorize service" prompt, or None."""
+    match = _SERVICE_PROMPT.search(_strip_ansi(line))
+    return match.group(1) if match else None
+
+
+def _handle_agent_line(
+    line: str, *, write: Callable[[str], None], confirm: Callable[[int], bool]
+) -> None:
+    """Answer one line of bluetoothctl agent output.
+
+    A passkey confirmation is handed to `confirm`, which shows the code and reads
+    the operator's yes or no. A service authorization is answered from the audio
+    allow-list. Any other line is ignored. The answer ("yes" or "no") is written
+    back with a trailing newline, as bluetoothctl's prompt expects.
+    """
+    passkey = _parse_confirmation_prompt(line)
+    if passkey is not None:
+        write("yes\n" if confirm(passkey) else "no\n")
+        return
+    uuid = _parse_service_prompt(line)
+    if uuid is not None:
+        write("yes\n" if _service_allowed(uuid) else "no\n")
+
+
+def _ask_operator(
+    passkey: int, *, timeout: float = CONFIRM_TIMEOUT, stream=None
+) -> bool:  # pragma: no cover - interactive, exercised on the hub
+    """Show the passkey and read a yes/no from the keyboard; default no.
+
+    Pairing is supervised: the operator checks that the phone shows the same code
+    before accepting. If nobody answers within the timeout, the pairing is
+    declined, so a stray pairing attempt cannot be accepted by inaction.
+    """
+    stream = sys.stdin if stream is None else stream
+    print(f"\nThe phone should show this code: {passkey:06d}")
+    print(
+        f"Does it match? [y/N] (no answer within {int(timeout)} s declines) ",
+        end="",
+        flush=True,
+    )
+    ready, _, _ = select.select([stream], [], [], timeout)
+    if not ready:
+        print("\nNo confirmation; declining this pairing.")
+        return False
+    return stream.readline().strip().lower() in ("y", "yes")
+
+
+def _agent_loop(
+    proc: "subprocess.Popen", *, confirm: Callable[[int], bool]
+) -> None:  # pragma: no cover - drives a live bluetoothctl
+    """Answer agent prompts from proc until its output ends.
+
+    bluetoothctl's agent questions end with "(yes/no):" and no newline (they are
+    prompts waiting for input), so reading whole lines would block on the newline
+    that never comes. Output is read a character at a time and dispatched on
+    either a newline or that prompt suffix, so a question is answered as soon as
+    it is asked.
+    """
+    def write(text: str) -> None:
+        assert proc.stdin is not None
+        proc.stdin.write(text)
+        proc.stdin.flush()
+
+    assert proc.stdout is not None
+    buffer = ""
+    while True:
+        char = proc.stdout.read(1)
+        if char == "":
+            break
+        buffer += char
+        if char == "\n" or _strip_ansi(buffer).rstrip().endswith("(yes/no):"):
+            _handle_agent_line(buffer, write=write, confirm=confirm)
+            buffer = ""
+
+
+def _spawn_agent(controller: str) -> "subprocess.Popen":  # pragma: no cover - needs BlueZ
+    """Start a supervised pairing agent the CLI controls.
+
+    An interactive bluetoothctl registers the DisplayYesNo agent as the default,
+    and a reader thread answers its prompts: the operator confirms the passkey
+    (numeric comparison) and the agent authorizes the phone's A2DP and AVRCP
+    services. The process is the window's agent handle; terminating it ends the
+    reader thread with its output.
+    """
+    proc = subprocess.Popen(
+        ["bluetoothctl"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert proc.stdin is not None
+    proc.stdin.write(f"agent {AGENT_CAPABILITY}\n")
+    proc.stdin.write("default-agent\n")
+    proc.stdin.flush()
+    threading.Thread(
+        target=_agent_loop, args=(proc,), kwargs={"confirm": _ask_operator}, daemon=True
+    ).start()
+    return proc
 
 
 def _stop_agent(proc: "Optional[subprocess.Popen]") -> None:
@@ -288,18 +437,39 @@ def pair_phone(*, settings: Path = LOCAL_SETTINGS) -> int:
     return 0
 
 
+_DEVICE_LINE = re.compile(
+    r"Device\s+((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s+(.*)"
+)
+
+
 def _named_devices(output: str) -> list[tuple[str, str]]:
-    """The (address, name) of discovered devices that advertise a name."""
+    """The (address, name) of discovered devices that advertise a name.
+
+    bluetoothctl colours its output and may prefix a device line with a status
+    tag ([NEW], [CHG]) or a prompt, so the "Device <addr> <name>" is matched
+    anywhere on the ANSI-stripped line rather than as the first token (issue #40:
+    the colour broke a first-token check and the scan found "no named devices").
+    An unnamed device is listed with the address repeated as its name, in colon
+    or dash form; those are dropped so the operator only picks from real names.
+    Each address is reported once, in the order first seen.
+    """
     found: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for line in output.splitlines():
-        parts = line.split(maxsplit=2)
-        if len(parts) < 3 or parts[0] != "Device":
+        match = _DEVICE_LINE.search(_strip_ansi(line))
+        if match is None:
             continue
-        address, name = parts[1], parts[2]
-        # bluetoothctl prints the address again as the "name" for unnamed
-        # devices; skip those so the operator only picks from named speakers.
-        if name.replace(":", "").upper() == address.replace(":", "").upper():
+        address, name = match.group(1), match.group(2).strip()
+        if not name:
             continue
+        # Normalize away both separators so the address-as-name forms
+        # (AA:BB:.. and AA-BB-..) both compare equal to the address.
+        normalized_name = name.replace(":", "").replace("-", "").upper()
+        if normalized_name == address.replace(":", "").upper():
+            continue
+        if address in seen:
+            continue
+        seen.add(address)
         found.append((address, name))
     return found
 

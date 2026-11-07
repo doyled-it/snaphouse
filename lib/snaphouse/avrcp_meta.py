@@ -24,7 +24,7 @@ Design notes:
 - The house controls playback from the sending phone, not the other way round, so
   the stream reports `canControl: false`: snapserver will not forward control or
   volume commands to this script. The phone's AVRCP volume is applied to the
-  audio itself by `bluealsa-aplay --volume=software` (see `roles/hub_input`).
+  audio itself by bluealsa, which does this by default in 4.0 (see `roles/hub_input`).
 - A sender that publishes no metadata still plays; its properties carry only a
   playback status and no title (Review Focus 5).
 """

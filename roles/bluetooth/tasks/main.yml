@@ -17,6 +17,20 @@
     update_cache: true
     cache_valid_time: 3600
 
+# bluez-alsa-utils ships and enables its own bluealsa-aplay.service, which grabs
+# every incoming A2DP stream and plays it to the default ALSA device. That takes
+# the device before snaphouse-bt-in.service can, so ours fails with "Device or
+# resource busy". Stop it, disable it, and mask it so it can never start.
+- name: Neutralize Debian's stock bluealsa-aplay service
+  ansible.builtin.systemd_service:
+    name: bluealsa-aplay.service
+    state: stopped
+    enabled: false
+    masked: true
+  when: common_systemd_init
+  tags:
+    - service
+
 - name: Ensure the verify.d dir exists for on-device check scripts
   ansible.builtin.file:
     path: /etc/snaphouse/verify.d
@@ -99,4 +113,28 @@
     state: started
   when: common_systemd_init
   tags:
+    - service
+
+# The receive adapter is the hub's Bluetooth speaker; without an alias BlueZ
+# advertises it from the hostname (for example "house #1"). Name it after the
+# house speaker so a phone sees "House", matching the AirPlay name. Only the hub
+# has a receive adapter. The alias persists in BlueZ once set. no_log keeps the
+# adapter address (read from the var) out of Ansible's output; the address lives
+# only in local.yml. system-alias needs the controller selected in the same
+# bluetoothctl session, so both commands share one heredoc.
+- name: Name the receive adapter after the house speaker
+  ansible.builtin.shell:
+    cmd: |
+      bluetoothctl <<EOF
+      select {{ bt_receive_adapter }}
+      system-alias {{ house_stream_name }}
+      EOF
+  when:
+    - common_systemd_init
+    - bt_receive_adapter is defined
+    - bt_receive_adapter | length > 0
+  changed_when: false
+  no_log: true
+  tags:
+    - hardware
     - service
