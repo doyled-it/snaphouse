@@ -14,8 +14,11 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from snaphouse import housestatus
 from snaphouse.housestatus import (
     aggregate,
+    main,
+    publish_art_history,
     select_art_history,
     select_status,
     write_art_history,
@@ -224,3 +227,154 @@ def test_write_art_history_is_atomic_json_readable_by_nginx(tmp_path):
     assert [p.name for p in tmp_path.iterdir()] == ["art-history.json"]
     assert json.loads(out.read_text()) == doc
     assert (out.stat().st_mode & 0o777) == 0o644
+
+
+# The art-history republish is best-effort: the brief requires that a failed or
+# malformed fetch, or a failed write, leaves the last good copy byte-identical and
+# never crashes the status aggregation. A failed write is also surfaced once to
+# stderr (journald) rather than swallowed silently.
+
+
+class _FakeResponse:
+    """A minimal urllib response for driving http_fetch in a test."""
+
+    def __init__(self, body: bytes, status: int = 200):
+        self._body = body
+        self.status = status
+
+    def read(self, limit: int = -1) -> bytes:
+        return self._body if limit < 0 else self._body[:limit]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeOpener:
+    """Stands in for the module opener; hands back one canned response."""
+
+    def __init__(self, response: _FakeResponse):
+        self._response = response
+
+    def open(self, request, timeout=None):
+        return self._response
+
+
+def test_http_fetch_art_history_rejects_malformed_json(monkeypatch):
+    monkeypatch.setattr(housestatus, "_OPENER", _FakeOpener(_FakeResponse(b"{not json")))
+    assert (
+        housestatus.http_fetch("http://x/art-history.json", select=select_art_history)
+        is None
+    )
+
+
+def test_http_fetch_art_history_enforces_the_size_cap(monkeypatch):
+    oversize = b'{"current":null,"history":[]}' + b" " * (housestatus.MAX_STATUS_BYTES + 1)
+    monkeypatch.setattr(housestatus, "_OPENER", _FakeOpener(_FakeResponse(oversize)))
+    assert (
+        housestatus.http_fetch("http://x/art-history.json", select=select_art_history)
+        is None
+    )
+
+
+def test_publish_art_history_keeps_last_good_when_the_fetch_yields_none(tmp_path, monkeypatch):
+    # A failed or malformed fetch reaches publish as None (http_fetch collapses
+    # both). The existing published file must be left exactly as it was.
+    out = tmp_path / "art-history.json"
+    seeded = b'{"current": null, "history": []}\n'
+    out.write_bytes(seeded)
+    monkeypatch.setattr(housestatus, "http_fetch", lambda url, *, timeout=0, select=None: None)
+    publish_art_history("http://x/art-history.json", out)
+    assert out.read_bytes() == seeded
+
+
+def test_publish_art_history_logs_and_keeps_last_good_when_the_write_fails(
+    tmp_path, monkeypatch, capsys
+):
+    out = tmp_path / "art-history.json"
+    seeded = b'{"current": null, "history": []}\n'
+    out.write_bytes(seeded)
+    monkeypatch.setattr(
+        housestatus,
+        "http_fetch",
+        lambda url, *, timeout=0, select=None: {"current": None, "history": []},
+    )
+
+    def _boom(path, document):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(housestatus, "write_art_history", _boom)
+    # Must not raise, and must leave the last good copy untouched.
+    publish_art_history("http://x/art-history.json", out)
+    assert out.read_bytes() == seeded
+    err = capsys.readouterr().err
+    assert "art-history" in err
+    assert "disk full" in err
+
+
+def _write_targets(tmp_path):
+    targets = tmp_path / "targets.json"
+    targets.write_text(json.dumps([{"name": "house", "url": "http://house.local/status.json"}]))
+    return targets
+
+
+def test_main_completes_the_status_poll_when_the_art_step_fails(tmp_path, monkeypatch):
+    # The art fetch raising must not touch the exit code, the house-status write,
+    # or a pre-seeded art-history.json.
+    house_out = tmp_path / "house-status.json"
+    art_out = tmp_path / "art-history.json"
+    seeded = b'{"current": null, "history": []}\n'
+    art_out.write_bytes(seeded)
+
+    def fake_fetch(url, *, timeout=0, select=select_status):
+        if select is select_art_history:
+            raise RuntimeError("frame unreachable in a surprising way")
+        return _status("house")
+
+    monkeypatch.setattr(housestatus, "http_fetch", fake_fetch)
+
+    code = main(
+        [
+            "--targets",
+            str(_write_targets(tmp_path)),
+            "--out",
+            str(house_out),
+            "--art-history-out",
+            str(art_out),
+        ]
+    )
+    assert code == 0
+    # The primary poll finished and wrote its file.
+    house_doc = json.loads(house_out.read_text())
+    assert house_doc["machines"][0]["status"]["host"] == "house"
+    # The last good art history is untouched.
+    assert art_out.read_bytes() == seeded
+
+
+def test_main_republishes_art_history_on_a_good_fetch(tmp_path, monkeypatch):
+    house_out = tmp_path / "house-status.json"
+    art_out = tmp_path / "art-history.json"
+
+    def fake_fetch(url, *, timeout=0, select=select_status):
+        if select is select_art_history:
+            return {"current": _piece(), "history": [_piece()]}
+        return _status("house")
+
+    monkeypatch.setattr(housestatus, "http_fetch", fake_fetch)
+
+    code = main(
+        [
+            "--targets",
+            str(_write_targets(tmp_path)),
+            "--out",
+            str(house_out),
+            "--art-history-out",
+            str(art_out),
+        ]
+    )
+    assert code == 0
+    art_doc = json.loads(art_out.read_text())
+    assert art_doc["current"]["file"] == "aic-12345.jpg"
+    assert (art_out.stat().st_mode & 0o777) == 0o644

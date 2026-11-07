@@ -274,6 +274,26 @@ def http_fetch(
         return None
 
 
+def publish_art_history(url: str, out: Path, *, timeout: float = DEFAULT_TIMEOUT) -> None:
+    """Fetch the frame's art history and republish it same-origin, best-effort.
+
+    http_fetch already collapses every fetch failure (timeout, refused, redirect,
+    non-200, oversize, non-JSON) and a malformed body to None, in which case the
+    last good art-history.json is left untouched and nothing is written. The only
+    errors that reach the guard here are a failing write_art_history (permissions,
+    a full disk, a missing directory) or an unexpected bug; those are exactly what
+    an operator needs to see, so the reason is printed once to stderr, which
+    journald captures. Either way this returns normally and never raises, so the
+    status aggregation that already wrote house-status.json always completes.
+    """
+    try:
+        art = http_fetch(url, timeout=timeout, select=select_art_history)
+        if art is not None:
+            write_art_history(Path(out), art)
+    except Exception as exc:
+        print(f"art-history: keeping last good copy, republish failed: {exc}", file=sys.stderr)
+
+
 def _load_targets(path: Path) -> list[dict]:
     data = json.loads(Path(path).read_text())
     if not isinstance(data, list):
@@ -302,18 +322,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     write_house_status(Path(args.out), document)
 
-    # Republish the frame's art history same-origin. It is best-effort and comes
-    # after the health write that the page depends on: a failed or malformed
-    # fetch leaves the last good art-history.json in place and never sinks the
-    # poll. Any error here is swallowed so the timer still exits 0.
-    try:
-        art = http_fetch(
-            args.art_history_url, timeout=args.timeout, select=select_art_history
-        )
-        if art is not None:
-            write_art_history(Path(args.art_history_out), art)
-    except Exception:
-        pass
+    # Republish the frame's art history same-origin, best-effort and after the
+    # health write the page depends on, so it can never sink the status poll.
+    publish_art_history(
+        args.art_history_url, Path(args.art_history_out), timeout=args.timeout
+    )
 
     return 0
 
