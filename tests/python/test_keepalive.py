@@ -189,6 +189,72 @@ def test_does_not_churn_snapclient_when_already_active_and_connected(tmp_path):
     assert len(log) == 1  # the first observation only
 
 
+SEND_ADAPTER = "11:22:33:44:55:66"
+
+
+def test_keepalive_targets_the_send_adapter_not_the_bluetoothctl_default(tmp_path):
+    # Two controllers are present. hci0 sorts first, so it is the index-ordered
+    # controller a bare bluetoothctl `connect` would fall back to (on the hub, the
+    # receive dongle, the wrong one). hci1 is the send adapter named in local.yml
+    # by address, and the speaker answers only through it.
+    sysroot = tmp_path / "sys"
+    (sysroot / "hci0").mkdir(parents=True)
+    (sysroot / "hci0" / "address").write_text("99:99:99:99:99:99\n")
+    (sysroot / "hci1").mkdir(parents=True)
+    (sysroot / "hci1" / "address").write_text(SEND_ADAPTER + "\n")
+
+    settings = tmp_path / "local.yml"
+    settings.write_text(
+        f'bt_send_adapter: "{SEND_ADAPTER}"\nspeakers:\n  jbl: "{MAC}"\n'
+    )
+
+    # Resolved by MAC to hci1, never the first/default hci0.
+    controller = clients._send_controller(settings, sys_root=sysroot)
+    assert controller == "hci1"
+
+    seen: list[list[str]] = []
+
+    def session(commands: list[str]) -> str:
+        seen.append(list(commands))
+        # The speaker is reachable only when the session targets the send adapter.
+        if commands[0] != f"select {controller}":
+            return ""
+        if any(c.startswith("info ") for c in commands):
+            return "Connected: no\n"
+        if any(c.startswith("connect ") for c in commands):
+            return "Connection successful\n"
+        return ""
+
+    # The default controller cannot reach the speaker: proof that selecting the
+    # send adapter is what makes the connect work.
+    _wrong_connected, wrong_connect = clients._controller_probe("hci0", session=session)
+    assert wrong_connect(MAC) is False
+    seen.clear()
+
+    is_connected, connect = clients._controller_probe(controller, session=session)
+    client = FakeClient(active=False)
+    state = clients.keepalive(
+        MAC,
+        is_connected=is_connected,
+        connect=connect,
+        is_client_active=client.is_active,
+        start_client=client.start,
+        stop_client=client.stop,
+        state_path=tmp_path / "state",
+        log=[].append,
+    )
+
+    # The link came up and snapclient was started, through the send adapter.
+    assert state == "connected"
+    assert client.starts == 1
+    assert seen  # bluetoothctl was actually invoked
+    # Every session selected the send adapter before acting, and the connect to
+    # the speaker went through it.
+    for commands in seen:
+        assert commands[0] == f"select {controller}"
+    assert [f"select {controller}", f"connect {MAC}"] in seen
+
+
 def test_does_not_leak_the_full_address_in_the_log(tmp_path):
     speaker = Speaker(connected=False, reachable=False)
     client = FakeClient(active=False)

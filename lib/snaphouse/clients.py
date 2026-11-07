@@ -36,6 +36,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 
+from snaphouse.adapters import AdapterNotFound, resolve_adapter
+
 LOCAL_SETTINGS = Path("/etc/snaphouse/local.yml")
 
 # snapserver's JSON-RPC endpoint on the hub itself. The hub applies client
@@ -255,26 +257,75 @@ def snapclient_verify_ok(*, speaker_connected: bool, client_active: bool) -> boo
     return speaker_connected == client_active
 
 
-def _bluetoothctl(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["bluetoothctl", *args], capture_output=True, text=True, check=False
-    )
+def _run_session(commands: list[str]) -> str:
+    """Run a batch of bluetoothctl commands in one session; return its stdout.
 
-
-def _is_connected(mac: str) -> bool:
-    """True when bluetoothctl reports the speaker currently connected."""
-    return "Connected: yes" in _bluetoothctl("info", mac).stdout
-
-
-def _connect(mac: str) -> bool:
-    """Attempt to connect the speaker; True only when the link actually came up.
-
-    bluetoothctl's exit status is not reliable here, so success is read from its
-    output. A connect to a powered-off speaker fails quickly and quietly: its
-    output is captured, never printed, so an absent speaker produces no log line.
+    The commands share one session so a leading `select <controller>` sets the
+    target for the rest of the batch, exactly as snaphouse.pairing does. That
+    selection is what drives the speaker through the send adapter and not, on the
+    hub, through the receive dongle that happens to be bluetoothctl's default.
     """
-    completed = _bluetoothctl("connect", mac)
-    return "Connection successful" in (completed.stdout + completed.stderr)
+    script = "".join(command + "\n" for command in commands)
+    completed = subprocess.run(
+        ["bluetoothctl"], input=script, capture_output=True, text=True, check=False
+    )
+    return completed.stdout
+
+
+def _controller_probe(
+    controller: str, *, session: Callable[[list[str]], str] = _run_session
+) -> tuple[Probe, Probe]:
+    """is_connected / connect for `mac`, each selecting `controller` first.
+
+    Every bluetoothctl session begins with `select <controller>`, so info and
+    connect act on the adapter resolved from local.yml's bt_send_adapter, never on
+    the index-ordered default. bluetoothctl's exit status is not reliable here, so
+    both results are read from its output; a connect to a powered-off speaker
+    fails quietly (its output is captured, never printed).
+    """
+
+    def is_connected(mac: str) -> bool:
+        return "Connected: yes" in session([f"select {controller}", f"info {mac}"])
+
+    def connect(mac: str) -> bool:
+        return "Connection successful" in session(
+            [f"select {controller}", f"connect {mac}"]
+        )
+
+    return is_connected, connect
+
+
+def _send_controller(settings: Path, *, sys_root: Optional[Path] = None) -> str:
+    """Resolve the send adapter's current hciN from its address in local.yml.
+
+    By address via resolve_adapter, never by index or the bluetoothctl default:
+    the hub has two dongles (receive and send), and the speaker must be driven
+    through the send one. Raises AdapterNotFound when the address is unset or no
+    present controller matches; the message names only the last two octets.
+    """
+    mac = _load_local(settings).get("bt_send_adapter")
+    if not mac:
+        raise AdapterNotFound("bt_send_adapter is not set in /etc/snaphouse/local.yml")
+    if sys_root is None:
+        return resolve_adapter(mac)
+    return resolve_adapter(mac, sys_root)
+
+
+def _speaker_connected(name: str, settings: Path) -> bool:
+    """Whether speaker `name` is connected, probed through the send adapter.
+
+    Unpaired, or the send adapter not present, counts as not connected (absent),
+    so a verify check reads the speaker's resting state without raising.
+    """
+    mac = _speaker_mac(name, settings)
+    if mac is None:
+        return False
+    try:
+        controller = _send_controller(settings)
+    except AdapterNotFound:
+        return False
+    is_connected, _connect = _controller_probe(controller)
+    return is_connected(mac)
 
 
 def _client_is_active() -> bool:
@@ -322,7 +373,8 @@ def _cmd_apply_clients(args: argparse.Namespace) -> int:
 
 
 def _cmd_keepalive(args: argparse.Namespace) -> int:
-    mac = _speaker_mac(args.name, Path(args.settings))
+    settings = Path(args.settings)
+    mac = _speaker_mac(args.name, settings)
     if mac is None:
         # Nothing paired yet (for example the hub before the Vizio is paired in
         # build step 6). There is no speaker to reach, so snapclient must stay
@@ -331,10 +383,22 @@ def _cmd_keepalive(args: argparse.Namespace) -> int:
             _stop_client()
         print(f"bt-keepalive: speaker {args.name!r} is not paired yet")
         return 0
+    try:
+        controller = _send_controller(settings)
+    except AdapterNotFound as exc:
+        # Without the send adapter there is no way to reach the speaker, so keep
+        # snapclient stopped and leave. The bluetooth verify check reports the
+        # missing adapter; keepalive must not fail the apply over it. The message
+        # names only the last two octets of the address.
+        if _client_is_active():
+            _stop_client()
+        print(f"bt-keepalive: {exc}", file=sys.stderr)
+        return 0
+    is_connected, connect = _controller_probe(controller)
     keepalive(
         mac,
-        is_connected=_is_connected,
-        connect=_connect,
+        is_connected=is_connected,
+        connect=connect,
         is_client_active=_client_is_active,
         start_client=_start_client,
         stop_client=_stop_client,
@@ -350,8 +414,7 @@ def _cmd_verify_snapclient(args: argparse.Namespace) -> int:
     is absent and snapclient is inactive. The speaker being off is healthy. An
     unpaired speaker counts as absent.
     """
-    mac = _speaker_mac(args.name, Path(args.settings))
-    speaker_connected = mac is not None and _is_connected(mac)
+    speaker_connected = _speaker_connected(args.name, Path(args.settings))
     client_active = _client_is_active()
     if snapclient_verify_ok(
         speaker_connected=speaker_connected, client_active=client_active
@@ -371,13 +434,13 @@ def _cmd_speaker_state(args: argparse.Namespace) -> int:
 
     Connected and absent are both normal for a speaker that comes and goes, so
     both exit 0; only an unreadable Bluetooth stack (bluetoothctl missing) raises
-    and fails the check.
+    and fails the check. The state is probed through the send adapter.
     """
-    mac = _speaker_mac(args.name, Path(args.settings))
-    if mac is None:
+    settings = Path(args.settings)
+    if _speaker_mac(args.name, settings) is None:
         print(f"{args.name} not paired yet")
         return 0
-    state = CONNECTED if _is_connected(mac) else ABSENT
+    state = CONNECTED if _speaker_connected(args.name, settings) else ABSENT
     print(f"{args.name} {state}")
     return 0
 
