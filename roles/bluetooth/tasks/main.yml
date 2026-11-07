@@ -17,6 +17,46 @@
     update_cache: true
     cache_valid_time: 3600
 
+# bluez-alsa-utils ships and enables its own bluealsa-aplay.service, which grabs
+# every incoming A2DP stream and plays it to the default ALSA device. That takes
+# the device before snaphouse-bt-in.service can, so ours fails with "Device or
+# resource busy". Stop it, disable it, and mask it so it can never start.
+- name: Neutralize Debian's stock bluealsa-aplay service
+  ansible.builtin.systemd_service:
+    name: bluealsa-aplay.service
+    state: stopped
+    enabled: false
+    masked: true
+  when: common_systemd_init
+  tags:
+    - service
+
+# Daemon-level defaults so an adapter is not pairable just because bluetoothd
+# brought it up. AlwaysPairable already defaults to false, but set it so the
+# intent is explicit. PairableTimeout defaults to 0 (pairable never reverts on
+# its own); bound it to the pairing-window length so that if anything leaves an
+# adapter pairable (a crash before the window's cleanup, or a fresh adapter at
+# boot or re-plug), the daemon closes it within that bound. DiscoverableTimeout
+# is set to the same bound for symmetry. The `snaphouse pair` window sets its own
+# timeouts while it is open, so these are the standing floor, not the window.
+# bluetoothd reads main.conf only at start, so the handler restarts it, and only
+# when the file changed.
+- name: Set BlueZ daemon defaults so adapters are not pairable by default
+  ansible.builtin.lineinfile:
+    path: /etc/bluetooth/main.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    insertafter: '^\[General\]'
+    state: present
+  loop:
+    - regexp: '^#?\s*AlwaysPairable\s*='
+      line: "AlwaysPairable = false"
+    - regexp: '^#?\s*PairableTimeout\s*='
+      line: "PairableTimeout = 120"
+    - regexp: '^#?\s*DiscoverableTimeout\s*='
+      line: "DiscoverableTimeout = 120"
+  notify: Restart bluetooth
+
 - name: Ensure the verify.d dir exists for on-device check scripts
   ansible.builtin.file:
     path: /etc/snaphouse/verify.d
@@ -57,6 +97,27 @@
     group: root
     mode: "0644"
   notify: Reload systemd for bluetooth
+
+# PartOf=bluetooth.service re-runs the lockdown on a bluetoothd restart, but not
+# on a USB re-plug, which does not restart the service. This udev rule starts the
+# lockdown oneshot again when an hci device is added, so a re-plugged adapter is
+# closed too.
+- name: Ensure the udev rules directory exists
+  ansible.builtin.file:
+    path: /etc/udev/rules.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the adapter-lockdown udev rule
+  ansible.builtin.copy:
+    src: snaphouse-bt-lockdown.rules
+    dest: /etc/udev/rules.d/99-snaphouse-bt-lockdown.rules
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload udev rules
 
 - name: Ensure the bluealsa drop-in directory exists
   ansible.builtin.file:
@@ -99,4 +160,28 @@
     state: started
   when: common_systemd_init
   tags:
+    - service
+
+# The receive adapter is the hub's Bluetooth speaker; without an alias BlueZ
+# advertises it from the hostname (for example "house #1"). Name it after the
+# house speaker so a phone sees "House", matching the AirPlay name. Only the hub
+# has a receive adapter. The alias persists in BlueZ once set. no_log keeps the
+# adapter address (read from the var) out of Ansible's output; the address lives
+# only in local.yml. system-alias needs the controller selected in the same
+# bluetoothctl session, so both commands share one heredoc.
+- name: Name the receive adapter after the house speaker
+  ansible.builtin.shell:
+    cmd: |
+      bluetoothctl <<EOF
+      select {{ bt_receive_adapter }}
+      system-alias {{ house_stream_name }}
+      EOF
+  when:
+    - common_systemd_init
+    - bt_receive_adapter is defined
+    - bt_receive_adapter | length > 0
+  changed_when: false
+  no_log: true
+  tags:
+    - hardware
     - service

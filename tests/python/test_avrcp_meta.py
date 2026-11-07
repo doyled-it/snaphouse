@@ -46,7 +46,10 @@ def test_track_to_metadata_maps_a_full_track():
     # Snapcast's artist field is a list of strings, even for a single artist.
     assert meta["artist"] == ["Klaus Doldinger's Passport"]
     assert meta["album"] == "Doldinger"
-    assert meta["trackNumber"] == "6"
+    # Snapcast expects trackNumber as a number; a string makes snapserver log
+    # "failed to read tag trackNumber: type must be number, but is string".
+    assert meta["trackNumber"] == 6
+    assert isinstance(meta["trackNumber"], int)
     # BlueZ Duration is milliseconds; Snapcast duration is seconds.
     assert meta["duration"] == 305.293
 

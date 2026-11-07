@@ -25,7 +25,7 @@ from snaphouse import pairing
 
 
 class FakeProc:
-    """A stand-in for the bt-agent subprocess.
+    """A stand-in for the pairing agent subprocess.
 
     `exited` controls whether it looks already-finished: an exited agent reports
     a return code from poll(), a running one reports None.
@@ -391,6 +391,132 @@ def test_write_speaker_records_the_address_and_keeps_comments_and_other_keys(tmp
     assert "Comments here must survive a rewrite" in text
     assert "written by `snaphouse pair speaker" in text
     assert "living-room soundbar, paired from the hub" in text
+
+
+ESC = "\x1b"
+
+# Real `bluetoothctl devices` output after a scan: the "Device" keyword is
+# wrapped in ANSI colour, unnamed devices repeat the address as the name (in
+# dash or colon form), and genuinely named devices are what the operator must
+# pick from. Addresses and names here are placeholders, never a household's.
+DEVICES_WITH_ANSI = (
+    f"{ESC}[0;92mDevice{ESC}[0m AA:BB:CC:DD:EE:01 JBL Flip 6\n"
+    f"{ESC}[0;92mDevice{ESC}[0m AA:BB:CC:DD:EE:02 AA-BB-CC-DD-EE-02\n"
+    "Device AA:BB:CC:DD:EE:03 AA:BB:CC:DD:EE:03\n"
+    "Device AA:BB:CC:DD:EE:04 Vizio V-Series\n"
+)
+
+
+def test_named_devices_reads_names_through_ansi_and_drops_address_named_entries():
+    # Issue #40: the parser printed "no named devices" while bluetoothctl listed
+    # them, because ANSI colour on the "Device" keyword broke a "first token is
+    # Device" check and address-as-name entries slipped through. It must strip the
+    # colour, keep the two named devices, and drop both forms of address-as-name.
+    found = pairing._named_devices(DEVICES_WITH_ANSI)
+    assert found == [
+        ("AA:BB:CC:DD:EE:01", "JBL Flip 6"),
+        ("AA:BB:CC:DD:EE:04", "Vizio V-Series"),
+    ]
+
+
+def test_named_devices_deduplicates_repeated_entries():
+    # A scan can list the same device more than once (a [NEW] then a [CHG]); the
+    # operator should see it once.
+    output = (
+        "[NEW] Device AA:BB:CC:DD:EE:01 JBL Flip 6\n"
+        "[CHG] Device AA:BB:CC:DD:EE:01 JBL Flip 6\n"
+    )
+    assert pairing._named_devices(output) == [("AA:BB:CC:DD:EE:01", "JBL Flip 6")]
+
+
+def test_paired_devices_reads_addresses_through_ansi_and_dash_names():
+    # The trust path diffs paired-devices snapshots by address, so this parse must
+    # survive the same ANSI colour and dash-form names that #40 fixed in
+    # _named_devices. If it does not, both snapshots come back empty, _trust_new
+    # sees no new device, and the phone just paired in the window is never trusted
+    # (review Important #1). Unnamed devices keep the address as their name.
+    output = (
+        f"{ESC}[0;92mDevice{ESC}[0m AA:BB:CC:DD:EE:01 JBL Flip 6\n"
+        f"{ESC}[0;92mDevice{ESC}[0m AA:BB:CC:DD:EE:02 AA-BB-CC-DD-EE-02\n"
+    )
+    assert pairing._paired_devices(output) == {
+        "AA:BB:CC:DD:EE:01": "JBL Flip 6",
+        "AA:BB:CC:DD:EE:02": "AA-BB-CC-DD-EE-02",
+    }
+
+
+def test_service_allowed_covers_a2dp_and_avrcp_only():
+    # The inbound agent authorizes only the audio services the phone needs: A2DP
+    # (source/sink) and AVRCP. Anything else is declined.
+    assert pairing._service_allowed("0000110b-0000-1000-8000-00805f9b34fb")  # A2DP Sink
+    assert pairing._service_allowed("0000110A-0000-1000-8000-00805F9B34FB")  # A2DP Source
+    assert pairing._service_allowed("0000110e-0000-1000-8000-00805f9b34fb")  # AVRCP
+    assert not pairing._service_allowed("00001124-0000-1000-8000-00805f9b34fb")  # HID
+    assert not pairing._service_allowed("0000111e-0000-1000-8000-00805f9b34fb")  # Handsfree
+
+
+def test_parse_confirmation_prompt_reads_the_passkey_through_ansi():
+    line = f"{ESC}[0;93m[agent]{ESC}[0m Confirm passkey 024680 (yes/no): "
+    assert pairing._parse_confirmation_prompt(line) == 24680
+    assert pairing._parse_confirmation_prompt("[CHG] Device AA:BB:CC:DD:EE:01 Paired: yes") is None
+
+
+def test_parse_service_prompt_reads_the_uuid_through_ansi():
+    line = f"{ESC}[0;93m[agent]{ESC}[0m Authorize service 0000110b-0000-1000-8000-00805f9b34fb (yes/no): "
+    assert pairing._parse_service_prompt(line) == "0000110b-0000-1000-8000-00805f9b34fb"
+    assert pairing._parse_service_prompt("just some other output") is None
+
+
+def test_agent_confirms_passkey_then_authorizes_audio_and_declines_the_rest():
+    written: list[str] = []
+    shown: list[int] = []
+
+    def confirm(passkey: int) -> bool:
+        shown.append(passkey)
+        return True
+
+    # A numeric-comparison confirmation is shown to the operator, who accepts it.
+    pairing._handle_agent_line(
+        f"{ESC}[0;93m[agent]{ESC}[0m Confirm passkey 123456 (yes/no): ",
+        write=written.append,
+        confirm=confirm,
+    )
+    assert shown == [123456]
+    assert written == ["yes\n"]
+
+    # An A2DP service is authorized; an unrelated service is declined.
+    pairing._handle_agent_line(
+        "[agent] Authorize service 0000110b-0000-1000-8000-00805f9b34fb (yes/no): ",
+        write=written.append,
+        confirm=confirm,
+    )
+    assert written[-1] == "yes\n"
+    pairing._handle_agent_line(
+        "[agent] Authorize service 00001124-0000-1000-8000-00805f9b34fb (yes/no): ",
+        write=written.append,
+        confirm=confirm,
+    )
+    assert written[-1] == "no\n"
+
+
+def test_agent_declines_the_pairing_when_the_operator_does_not_confirm():
+    written: list[str] = []
+    pairing._handle_agent_line(
+        "[agent] Confirm passkey 123456 (yes/no): ",
+        write=written.append,
+        confirm=lambda passkey: False,
+    )
+    assert written == ["no\n"]
+
+
+def test_agent_ignores_lines_that_are_not_prompts():
+    written: list[str] = []
+    pairing._handle_agent_line(
+        "[CHG] Controller AA:BB:CC:DD:EE:FF Discoverable: yes",
+        write=written.append,
+        confirm=lambda passkey: True,
+    )
+    assert written == []
 
 
 def test_write_speaker_preserves_the_file_mode(tmp_path):
