@@ -46,8 +46,39 @@ DEFAULT_OUT = Path("/var/lib/snaphouse/public/house-status.json")
 # past the timer's 60-second cadence.
 DEFAULT_TIMEOUT = 3.0
 
+# A status file is tiny; cap the read so a misbehaving or hostile peer cannot
+# stream an unbounded body into the poll.
+MAX_STATUS_BYTES = 64 * 1024
+
+# The pinned status schema (docs/cross-repo-features.md). Only these fields are
+# copied into house-status.json, so a peer cannot get arbitrary content
+# republished same-origin through the hub, and the page sees a predictable shape.
+STATUS_FIELDS = (
+    "host",
+    "repo",
+    "commit",
+    "main_commit",
+    "last_good",
+    "verify",
+    "checked_at",
+)
+
 Fetch = Callable[[str], Optional[dict]]
 Now = Callable[[], datetime]
+
+
+def select_status(parsed: object) -> Optional[dict]:
+    """Keep only the pinned status fields from a fetched body.
+
+    A peer is one of our own machines, but the hub republishes what it fetches
+    on a page anyone on the LAN can open, so only the known schema fields are
+    passed through. A body that is not an object, or carries none of the fields,
+    is rejected (None), which the page reads as unreachable.
+    """
+    if not isinstance(parsed, dict):
+        return None
+    selected = {key: parsed[key] for key in STATUS_FIELDS if key in parsed}
+    return selected or None
 
 
 def aggregate(targets: list[dict], fetch: Fetch, now: Now) -> dict:
@@ -94,20 +125,40 @@ def write_house_status(path: Path, document: dict) -> None:
         raise
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect handler that refuses every redirect.
+
+    The poll fetches fixed status URLs; a status file never redirects. Refusing
+    redirects stops a hostile or misconfigured peer from bouncing the hub to a
+    loopback or internal address (SSRF) whose response would then be republished
+    same-origin on the page.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# One opener, reused, that follows no redirects.
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def http_fetch(url: str, *, timeout: float = DEFAULT_TIMEOUT) -> Optional[dict]:
     """Fetch and parse one machine's status.json, or None if anything goes wrong.
 
-    Every failure mode (timeout, refused, non-200, non-JSON) collapses to None,
-    which the page reads as unreachable. Stdlib urllib keeps this venv-free.
+    Every failure mode (timeout, refused, redirect, non-200, oversize, non-JSON)
+    collapses to None, which the page reads as unreachable. The body is capped at
+    MAX_STATUS_BYTES and only the pinned status fields are kept. Stdlib urllib
+    keeps this venv-free.
     """
     try:
         request = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _OPENER.open(request, timeout=timeout) as response:
             if getattr(response, "status", 200) != 200:
                 return None
-            body = response.read().decode("utf-8")
-        parsed = json.loads(body)
-        return parsed if isinstance(parsed, dict) else None
+            raw = response.read(MAX_STATUS_BYTES + 1)
+        if len(raw) > MAX_STATUS_BYTES:
+            return None
+        return select_status(json.loads(raw.decode("utf-8")))
     except Exception:
         return None
 

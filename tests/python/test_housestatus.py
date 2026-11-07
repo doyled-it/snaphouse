@@ -14,7 +14,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from snaphouse.housestatus import aggregate, write_house_status
+from snaphouse.housestatus import aggregate, select_status, write_house_status
 
 NOW = datetime(2026, 11, 6, 21, 15, 0, tzinfo=timezone(-timedelta(hours=8)))
 
@@ -75,6 +75,39 @@ def test_aggregate_treats_a_fetch_error_as_unreachable():
 def test_aggregate_stamps_checked_at_from_now():
     doc = aggregate(TARGETS, lambda url: None, lambda: NOW)
     assert doc["checked_at"] == NOW.isoformat()
+
+
+def test_select_status_keeps_only_the_pinned_fields():
+    parsed = {
+        "host": "office",
+        "repo": "snaphouse",
+        "commit": "abc",
+        "main_commit": "abc",
+        "last_good": "abc",
+        "verify": "pass",
+        "checked_at": "2026-11-06T21:14:00-08:00",
+        # Not part of the pinned schema; must not be republished.
+        "secret": "do not copy",
+        "script": "<img onerror=...>",
+    }
+    selected = select_status(parsed)
+    assert set(selected) == {
+        "host",
+        "repo",
+        "commit",
+        "main_commit",
+        "last_good",
+        "verify",
+        "checked_at",
+    }
+    assert "secret" not in selected
+    assert "script" not in selected
+
+
+def test_select_status_rejects_non_objects_and_empty_bodies():
+    assert select_status("not a dict") is None
+    assert select_status(["a", "list"]) is None
+    assert select_status({"unrelated": 1}) is None
 
 
 def test_write_house_status_is_atomic_json_readable_by_nginx(tmp_path):
