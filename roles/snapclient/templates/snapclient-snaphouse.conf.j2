@@ -9,7 +9,7 @@
                 client id the hub addresses in apply_client_settings.
     --player    alsa.
     --soundcard this room's output:
-                  bluetooth -> the snaphouse_bt bluealsa alias (asound.conf)
+                  bluetooth -> the snaphouse_speaker bluealsa alias (asound.conf)
                   alsa      -> the USB adapter's ALSA card name (vars/hosts.yml,
                                filled during the office build); "default"
                                until it is set.
@@ -30,7 +30,7 @@
 {% set host = snaphouse_hosts[snaphouse_host] %}
 {% set server = hub_address | default('house.local', true) %}
 {% if host.output.kind == 'bluetooth' %}
-{% set soundcard = 'snaphouse_bt' %}
+{% set soundcard = 'snaphouse_speaker' %}
 {% elif host.output.device %}
 {% set soundcard = host.output.device %}
 {% else %}

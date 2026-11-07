@@ -52,6 +52,17 @@ class AdapterNotFound(Exception):
     """No Bluetooth controller with the requested address is present."""
 
 
+class AdapterSelectFailed(Exception):
+    """bluetoothctl could not select the requested controller.
+
+    Raised when a bluetoothctl session's output reports the controller is "not
+    available" after a `select`. This is the failure issue #30 describes: a
+    `select hciN` prints "Controller hciN not available" and silently carries on
+    using the default controller, so the rest of the session acts on the wrong
+    adapter. The message names no address, so it is safe to log and surface.
+    """
+
+
 def _redacted(mac: str) -> str:
     """The address reduced to its last two octets, for a safe error message."""
     octets = [part for part in mac.split(":") if part]

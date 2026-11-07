@@ -7,8 +7,12 @@
 # this plug device resamples whatever bluealsa-aplay plays to {{ house_sample_format }}
 # before it reaches hw:Loopback,0,0. The format comes from house_sample_format in
 # vars/all.yml, the same value the snapserver Bluetooth source is pinned to.
+#
+# The name is snaphouse_bt_input, not snaphouse_btloop: snapclient resolves its
+# --soundcard by a name match, so no snaphouse PCM name may be a prefix of
+# another (the hub also defines snaphouse_speaker for the Bluetooth output).
 {% set _fmt = house_sample_format.split(':') %}
-pcm.snaphouse_btloop {
+pcm.snaphouse_bt_input {
     type plug
     slave {
         pcm "hw:Loopback,0,0"

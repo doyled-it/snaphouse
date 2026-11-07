@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from snaphouse import clients
 
 
@@ -192,11 +194,14 @@ def test_does_not_churn_snapclient_when_already_active_and_connected(tmp_path):
 SEND_ADAPTER = "11:22:33:44:55:66"
 
 
-def test_keepalive_targets_the_send_adapter_not_the_bluetoothctl_default(tmp_path):
+def test_keepalive_selects_the_send_adapter_by_address_never_by_hci_index(tmp_path):
     # Two controllers are present. hci0 sorts first, so it is the index-ordered
     # controller a bare bluetoothctl `connect` would fall back to (on the hub, the
-    # receive dongle, the wrong one). hci1 is the send adapter named in local.yml
-    # by address, and the speaker answers only through it.
+    # receive dongle, the wrong one). The send adapter is named in local.yml by
+    # address. bluetoothctl's `select` takes the address, never an hciN: selecting
+    # by hciN prints "Controller hciN not available" and silently stays on the
+    # default, which is issue #30. The fake bluetoothctl below answers exactly that
+    # to any `select hciN`, so the test fails if the code ever sends an index.
     sysroot = tmp_path / "sys"
     (sysroot / "hci0").mkdir(parents=True)
     (sysroot / "hci0" / "address").write_text("99:99:99:99:99:99\n")
@@ -208,28 +213,28 @@ def test_keepalive_targets_the_send_adapter_not_the_bluetoothctl_default(tmp_pat
         f'bt_send_adapter: "{SEND_ADAPTER}"\nspeakers:\n  jbl: "{MAC}"\n'
     )
 
-    # Resolved by MAC to hci1, never the first/default hci0.
+    # resolve_adapter stays the presence check and still maps the address to hci1,
+    # but the value used to `select` is the address itself.
     controller = clients._send_controller(settings, sys_root=sysroot)
-    assert controller == "hci1"
+    assert controller == SEND_ADAPTER
 
     seen: list[list[str]] = []
 
     def session(commands: list[str]) -> str:
         seen.append(list(commands))
-        # The speaker is reachable only when the session targets the send adapter.
-        if commands[0] != f"select {controller}":
+        for command in commands:
+            if command.startswith("select hci"):
+                name = command.split()[1]
+                return f"Controller {name} not available\n"
+        # The speaker answers only when the session selected the send adapter by
+        # address.
+        if commands[0] != f"select {SEND_ADAPTER}":
             return ""
         if any(c.startswith("info ") for c in commands):
             return "Connected: no\n"
         if any(c.startswith("connect ") for c in commands):
             return "Connection successful\n"
         return ""
-
-    # The default controller cannot reach the speaker: proof that selecting the
-    # send adapter is what makes the connect work.
-    _wrong_connected, wrong_connect = clients._controller_probe("hci0", session=session)
-    assert wrong_connect(MAC) is False
-    seen.clear()
 
     is_connected, connect = clients._controller_probe(controller, session=session)
     client = FakeClient(active=False)
@@ -248,11 +253,64 @@ def test_keepalive_targets_the_send_adapter_not_the_bluetoothctl_default(tmp_pat
     assert state == "connected"
     assert client.starts == 1
     assert seen  # bluetoothctl was actually invoked
-    # Every session selected the send adapter before acting, and the connect to
-    # the speaker went through it.
+    # Every session selected the send adapter by address and never by hciN.
     for commands in seen:
-        assert commands[0] == f"select {controller}"
-    assert [f"select {controller}", f"connect {MAC}"] in seen
+        assert commands[0] == f"select {SEND_ADAPTER}"
+        assert not any(c.startswith("select hci") for c in commands)
+    assert [f"select {SEND_ADAPTER}", f"connect {MAC}"] in seen
+
+
+def test_selecting_a_controller_by_hci_index_is_caught_as_a_fault():
+    # Proof of the failure mode issue #30 describes: a select by hciN makes
+    # bluetoothctl answer "not available" and carry on. The probe must raise, not
+    # read the default controller's state as if it were the send adapter's.
+    def session(commands: list[str]) -> str:
+        for command in commands:
+            if command.startswith("select hci"):
+                name = command.split()[1]
+                return f"Controller {name} not available\n"
+        return ""
+
+    is_connected, connect = clients._controller_probe("hci0", session=session)
+    with pytest.raises(clients.AdapterSelectFailed):
+        is_connected(MAC)
+    with pytest.raises(clients.AdapterSelectFailed):
+        connect(MAC)
+
+
+def test_failed_select_keeps_snapclient_stopped_and_logs_once(tmp_path):
+    # The send adapter cannot be selected (a fault). keepalive must keep snapclient
+    # stopped and log the fault once across repeated ticks; it must never leave
+    # snapclient running into an adapter it cannot drive.
+    def raising(_mac: str) -> bool:
+        raise clients.AdapterSelectFailed("the send adapter could not be selected")
+
+    client = FakeClient(active=True)  # snapclient was left running from before
+    state_path = tmp_path / "keepalive.state"
+    log: list[str] = []
+
+    states = [
+        clients.keepalive(
+            MAC,
+            is_connected=raising,
+            connect=raising,
+            is_client_active=client.is_active,
+            start_client=client.start,
+            stop_client=client.stop,
+            state_path=state_path,
+            log=log.append,
+        )
+        for _ in range(5)
+    ]
+
+    assert states == ["fault"] * 5
+    # Stopped once, then left alone: no churn and never restarted.
+    assert client.stops == 1
+    assert client.starts == 0
+    assert client.active is False
+    # One log line across all five ticks, and it must not leak the address.
+    assert len(log) == 1
+    assert MAC not in log[0]
 
 
 def test_does_not_leak_the_full_address_in_the_log(tmp_path):
