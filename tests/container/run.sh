@@ -30,13 +30,32 @@ apt-get install -y -qq git ansible-core python3 >/dev/null
 mkdir -p /etc/snaphouse
 cp /repo/local.example.yml /etc/snaphouse/local.yml
 
+# A stub nightstand repo so the nightstand bootstrap stays hermetic here: the
+# nightstand host's clone points at this instead of reaching out to GitHub. Its
+# installer mirrors the real contract (idempotent, root, creates
+# /etc/nightstand/local.toml). The focused idempotency check is in
+# nightstand_bootstrap.sh; here it only needs to apply cleanly.
+stub_nightstand=/srv/stub-nightstand
+mkdir -p "${stub_nightstand}/deploy"
+cat > "${stub_nightstand}/deploy/install.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /etc/nightstand
+touch /etc/nightstand/local.toml
+EOF
+chmod +x "${stub_nightstand}/deploy/install.sh"
+git -C "${stub_nightstand}" init -q
+git -C "${stub_nightstand}" -c user.email=ci@example.invalid -c user.name=ci add -A
+git -C "${stub_nightstand}" -c user.email=ci@example.invalid -c user.name=ci commit -q -m "stub nightstand"
+
 hosts="$(python3 -c "import yaml; print(' '.join(yaml.safe_load(open('/repo/vars/hosts.yml'))['snaphouse_hosts']))")"
 echo "==> Hosts: ${hosts}"
 
 rc=0
 for host in ${hosts}; do
     echo "==> Applying site.yml for ${host}"
-    if ! ansible-playbook site.yml -e "snaphouse_host=${host}" --skip-tags hardware,service; then
+    if ! ansible-playbook site.yml -e "snaphouse_host=${host}" \
+        -e "nightstand_bootstrap_repo_url=${stub_nightstand}" --skip-tags hardware,service; then
         echo "!!! apply failed for ${host}" >&2
         rc=1
     fi

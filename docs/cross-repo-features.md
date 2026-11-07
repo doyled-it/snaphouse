@@ -36,9 +36,12 @@ git clone git@github.com:doyled-it/nightstand.git
   Bluetooth AVRCP metadata, into those stream properties. nightstand keeps a recorded
   `Server.GetStatus` response as a test fixture; when the shape changes on the snaphouse
   side, re-record it.
-- **Art share (snaphouse produces, nightstand consumes).** A folder on the hub: writable
-  over SMB for people, read-only to `pi-bedroom` over a LAN pull (mechanism chosen in
-  snaphouse and recorded here). nightstand syncs it to a local cache on a timer.
+- **Art share (snaphouse produces, nightstand consumes).** One folder on the hub,
+  `/srv/snaphouse/art`, exposed two ways on the LAN. People drop images in over a writable
+  Samba share (`[art]`, one account whose password lives only in the hub's local settings).
+  `pi-bedroom` reads it over HTTP: nginx serves the same folder read-only at `/art/` with
+  `autoindex on; autoindex_format json;`, the "Art listing" contract below. nightstand
+  syncs that listing to a local cache on a timer.
 - **Device ownership on `pi-bedroom`.** snaphouse bootstrap installs the OS base and
   audio, clones nightstand, and runs its installer once. Both repos self-update on their
   own timers. Neither repo's playbook or installer may change files the other owns.
@@ -65,8 +68,9 @@ git clone git@github.com:doyled-it/nightstand.git
 }
 ```
 
-`verify` is `"pass"` or `"fail"`. A machine is healthy when `verify == "pass"` and
-`commit == main_commit`. snaphouse writes `/var/lib/snaphouse/public/status.json`;
+`verify` is `"pass"` or `"fail"`. `last_good` may be `""` before a machine's first
+successful verify; consumers treat an empty value as "no last-good commit yet". A machine
+is healthy when `verify == "pass"` and `commit == main_commit`. snaphouse writes `/var/lib/snaphouse/public/status.json`;
 nightstand writes `/var/lib/nightstand/public/status.json`, and snaphouse's nginx on
 `pi-bedroom` serves that directory at `/nightstand/`.
 

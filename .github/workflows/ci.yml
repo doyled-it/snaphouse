@@ -68,7 +68,7 @@ jobs:
       - name: Check shell scripts
         run: |
           shopt -s globstar nullglob
-          files=(bootstrap.sh bin/* tests/container/run.sh roles/*/files/**/*.sh)
+          files=(bootstrap.sh bin/* tests/container/*.sh roles/*/files/**/*.sh)
           printf 'checking: %s\n' "${files[@]}"
           shellcheck "${files[@]}"
 
@@ -78,3 +78,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Apply site.yml for every host in a container
         run: tests/container/run.sh
+
+  art-share:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply the hub and verify the art share in a container
+        run: tests/container/art_share.sh
+
+  nightstand-bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bootstrap nightstand and check idempotency in a container
+        run: tests/container/nightstand_bootstrap.sh
