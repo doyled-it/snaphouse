@@ -9,6 +9,21 @@
 // machine status files (the cross-repo status schema). The requests it builds
 // are snapserver JSON-RPC calls the page sends back.
 
+// Parse a JSON-RPC message, tolerating a body a strict JSON.parse rejects.
+//
+// snapserver can embed cover art and track metadata straight into a
+// Server.GetStatus response, and that payload has carried unescaped control
+// characters that JSON.parse throws on. A thrown parse must never break the
+// page: this returns the parsed value, or null when the body will not parse, so
+// the caller keeps its last good render and shows a quiet notice instead.
+export function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    return null;
+  }
+}
+
 // Build one row per room, in the order the labels are given.
 //
 // `labels` is the ordered list the page loads from rooms.json:
