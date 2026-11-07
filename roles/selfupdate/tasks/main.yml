@@ -31,7 +31,9 @@
     chdir: /opt/snaphouse
   environment:
     # Use the system interpreter rather than letting uv download a managed one;
-    # outbound is limited and there are no runtime deps to fetch.
+    # outbound is limited. The runtime deps (ruamel.yaml, jeepney) are small
+    # pure-Python wheels fetched from PyPI; keep an eye on them if the hub's
+    # outbound is ever locked down further.
     UV_PYTHON_PREFERENCE: only-system
   # Idempotent prepare step; health is reported by verify, not by this task.
   changed_when: false

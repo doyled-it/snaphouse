@@ -35,7 +35,37 @@ stream_priority:
   - AirPlay
   - Bluetooth
 
-# Pinned Snapcast release. The exact version is chosen on site in Task 5 as the
-# newest release that supports the meta stream, AirPlay metadata, and stream
-# control scripts, then recorded here with the reason.
-snapcast_version: null
+# The sample format every meta-stream member shares, as <rate>:<bits>:<channels>.
+# snapserver fixes the AirPlay source at 44100:16:2, so the Bluetooth source and
+# the meta stream must match or the House stream plays at the wrong pitch, and
+# snd-aloop forces its capture rate to equal what bluealsa-aplay writes. This one
+# value drives both the snapserver sources and the ALSA loopback that
+# bluealsa-aplay feeds (hub_input role), so both ends of the loopback and every
+# meta member agree. The hub_input verify check asserts snapserver reports it.
+house_sample_format: "44100:16:2"
+
+# Pinned Snapcast release. Chosen as the newest release (v0.35.0, 2026-03-10) that
+# supports everything the hub needs: the meta stream (meta:// priority/merge
+# source), the airplay source with track metadata and cover art, and stream
+# control scripts (the controlscript parameter and the Plugin.Stream.Player.*
+# JSON-RPC API). All three are documented for this release at
+# https://github.com/badaix/snapcast/blob/v0.35.0/doc/configuration.md and
+# .../doc/json_rpc_api/stream_plugin.md . snapserver is installed from the
+# release .debs on GitHub for the host architecture; snapclient lands on the Pis
+# in Task 6, so the install role is arch-aware now.
+snapcast_version: "0.35.0"
+
+# The Debian codename of the release .deb to install. The hub runs Debian; this
+# is its codename. Bump it (and the checksums below) if the hub is moved to a
+# newer Debian. The .deb filename is snap{server,client}_<version>-1_<arch>_<codename>.deb.
+snapcast_deb_distro: "bookworm"
+
+# SHA-256 of each snapserver release .deb, pinned in the repo rather than fetched
+# from the download origin, so a tampered mirror cannot swap the artifact and its
+# checksum together (same rule as uv_sha256 above). These are the plain
+# snapserver_0.35.0-1_<arch>_bookworm.deb assets. Update all of these when
+# bumping snapcast_version or snapcast_deb_distro; compute them by downloading the
+# release asset and running sha256sum.
+snapcast_server_sha256:
+  amd64: "afb012318bb8cbf82c63c2084de3b290f53108c49976ff364100882cd8816b41"
+  arm64: "526cded407fad5940e834d77cf66a3b7ebac68931a530be55179f60d327044fd"

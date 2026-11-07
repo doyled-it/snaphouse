@@ -1,0 +1,39 @@
+---
+# Every handler here touches systemd, so each is gated on common_systemd_init
+# (real machine only) and tagged service. A notified handler ignores
+# --skip-tags, so the when: is what keeps these out of the CI container; the tag
+# still marks them for a real-host --skip-tags service run. The metadata role
+# also notifies "Restart snapserver" when the AVRCP control script changes.
+
+- name: Reload systemd for hub input
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Load configured kernel modules
+  # Re-reading /etc/modules-load.d/*.conf loads snd-aloop for the running system
+  # without a reboot. Already-loaded modules are left alone.
+  ansible.builtin.systemd_service:
+    name: systemd-modules-load.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Restart the Bluetooth input
+  ansible.builtin.systemd_service:
+    name: snaphouse-bt-in.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Restart snapserver
+  ansible.builtin.systemd_service:
+    name: snapserver.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service
