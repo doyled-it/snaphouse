@@ -55,27 +55,40 @@ house_sample_format: "44100:16:2"
 # in Task 6, so the install role is arch-aware now.
 snapcast_version: "0.35.0"
 
-# The Debian codename of the release .deb to install. The hub runs Debian; this
-# is its codename. Bump it (and the checksums below) if the hub is moved to a
-# newer Debian. The .deb filename is snap{server,client}_<version>-1_<arch>_<codename>.deb.
-snapcast_deb_distro: "bookworm"
+# The release .deb for each machine is chosen by that machine's own Debian
+# codename at apply time (ansible_distribution_release), not a single value for
+# the whole house: the hub runs Debian bookworm (amd64) and the Raspberry Pis run
+# Debian trixie (arm64), and a bookworm .deb does not satisfy its shared-library
+# dependencies on trixie (libflac12 vs libflac14). The snapcast_pkg role fails
+# with a clear message if a machine's (codename, arch) has no pinned checksum in
+# the maps below. The .deb filename is
+# snap{server,client}_<version>-1_<arch>_<codename>.deb.
 
-# SHA-256 of each snapserver release .deb, pinned in the repo rather than fetched
-# from the download origin, so a tampered mirror cannot swap the artifact and its
-# checksum together (same rule as uv_sha256 above). These are the plain
-# snapserver_0.35.0-1_<arch>_bookworm.deb assets. Update all of these when
-# bumping snapcast_version or snapcast_deb_distro; compute them by downloading the
-# release asset and running sha256sum.
+# SHA-256 of each snapserver/snapclient release .deb, keyed by Debian codename
+# then by .deb architecture, pinned in the repo rather than fetched from the
+# download origin so a tampered mirror cannot swap the artifact and its checksum
+# together (same rule as uv_sha256 above). These are the plain (no
+# pipewire/pulse) assets of the v0.35.0 release
+# (https://github.com/badaix/snapcast/releases/tag/v0.35.0), each verified with
+# `sha256sum` on the downloaded asset. The pinned (codename, arch) pairs are the
+# ones the fleet uses: bookworm/amd64 (the hub) and trixie/arm64 (the Raspberry
+# Pis), plus trixie/amd64 (the hub should it ever move to trixie) and
+# bookworm/arm64 so the container apply check stays green whether its runner is
+# amd64 or arm64 (an arm64 host pulls the arm64 base image). Add a pair here (in
+# both maps) before a machine on a new codename or arch can apply, and update
+# every value when bumping snapcast_version. tests/python/test_snapcast_pkg.py
+# asserts each supported pair is present in both maps.
 snapcast_server_sha256:
-  amd64: "afb012318bb8cbf82c63c2084de3b290f53108c49976ff364100882cd8816b41"
-  arm64: "526cded407fad5940e834d77cf66a3b7ebac68931a530be55179f60d327044fd"
-
-# SHA-256 of each snapclient release .deb, pinned the same way as the snapserver
-# digests above. These are the plain snapclient_0.35.0-1_<arch>_bookworm.deb
-# assets; snapclient runs on all three machines (the hub to the Vizio, and both
-# Pis), so both architectures are pinned. Update all of these when bumping
-# snapcast_version or snapcast_deb_distro; compute them by downloading the
-# release asset and running sha256sum.
+  bookworm:
+    amd64: "afb012318bb8cbf82c63c2084de3b290f53108c49976ff364100882cd8816b41"
+    arm64: "526cded407fad5940e834d77cf66a3b7ebac68931a530be55179f60d327044fd"
+  trixie:
+    amd64: "6a82325cf9eae68b75fb062491639cb31ec58288fe8930f53e86689e22a095da"
+    arm64: "be0c94ea3551c4ba4f4e5f810b18f6c85d9794ab32e4fc6c5e6886e096490914"
 snapcast_client_sha256:
-  amd64: "b71575bcc2b4541f5004c73a0a1f43374e852bf5d5f2162aa1b230f3c209d9f3"
-  arm64: "83afa0910cce99c0e6d4a52ec1849240c9956f5147e0743d60d4dd5f3b11af1a"
+  bookworm:
+    amd64: "b71575bcc2b4541f5004c73a0a1f43374e852bf5d5f2162aa1b230f3c209d9f3"
+    arm64: "83afa0910cce99c0e6d4a52ec1849240c9956f5147e0743d60d4dd5f3b11af1a"
+  trixie:
+    amd64: "3c699b5800904534c10f4a68d0a8736035d8c4b8d8a93ab05a14d4dcae0f04a5"
+    arm64: "eced4134eeab132fc16af23ce19eb2f81abe23dd0f3c610150fb3bd1d344efae"

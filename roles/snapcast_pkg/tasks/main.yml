@@ -1,10 +1,13 @@
 ---
 # Install one pinned Snapcast .deb (snapserver on the hub, snapclient on every
-# machine) from the GitHub release for this host's architecture. This is the one
-# source of truth for how a Snapcast package lands: hub_input includes it for
-# snapserver, snapclient includes it for snapclient. The version lives in
-# vars/all.yml (snapcast_version, snapcast_deb_distro); the caller passes the
-# package name and its arch->sha256 map:
+# machine) from the GitHub release for this host's codename and architecture.
+# This is the one source of truth for how a Snapcast package lands: hub_input
+# includes it for snapserver, snapclient includes it for snapclient. The version
+# lives in vars/all.yml (snapcast_version); the codename is read per machine from
+# ansible_distribution_release, since the house is not on one codename (the hub
+# runs bookworm, the Pis run trixie, and a bookworm .deb will not satisfy its
+# shared-library dependencies on trixie). The caller passes the package name and
+# its codename->arch->sha256 map:
 #
 #   - name: Install the pinned snapclient release
 #     ansible.builtin.include_role:
@@ -23,9 +26,27 @@
   # A KeyError here is the right failure: the hub is x86_64 and the Pis are
   # aarch64, nothing else.
 
+- name: Read this machine's Debian codename for {{ snapcast_pkg_name }}
+  ansible.builtin.set_fact:
+    snapcast_pkg_distro: "{{ ansible_distribution_release }}"
+  # The codename is per machine, not pinned house-wide: the hub is bookworm and
+  # the Pis are trixie, and their .deb builds differ (libflac12 vs libflac14).
+
+- name: Require a pinned checksum for this codename and arch of {{ snapcast_pkg_name }}
+  ansible.builtin.assert:
+    that:
+      - snapcast_pkg_sha256[snapcast_pkg_distro] is defined
+      - snapcast_pkg_sha256[snapcast_pkg_distro][snapcast_pkg_deb_arch] is defined
+    fail_msg: >-
+      No pinned {{ snapcast_pkg_name }} checksum for codename
+      '{{ snapcast_pkg_distro }}' arch '{{ snapcast_pkg_deb_arch }}'. Add the
+      v{{ snapcast_version }} release asset's sha256 to vars/all.yml under the
+      matching map before this machine can apply.
+    quiet: true
+
 - name: Name the .deb release asset for {{ snapcast_pkg_name }}
   ansible.builtin.set_fact:
-    snapcast_pkg_deb_name: "{{ snapcast_pkg_name }}_{{ snapcast_version }}-1_{{ snapcast_pkg_deb_arch }}_{{ snapcast_deb_distro }}.deb"
+    snapcast_pkg_deb_name: "{{ snapcast_pkg_name }}_{{ snapcast_version }}-1_{{ snapcast_pkg_deb_arch }}_{{ snapcast_pkg_distro }}.deb"
     snapcast_pkg_deb_base: "https://github.com/badaix/snapcast/releases/download/v{{ snapcast_version }}"
 
 - name: Check the installed version of {{ snapcast_pkg_name }}
@@ -51,7 +72,7 @@
         dest: "{{ snapcast_pkg_tmp.path }}/{{ snapcast_pkg_name }}.deb"
         # Verified against the digest pinned in vars/all.yml, not one fetched
         # from the same origin as the artifact.
-        checksum: "sha256:{{ snapcast_pkg_sha256[snapcast_pkg_deb_arch] }}"
+        checksum: "sha256:{{ snapcast_pkg_sha256[snapcast_pkg_distro][snapcast_pkg_deb_arch] }}"
         owner: root
         group: root
         mode: "0644"
