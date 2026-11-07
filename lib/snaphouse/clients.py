@@ -36,7 +36,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 
-from snaphouse.adapters import AdapterNotFound, resolve_adapter
+from snaphouse.adapters import AdapterNotFound, AdapterSelectFailed, resolve_adapter
 
 LOCAL_SETTINGS = Path("/etc/snaphouse/local.yml")
 
@@ -51,6 +51,11 @@ DEFAULT_STATE_PATH = Path("/run/snaphouse/bt-keepalive.state")
 # The connection states keepalive reports.
 CONNECTED = "connected"
 ABSENT = "absent"
+# The send adapter could not be selected (bluetoothctl reported it "not
+# available"). Treated like absence for snapclient's sake: the player is kept
+# stopped, but logged distinctly so an adapter fault is not mistaken for a
+# speaker that is simply switched off.
+FAULT = "fault"
 
 # The snapclient service keepalive drives on a Bluetooth-output host.
 SNAPCLIENT_SERVICE = "snapclient.service"
@@ -219,13 +224,19 @@ def keepalive(
     the timer starts each tick a log line is written only on a transition. A long
     stretch of absence logs once; the speaker returning logs once.
     """
-    if is_connected(mac):
-        state = CONNECTED
-    elif connect(mac):
-        # bluetoothctl connect is synchronous: a success means the link is up now.
-        state = CONNECTED
-    else:
-        state = ABSENT
+    try:
+        if is_connected(mac):
+            state = CONNECTED
+        elif connect(mac):
+            # bluetoothctl connect is synchronous: a success means the link is up.
+            state = CONNECTED
+        else:
+            state = ABSENT
+    except AdapterSelectFailed:
+        # The send adapter could not be selected, so the speaker cannot be
+        # reached through it. Treat it as a fault: keep snapclient stopped (the
+        # link is not up) and report it distinctly below.
+        state = FAULT
 
     link_up = state == CONNECTED
     if link_up and not is_client_active():
@@ -235,10 +246,14 @@ def keepalive(
 
     previous = _read_state(state_path)
     if state != previous:
-        log(
-            f"bt-keepalive: speaker ending in :{redact(mac)} "
-            f"{previous or 'unknown'} -> {state}"
-        )
+        if state == FAULT:
+            # No address in this line: the fault is the adapter's, not a speaker's.
+            log("bt-keepalive: send adapter fault; keeping snapclient stopped")
+        else:
+            log(
+                f"bt-keepalive: speaker ending in :{redact(mac)} "
+                f"{previous or 'unknown'} -> {state}"
+            )
         _write_state(state_path, state)
     return state
 
@@ -277,38 +292,56 @@ def _controller_probe(
 ) -> tuple[Probe, Probe]:
     """is_connected / connect for `mac`, each selecting `controller` first.
 
-    Every bluetoothctl session begins with `select <controller>`, so info and
-    connect act on the adapter resolved from local.yml's bt_send_adapter, never on
-    the index-ordered default. bluetoothctl's exit status is not reliable here, so
-    both results are read from its output; a connect to a powered-off speaker
-    fails quietly (its output is captured, never printed).
+    `controller` is the adapter's address (local.yml's bt_send_adapter), not its
+    hciN. bluetoothctl's `select` takes the address: a `select hciN` prints
+    "Controller hciN not available" and silently stays on the index-ordered
+    default (issue #30), which on the hub is the receive dongle, the wrong one.
+    Every session begins with `select <address>`, so info and connect act on the
+    send adapter.
+
+    bluetoothctl's exit status is not reliable here, so both results are read from
+    its output; a connect to a powered-off speaker fails quietly (its output is
+    captured, never printed). If a session's output reports the controller is not
+    available after the select, the adapter could not be selected and both probes
+    raise AdapterSelectFailed rather than read the default controller's state.
     """
 
+    def run(commands: list[str]) -> str:
+        output = session(commands)
+        if "not available" in output:
+            raise AdapterSelectFailed(
+                "bluetoothctl could not select the send Bluetooth adapter"
+            )
+        return output
+
     def is_connected(mac: str) -> bool:
-        return "Connected: yes" in session([f"select {controller}", f"info {mac}"])
+        return "Connected: yes" in run([f"select {controller}", f"info {mac}"])
 
     def connect(mac: str) -> bool:
-        return "Connection successful" in session(
-            [f"select {controller}", f"connect {mac}"]
-        )
+        return "Connection successful" in run([f"select {controller}", f"connect {mac}"])
 
     return is_connected, connect
 
 
 def _send_controller(settings: Path, *, sys_root: Optional[Path] = None) -> str:
-    """Resolve the send adapter's current hciN from its address in local.yml.
+    """Return the send adapter's address from local.yml, proving it is present.
 
-    By address via resolve_adapter, never by index or the bluetoothctl default:
-    the hub has two dongles (receive and send), and the speaker must be driven
-    through the send one. Raises AdapterNotFound when the address is unset or no
-    present controller matches; the message names only the last two octets.
+    The address (not an hciN) is what bluetoothctl's `select` takes, so this is
+    the value every send-adapter session selects by. resolve_adapter is the
+    presence check: it maps the address to a current hciN and raises if no present
+    controller matches, but the hciN it returns is discarded here. The hub has two
+    dongles (receive and send), and the speaker must be driven through the send
+    one. Raises AdapterNotFound when the address is unset or absent; the message
+    names only the last two octets.
     """
     mac = _load_local(settings).get("bt_send_adapter")
     if not mac:
         raise AdapterNotFound("bt_send_adapter is not set in /etc/snaphouse/local.yml")
     if sys_root is None:
-        return resolve_adapter(mac)
-    return resolve_adapter(mac, sys_root)
+        resolve_adapter(mac)
+    else:
+        resolve_adapter(mac, sys_root)
+    return mac
 
 
 def _speaker_connected(name: str, settings: Path) -> bool:
@@ -325,7 +358,12 @@ def _speaker_connected(name: str, settings: Path) -> bool:
     except AdapterNotFound:
         return False
     is_connected, _connect = _controller_probe(controller)
-    return is_connected(mac)
+    try:
+        return is_connected(mac)
+    except AdapterSelectFailed:
+        # The send adapter could not be selected, so the speaker cannot be read
+        # through it. For verify this is the resting "absent" state, not a crash.
+        return False
 
 
 def _client_is_active() -> bool:

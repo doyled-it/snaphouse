@@ -34,7 +34,7 @@ from typing import Callable, Optional
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-from snaphouse.adapters import AdapterNotFound, resolve_adapter
+from snaphouse.adapters import AdapterNotFound, AdapterSelectFailed, resolve_adapter
 
 LOCAL_SETTINGS = Path("/etc/snaphouse/local.yml")
 
@@ -74,6 +74,22 @@ def _run_session(commands: list[str], *, timeout: Optional[float] = None) -> str
         argv, input=script, capture_output=True, text=True, check=False
     )
     return completed.stdout
+
+
+def _check_select(output: str) -> str:
+    """Raise if a bluetoothctl session could not select its controller.
+
+    bluetoothctl prints "Controller <id> not available" when a `select` names a
+    controller it cannot use (an hciN index, or an address that is not present),
+    then silently stays on the index-ordered default. Acting on that would drive
+    the wrong dongle, so any session whose result must reflect the selected
+    adapter is passed through here first. The message names no address.
+    """
+    if "not available" in output:
+        raise AdapterSelectFailed(
+            "bluetoothctl could not select the Bluetooth adapter"
+        )
+    return output
 
 
 def _spawn_agent(controller: str) -> "subprocess.Popen":
@@ -157,15 +173,17 @@ def run_pairing_window(
     before = _snapshot_paired(controller, session)
 
     try:
-        session(
-            [
-                f"select {controller}",
-                "power on",
-                f"discoverable-timeout {window}",
-                f"pairable-timeout {window}",
-                "pairable on",
-                "discoverable on",
-            ]
+        _check_select(
+            session(
+                [
+                    f"select {controller}",
+                    "power on",
+                    f"discoverable-timeout {window}",
+                    f"pairable-timeout {window}",
+                    "pairable on",
+                    "discoverable on",
+                ]
+            )
         )
         proc = spawn_agent(controller)
 
@@ -259,7 +277,13 @@ def pair_phone(*, settings: Path = LOCAL_SETTINGS) -> int:
         f"Pairing window open for {int(PAIRING_WINDOW_SECONDS)} s. "
         "Put the phone into Bluetooth pairing mode now."
     )
-    run_pairing_window(adapter)
+    try:
+        run_pairing_window(adapter)
+    except AdapterSelectFailed as exc:
+        # The window aborted before it opened; run_pairing_window's cleanup has
+        # already closed the adapter on the intended controller.
+        print(f"{prog}: {exc}", file=sys.stderr)
+        return 1
     print("Pairing window closed. The adapter is no longer discoverable.")
     return 0
 
@@ -318,10 +342,20 @@ def pair_speaker(
         return 1
 
     print(f"Scanning {int(SCAN_SECONDS)} s. Put the {name} speaker into pairing mode now.")
-    # One timed session scans on the send adapter; discovered devices stay in
-    # bluez's cache after it ends, so the next session can list them.
-    session([f"select {adapter}", "power on", "scan on"], timeout=SCAN_SECONDS)
-    devices = _named_devices(session([f"select {adapter}", "devices"]))
+    try:
+        # One timed session scans on the send adapter; discovered devices stay in
+        # bluez's cache after it ends, so the next session can list them. Both
+        # sessions select by address and must have actually selected it, or the
+        # scan and listing would reflect the wrong (default) controller.
+        _check_select(
+            session([f"select {adapter}", "power on", "scan on"], timeout=SCAN_SECONDS)
+        )
+        devices = _named_devices(
+            _check_select(session([f"select {adapter}", "devices"]))
+        )
+    except AdapterSelectFailed as exc:
+        print(f"{prog}: {exc}", file=sys.stderr)
+        return 1
     if not devices:
         print(
             f"{prog}: found no named devices; make sure the speaker is in pairing mode",
@@ -335,11 +369,25 @@ def pair_speaker(
         return 1
 
     address, device_name = target
-    session(
-        [f"select {adapter}", f"pair {address}", f"trust {address}", f"connect {address}"]
-    )
+    try:
+        _check_select(
+            session(
+                [
+                    f"select {adapter}",
+                    f"pair {address}",
+                    f"trust {address}",
+                    f"connect {address}",
+                ]
+            )
+        )
+    except AdapterSelectFailed as exc:
+        print(f"{prog}: {exc}", file=sys.stderr)
+        return 1
     write_speaker(settings, name, address)
     print(f"Paired {device_name} as '{name}' and recorded it in {settings}.")
+    # The Bluetooth output ALSA alias reads the speaker address at apply time, so
+    # it only picks up this new pairing on the next apply. Prompt for it.
+    print("Now run 'snaphouse update --force' so this room's audio output uses it.")
     return 0
 
 

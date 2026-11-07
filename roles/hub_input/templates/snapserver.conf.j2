@@ -19,7 +19,7 @@ sampleformat = {{ house_sample_format }}
 source = airplay:///shairport-sync?name=AirPlay&devicename={{ house_stream_name }}
 
 # Bluetooth in: bluealsa-aplay decodes the phone's A2DP into the loopback at the
-# shared sample format (hw:Loopback,0,0 via the snaphouse_btloop ALSA device);
+# shared sample format (hw:Loopback,0,0 via the snaphouse_bt_input ALSA device);
 # this captures the other end (hw:Loopback,1,0) at the same format, so both ends
 # of snd-aloop agree. The control script bridges the phone's AVRCP title/artist
 # into the stream properties. It carries a venv shebang, so snapserver runs it

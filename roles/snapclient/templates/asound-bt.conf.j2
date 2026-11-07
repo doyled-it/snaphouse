@@ -1,19 +1,32 @@
 {#
   ALSA alias for a Bluetooth room output, managed by Ansible (roles/snapclient).
-  snapclient plays into the PCM named "snaphouse_bt"; bluealsa routes it over
+  snapclient plays into the PCM named "snaphouse_speaker"; bluealsa routes it over
   A2DP to this room's speaker. The plug layer converts snapclient's stream to
   whatever the A2DP link negotiates.
+
+  The name is snaphouse_speaker, not snaphouse_bt: snapclient resolves its
+  --soundcard by a name match, and no snaphouse PCM name may be a prefix of
+  another (the hub also defines snaphouse_bt_input for the Bluetooth loopback
+  feed), or the output could bind the input PCM and feed the hub's output back
+  into itself.
 
   The speaker's address is the household's, so it is read from the untracked
   /etc/snaphouse/local.yml (speakers.<name>) at apply time and never written to
   the repo. `speakers` is loaded from local.yml by site.yml.
+
+  Until the speaker is paired its address is empty. A bluealsa device with an
+  empty address must never be written, so nothing is rendered until an address
+  exists; keepalive keeps snapclient stopped in the meantime, and `snaphouse pair
+  speaker` prompts for a re-apply once the address is recorded.
 #}
 {% set speaker = snaphouse_hosts[snaphouse_host].output.speaker %}
-pcm.snaphouse_bt {
+{% set mac = (speakers | default({})).get(speaker) %}
+{% if mac %}
+pcm.snaphouse_speaker {
     type plug
     slave.pcm {
         type bluealsa
-        device "{{ speakers[speaker] }}"
+        device "{{ mac }}"
         profile "a2dp"
     }
     hint {
@@ -21,3 +34,8 @@ pcm.snaphouse_bt {
         description "snaphouse Bluetooth speaker"
     }
 }
+{% else %}
+# No address for the {{ speaker }} speaker in /etc/snaphouse/local.yml yet, so no
+# Bluetooth output PCM is defined. Pair it (snaphouse pair speaker {{ speaker }})
+# and re-apply; keepalive keeps snapclient stopped until then.
+{% endif %}

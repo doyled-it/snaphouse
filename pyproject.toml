@@ -26,6 +26,10 @@ package = false
 dev = [
     "pytest>=8",
     "pyyaml>=6",
+    # Renders the role Jinja templates in tests (the ALSA aliases), so the PCM
+    # names and the empty-address guard are checked without an Ansible apply. Dev
+    # only: the on-device venv installs no templating engine.
+    "jinja2>=3",
 ]
 
 [tool.pytest.ini_options]

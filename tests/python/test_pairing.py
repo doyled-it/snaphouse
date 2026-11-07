@@ -246,6 +246,117 @@ def test_pairing_window_closes_the_adapter_even_when_the_wait_is_interrupted():
     assert proc.terminated
 
 
+def test_pairing_window_raises_but_still_closes_on_the_right_adapter_when_select_fails():
+    # If bluetoothctl cannot select the receive adapter, the window must abort
+    # rather than open a pairing window on the wrong (default) controller. But the
+    # adapter still has to be closed on the intended controller, selected by
+    # address, so Ctrl-C safety and the standing lockdown are never undermined.
+    sessions: list[list[str]] = []
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        if "paired-devices" in commands:
+            return ""  # the opening snapshot reads cleanly
+        if "discoverable on" in commands:
+            # The open session cannot select the adapter.
+            return f"Controller {CONTROLLER} not available\n"
+        return ""
+
+    clock = FakeClock()
+    with pytest.raises(pairing.AdapterSelectFailed):
+        pairing.run_pairing_window(
+            CONTROLLER,
+            duration=120.0,
+            session=session,
+            spawn_agent=lambda controller: FakeProc(exited=True),
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+        )
+
+    # The finally ran and closed the adapter, selecting it by address.
+    closed = [s for s in sessions if "discoverable off" in s]
+    assert closed
+    for commands in closed:
+        assert commands[0] == f"select {CONTROLLER}"
+        assert "pairable off" in commands
+
+
+SEND_ADAPTER = "11:22:33:44:55:66"
+
+LOCAL_FOR_SPEAKER = """\
+# Local settings. Comments here must survive a rewrite.
+bt_send_adapter: "11:22:33:44:55:66"
+speakers:
+  vizio: ""   # living-room soundbar
+  jbl: ""     # bedroom speaker
+"""
+
+
+def test_pair_speaker_selects_by_address_records_and_prompts_a_reapply(
+    tmp_path, capsys, monkeypatch
+):
+    settings = tmp_path / "local.yml"
+    settings.write_text(LOCAL_FOR_SPEAKER)
+    # resolve_adapter is the presence check; stub it so the test needs no sysfs.
+    monkeypatch.setattr(pairing, "resolve_adapter", lambda mac, *a, **k: "hci9")
+
+    speaker_mac = "AA:BB:CC:DD:EE:01"
+    seen: list[list[str]] = []
+
+    def session(commands, timeout=None):
+        seen.append(list(commands))
+        if "devices" in commands:
+            return f"Device {speaker_mac} Vizio TV\n"
+        return ""
+
+    def choose(devices):
+        assert devices == [(speaker_mac, "Vizio TV")]
+        return devices[0]
+
+    rc = pairing.pair_speaker(
+        "vizio", settings=settings, session=session, choose=choose
+    )
+    assert rc == 0
+
+    # The address was recorded under speakers.vizio.
+    data = yaml.safe_load(settings.read_text())
+    assert data["speakers"]["vizio"] == speaker_mac
+
+    # Every session selected the send adapter by address, never by hciN (issue
+    # #30): a scan, a device listing, and the pair/trust/connect.
+    assert seen
+    for commands in seen:
+        assert commands[0] == f"select {SEND_ADAPTER}"
+        assert not any(c.startswith("select hci") for c in commands)
+
+    out = capsys.readouterr().out
+    # The ALSA output alias only picks up the new address on the next apply, so
+    # the operator is told to re-apply.
+    assert "snaphouse update --force" in out
+
+
+def test_pair_speaker_aborts_clearly_when_the_adapter_cannot_be_selected(
+    tmp_path, capsys, monkeypatch
+):
+    settings = tmp_path / "local.yml"
+    settings.write_text(LOCAL_FOR_SPEAKER)
+    monkeypatch.setattr(pairing, "resolve_adapter", lambda mac, *a, **k: "hci9")
+
+    def session(commands, timeout=None):
+        # bluetoothctl cannot select the adapter in any session.
+        return "Controller not available\n"
+
+    rc = pairing.pair_speaker(
+        "vizio", settings=settings, session=session, choose=lambda devices: devices[0]
+    )
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "could not select" in err.lower()
+    # Nothing was recorded: speakers.vizio is still empty.
+    data = yaml.safe_load(settings.read_text())
+    assert data["speakers"]["vizio"] == ""
+
+
 LOCAL_YML = """\
 # Local settings for this machine. Comments here must survive a rewrite.
 
