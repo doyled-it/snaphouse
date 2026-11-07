@@ -17,6 +17,7 @@ import {
   groupUnmuteRequest,
   healthBanner,
   artFromHistory,
+  interpretRpcResponse,
   safeJsonParse,
 } from "./rooms-model.js";
 
@@ -31,8 +32,9 @@ const SLIDER_DEBOUNCE_MS = 150;
 // Shown on the connection line when a status reply will not parse. The page
 // keeps its last good render and says so quietly rather than breaking.
 const STATUS_UNAVAILABLE_MSG = "Status unavailable; showing the last update.";
-// Shown while the live WebSocket is down and the page is polling instead.
-const OFFLINE_MSG = "Live updates are offline; refreshing every 30 seconds.";
+// Shown while the live WebSocket is down and the page is polling instead. The
+// cadence is derived from POLL_MS so the text cannot drift from the real poll.
+const OFFLINE_MSG = `Live updates are offline; refreshing every ${POLL_MS / 1000} seconds.`;
 
 const els = {
   nowPlaying: document.getElementById("now-playing"),
@@ -254,18 +256,11 @@ async function postRpc(method, params) {
     headers: { "Content-Type": "application/json" },
     body: envelope(method, params),
   });
-  // Parse the body ourselves (not response.json()) so a malformed payload is a
-  // tagged, recoverable failure rather than an opaque throw.
-  const body = safeJsonParse(await response.text());
-  if (body === null) {
-    const err = new Error("unparseable JSON-RPC response");
-    err.parseFailed = true;
-    throw err;
-  }
-  if (body.error) {
-    throw new Error(body.error.message || "JSON-RPC error");
-  }
-  return body.result;
+  // Interpret the reply in the model: a non-ok status (a proxy error page when
+  // snapserver is down) is the unreachable path, while an ok reply that will not
+  // parse is a tagged parse failure. This keeps "not reachable" and "status
+  // unavailable" distinct.
+  return interpretRpcResponse(response.ok, await response.text());
 }
 
 function sendControl(request) {
