@@ -1,3 +1,172 @@
 ---
-# The art_share role is implemented in a later task. No tasks yet.
-[]
+# The hub's art folder, exposed two ways on the LAN (design: "Art share"): a
+# writable SMB share people drop images into from a Mac or phone, and a read-only
+# JSON listing nginx serves for the nightstand frame to pull. One folder,
+# /srv/snaphouse/art, backs both. Everything here is LAN-only; there is no
+# inbound access from the internet (AGENTS.md).
+#
+# Nothing identifying lives in this role. The one secret, the share password, is
+# read from the untracked /etc/snaphouse/local.yml (art_share_password) and set
+# into Samba's own password store; it never lands in the repo or in a log.
+
+- name: Install Samba and the SMB client
+  # samba serves the writable share; smbclient is what the on-device verify uses
+  # to confirm the share is advertised.
+  ansible.builtin.apt:
+    name:
+      - samba
+      - smbclient
+      # openssl provides the MD4 (legacy provider) the rotation check hashes
+      # with; it is normally present already, listed here so the role is
+      # self-contained.
+      - openssl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the art share group
+  ansible.builtin.group:
+    name: art
+    system: true
+
+- name: Create the art share user
+  # A system account with no login, owning the share folder so files written over
+  # SMB have a consistent owner. Its SMB password is set separately below.
+  ansible.builtin.user:
+    name: art
+    group: art
+    system: true
+    shell: /usr/sbin/nologin
+    home: /srv/snaphouse/art
+    create_home: false
+
+- name: Ensure the art folder exists
+  ansible.builtin.file:
+    path: /srv/snaphouse/art
+    state: directory
+    owner: art
+    group: art
+    # setgid so files dropped in keep the art group; group-writable for SMB,
+    # world-readable so nginx (www-data) can serve the read-only listing.
+    mode: "2775"
+
+- name: Define the writable SMB art share
+  # Appended to the stock Debian smb.conf, which already carries a sane [global].
+  # LAN-only by a hosts allow/deny pair: allow lists loopback and the private
+  # ranges, both IPv4 (RFC1918) and IPv6 (fe80::/10 link-local and fc00::/7 ULA,
+  # the usual path when a Mac or phone reaches the hub over .local mDNS), and
+  # takes precedence over the catch-all deny of all IPv4 and IPv6. The share is
+  # unreachable off the LAN; the machine has no inbound internet access anyway.
+  # valid users and force user keep every write owned by the art account.
+  ansible.builtin.blockinfile:
+    path: /etc/samba/smb.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK art_share"
+    block: |
+      [art]
+         comment = snaphouse art share
+         path = /srv/snaphouse/art
+         browseable = yes
+         read only = no
+         valid users = art
+         force user = art
+         force group = art
+         create mask = 0664
+         directory mask = 2775
+         hosts allow = 127.0.0.1 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fe80::/10 fc00::/7
+         hosts deny = 0.0.0.0/0 ::/0
+    validate: testparm -s %s
+  notify: Reload smbd for art_share
+
+- name: Read the art account's stored SMB password hash
+  # pdbedit prints the account in smbpasswd format; field 4 is the stored NT
+  # hash. The output is empty (rc still 0) when Samba does not yet know the
+  # account, which the rotation compare below treats as "no hash yet".
+  ansible.builtin.command: pdbedit --list --smbpasswd-style --user=art
+  register: art_share_pdbedit
+  changed_when: false
+  failed_when: false
+
+- name: Note the stored NT hash for the art account
+  ansible.builtin.set_fact:
+    art_share_stored_nt: "{{ (art_share_pdbedit.stdout | trim).split(':')[3] if (art_share_pdbedit.stdout | trim) else '' }}"
+  no_log: true
+
+- name: Work out the NT hash of the configured share password
+  # The NT hash is MD4 of the UTF-16LE password, the form Samba stores. Computed
+  # from art_share_password so local.yml is the source of truth: when the password
+  # there changes, this hash changes and the set-password task runs again. The
+  # password is fed on stdin, never interpolated into the command, so a value with
+  # quotes, $, backticks or backslashes is hashed verbatim and the pipeline stays
+  # constant. MD4 is a legacy algorithm, so OpenSSL's legacy provider is loaded
+  # alongside the default. pipefail (hence bash) surfaces an iconv or openssl
+  # failure instead of letting the trailing tr mask it.
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      iconv -f UTF-8 -t UTF-16LE
+      | openssl dgst -md4 -provider legacy -provider default -r
+      | cut -d' ' -f1
+      | tr '[:lower:]' '[:upper:]'
+    executable: /bin/bash
+    stdin: "{{ art_share_password }}"
+    stdin_add_newline: false
+  register: art_share_want_nt
+  changed_when: false
+  no_log: true
+
+- name: Set the art SMB password from local settings
+  # Only when the stored hash differs from the configured one (first install, or
+  # a rotation in local.yml), so re-applies with an unchanged password stay
+  # quiet. The password goes to smbpasswd on stdin, twice and newline separated,
+  # again with no shell in the path.
+  ansible.builtin.command:
+    cmd: smbpasswd -s -a art
+    stdin: "{{ art_share_password }}\n{{ art_share_password }}\n"
+    stdin_add_newline: false
+  when: (art_share_want_nt.stdout | trim | upper) != (art_share_stored_nt | upper)
+  changed_when: true
+  no_log: true
+
+- name: Serve the art folder read-only as a JSON listing
+  # The read-only pull side. Drops into the web role's include dir as its own
+  # file, clear of the room-picker locations that land there too.
+  ansible.builtin.copy:
+    src: art.conf
+    dest: /etc/nginx/snaphouse.d/art.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx for art_share
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the art-share verify check
+  ansible.builtin.copy:
+    src: verify.d/art_share.sh
+    dest: /etc/snaphouse/verify.d/art_share.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# Reload nginx and smbd now if their config changed, so the share is live before
+# `snaphouse verify` runs at the end of this apply. Both handlers are gated on
+# systemd, so this is a no-op in the CI container.
+- name: Reload services now if their config changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure Samba is running
+  ansible.builtin.service:
+    name: smbd
+    state: started
+    enabled: true
+  # Only on a real systemd host; the CI container has no running init, so smbd is
+  # started by hand in the art-share container test instead.
+  when: common_systemd_init
+  tags:
+    - service

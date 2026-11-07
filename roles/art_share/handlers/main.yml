@@ -1,0 +1,21 @@
+---
+# Both handlers touch a running service, so each is gated on common_systemd_init
+# (real machine only) and tagged service. A notified handler ignores
+# --skip-tags, so the when: is what keeps these out of the CI container; the tag
+# still marks them for a real-host --skip-tags service run.
+
+- name: Reload nginx for art_share
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Reload smbd for art_share
+  ansible.builtin.service:
+    name: smbd
+    state: reloaded
+  when: common_systemd_init
+  tags:
+    - service

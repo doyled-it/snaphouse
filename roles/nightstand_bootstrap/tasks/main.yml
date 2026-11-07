@@ -1,3 +1,49 @@
 ---
-# The nightstand_bootstrap role is implemented in a later task. No tasks yet.
-[]
+# First-boot bootstrap of the nightstand frame on this host (design "Device
+# ownership on pi-bedroom", cross-repo doc). snaphouse installs the OS base and
+# audio, then hands the display off to nightstand: it clones the repo and runs
+# nightstand's own installer once. From then on nightstand owns everything
+# display-specific and self-updates on its own timer, so this role never touches
+# a nightstand-owned path again. Both the clone and the installer are guarded by
+# creates for exactly that reason; the git module is deliberately not used, since
+# it would reach into the checkout on every apply.
+
+- name: Ensure git is present for the clone
+  ansible.builtin.apt:
+    name: git
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Clone nightstand on first boot only
+  ansible.builtin.command:
+    cmd: "git clone {{ nightstand_bootstrap_repo_url }} /opt/nightstand"
+    creates: /opt/nightstand
+  # Deliberately the command module with a creates guard, not ansible.builtin.git:
+  # snaphouse clones once and must never re-touch nightstand-owned paths after.
+  # noqa command-instead-of-module
+
+- name: Run the nightstand installer once
+  # nightstand's installer is idempotent, runs as root, and creates
+  # /etc/nightstand/local.toml from its example on first run. The creates guard
+  # means snaphouse runs it exactly once; nightstand self-updates from then on.
+  ansible.builtin.command:
+    cmd: ./deploy/install.sh
+    chdir: /opt/nightstand
+    creates: /etc/nightstand/local.toml
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the nightstand verify check
+  ansible.builtin.copy:
+    src: verify.d/nightstand.sh
+    dest: /etc/snaphouse/verify.d/nightstand.sh
+    owner: root
+    group: root
+    mode: "0755"
