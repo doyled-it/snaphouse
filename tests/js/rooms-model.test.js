@@ -15,6 +15,7 @@ import {
   volumeRequest,
   groupUnmuteRequest,
   healthBanner,
+  artFromHistory,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // Ordered labels, the shape the page loads from rooms.json.
@@ -246,4 +247,100 @@ test("healthBanner names several troubled hosts together", () => {
   ]);
   assert.match(banner, /office/);
   assert.match(banner, /nightstand-frame/);
+});
+
+// artFromHistory takes the parsed art-history.json the hub republishes (shape in
+// docs/cross-repo-features.md) and returns { current, history } for the page. It
+// validates every field, so a malformed, missing, oversized, or hostile body
+// never reaches the DOM. history stays newest first, as the producer writes it.
+function piece(overrides = {}) {
+  return {
+    file: "aic-12345.jpg",
+    title: "A Still Life",
+    artist: "A Painter",
+    source_url: "https://example.org/artworks/12345",
+    shown_at: "2026-11-06T21:14:00-08:00",
+    ...overrides,
+  };
+}
+
+test("artFromHistory returns the current piece and the history, newest first", () => {
+  const current = piece();
+  const older = piece({ file: "aic-9.jpg", title: "An Older One", shown_at: "2026-11-05T09:00:00-08:00" });
+  const art = artFromHistory({ current, history: [current, older] });
+  assert.equal(art.current.file, "aic-12345.jpg");
+  assert.equal(art.current.title, "A Still Life");
+  assert.equal(art.current.artist, "A Painter");
+  assert.equal(art.current.source_url, "https://example.org/artworks/12345");
+  assert.deepEqual(
+    art.history.map((p) => p.file),
+    ["aic-12345.jpg", "aic-9.jpg"]
+  );
+});
+
+test("artFromHistory yields an empty, hideable result when the body is missing", () => {
+  for (const missing of [null, undefined, "", 0, "not an object", []]) {
+    const art = artFromHistory(missing);
+    assert.equal(art.current, null);
+    assert.deepEqual(art.history, []);
+  }
+});
+
+test("artFromHistory drops malformed pieces and a malformed current", () => {
+  const good = piece();
+  const art = artFromHistory({
+    current: { title: "No file here" },
+    history: [
+      good,
+      { file: "x.jpg" }, // no title
+      { file: "y.jpg", title: "No stamp" }, // no shown_at
+      { file: "", title: "Empty file", shown_at: "2026-11-01T00:00:00-08:00" },
+      { file: "../secret.jpg", title: "Path escape", shown_at: "2026-11-01T00:00:00-08:00" },
+      42,
+    ],
+  });
+  // The malformed current is rejected to null.
+  assert.equal(art.current, null);
+  // Only the one well-formed, safe piece survives.
+  assert.deepEqual(
+    art.history.map((p) => p.file),
+    ["aic-12345.jpg"]
+  );
+});
+
+test("artFromHistory caps an oversized history at 50 entries", () => {
+  const history = [];
+  for (let i = 0; i < 80; i += 1) {
+    history.push(piece({ file: `aic-${i}.jpg`, shown_at: `2026-11-06T21:${String(i % 60).padStart(2, "0")}:00-08:00` }));
+  }
+  const art = artFromHistory({ current: history[0], history });
+  assert.equal(art.history.length, 50);
+  assert.equal(art.history[0].file, "aic-0.jpg");
+});
+
+test("artFromHistory drops a non-https source_url but keeps the piece", () => {
+  const art = artFromHistory({
+    current: piece({ source_url: "http://insecure.example/obj" }),
+    history: [
+      piece({ source_url: "http://insecure.example/obj" }),
+      piece({ file: "j.jpg", source_url: "javascript:alert(1)" }),
+      piece({ file: "n.jpg", source_url: null }),
+    ],
+  });
+  assert.equal(art.current.source_url, null);
+  assert.equal(art.current.file, "aic-12345.jpg");
+  assert.deepEqual(
+    art.history.map((p) => p.source_url),
+    [null, null, null]
+  );
+});
+
+test("artFromHistory coerces a missing or non-string artist to null", () => {
+  const art = artFromHistory({
+    current: piece({ artist: undefined }),
+    history: [piece({ artist: 7 }), piece({ file: "b.jpg", artist: "" })],
+  });
+  assert.equal(art.current.artist, null);
+  assert.equal(art.history[0].artist, null);
+  assert.equal(art.history[1].artist, null);
 });

@@ -156,3 +156,83 @@ function isTroubled(entry) {
   }
   return false;
 }
+
+// The art shown on the nightstand frame, for the "On the frame" section.
+//
+// `json` is the parsed art-history.json the hub republishes same-origin (the
+// "Art history file" contract in docs/cross-repo-features.md): a current piece
+// and a history list, newest first. The hub already hardens the fetch, but the
+// page validates again before anything reaches the DOM, so a missing, malformed,
+// oversized, or hostile body degrades to an empty result the page hides rather
+// than rendering junk or a broken image.
+//
+// Returns { current: Piece|null, history: [Piece, ...] } where each Piece is
+// { file, title, artist|null, source_url|null, shown_at }. The caller builds the
+// image path from `file` and must still escape the text fields in the DOM.
+export function artFromHistory(json) {
+  const empty = { current: null, history: [] };
+  if (!json || typeof json !== "object" || Array.isArray(json)) {
+    return empty;
+  }
+  const rawHistory = Array.isArray(json.history) ? json.history : [];
+  const history = rawHistory
+    .map(validatePiece)
+    .filter((piece) => piece !== null)
+    .slice(0, MAX_ART_HISTORY);
+  return { current: validatePiece(json.current), history };
+}
+
+// At most this many entries are kept, matching the producer's cap, so a runaway
+// or hostile history cannot grow the list without bound.
+const MAX_ART_HISTORY = 50;
+
+// One entry, validated to the contract, or null if it is unusable. file must be
+// a bare file name (no path separators, no leading dot) because the page builds
+// an /art/<file> URL from it; title and shown_at are required; artist is optional
+// (null when absent or not a non-empty string); source_url is kept only when it
+// is an https URL, so a http, javascript:, or malformed link never becomes a
+// clickable target.
+function validatePiece(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  if (!isSafeFileName(raw.file)) {
+    return null;
+  }
+  if (typeof raw.title !== "string" || raw.title.length === 0) {
+    return null;
+  }
+  if (typeof raw.shown_at !== "string" || raw.shown_at.length === 0) {
+    return null;
+  }
+  const artist =
+    typeof raw.artist === "string" && raw.artist.length > 0 ? raw.artist : null;
+  return {
+    file: raw.file,
+    title: raw.title,
+    artist,
+    source_url: httpsUrlOrNull(raw.source_url),
+    shown_at: raw.shown_at,
+  };
+}
+
+function isSafeFileName(value) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !value.startsWith(".")
+  );
+}
+
+function httpsUrlOrNull(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  try {
+    return new URL(value).protocol === "https:" ? value : null;
+  } catch (err) {
+    return null;
+  }
+}
