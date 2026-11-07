@@ -125,6 +125,15 @@
     group: snapserver
     mode: "0755"
 
+- name: Serve the cover art from the public web root
+  ansible.builtin.copy:
+    src: cover.conf
+    dest: /etc/nginx/snaphouse.d/cover.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
 - name: Write the snapserver configuration
   ansible.builtin.template:
     src: snapserver.conf.j2
