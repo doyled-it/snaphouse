@@ -74,10 +74,20 @@ jobs:
 
   container-apply:
     runs-on: ubuntu-latest
+    strategy:
+      # The house is not on one Debian codename: the hub runs bookworm and the
+      # Pis run trixie, and a bookworm .deb will not install on trixie. Apply on
+      # both so the per-machine codename selection and the trixie checksums are
+      # exercised (the container is amd64, so this covers the amd64 side of each).
+      fail-fast: false
+      matrix:
+        image: ["debian:bookworm", "debian:trixie"]
     steps:
       - uses: actions/checkout@v4
       - name: Apply site.yml for every host in a container
         run: tests/container/run.sh
+        env:
+          SNAPHOUSE_TEST_IMAGE: ${{ matrix.image }}
 
   art-share:
     runs-on: ubuntu-latest
