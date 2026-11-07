@@ -89,17 +89,50 @@ def _known_clients(status: dict) -> dict[str, dict]:
     return known
 
 
-def apply_client_settings(rpc: Rpc, clients: dict[str, dict]) -> list[str]:
-    """Push each room's name and latency into snapserver; return the ids changed.
+def _client_groups(status: dict) -> dict[str, dict]:
+    """Map client id to its group's id and current stream from a status result.
+
+    snapserver holds every client in a group, and the group is what carries the
+    stream a room plays. A client it has seen is listed whether or not it is
+    connected, so a disconnected room's group can still be read and corrected.
+    """
+    groups: dict[str, dict] = {}
+    for group in status.get("server", {}).get("groups", []):
+        group_id = group.get("id")
+        stream = group.get("stream_id")
+        for client in group.get("clients", []):
+            groups[client["id"]] = {"id": group_id, "stream": stream}
+    return groups
+
+
+def apply_client_settings(
+    rpc: Rpc, clients: dict[str, dict], house_stream: str = "House"
+) -> list[str]:
+    """Push each room's name, latency, and stream into snapserver; return ids changed.
 
     `clients` maps a host id (living/office/bedroom) to {"label", "latency_ms"}.
-    For every room snapserver already knows, a Client.SetName or Client.SetLatency
-    is sent only where the server's current value differs from the repo's. Rooms
-    snapserver has never seen are skipped. Re-running against a server that
-    already carries the values sends nothing and returns an empty list.
+    For every room snapserver already knows:
+
+      - a Client.SetName or Client.SetLatency is sent only where the server's
+        current value differs from the repo's, and
+      - the room's group is moved onto the House meta stream (`house_stream`) with
+        Group.SetStream whenever snapserver has it on any other stream.
+
+    The stream move is why this exists alongside the snapserver.conf
+    `default_source`: default_source only steers a client snapserver has never
+    seen, but the living, office, and bedroom groups are already remembered in
+    server.json on whatever stream they last had (often the bare AirPlay input),
+    and stay there until moved here. One Group.SetStream is sent per group (rooms
+    that share a group are moved once). Rooms snapserver has never seen are
+    skipped. Re-running against a server that already carries the applied values
+    (names, latencies, and House as every room's stream) sends nothing and
+    returns an empty list.
     """
-    known = _known_clients(rpc("Server.GetStatus", {}))
+    status = rpc("Server.GetStatus", {})
+    known = _known_clients(status)
+    groups = _client_groups(status)
     changed: list[str] = []
+    moved_groups: set[str] = set()
     for host_id, want in clients.items():
         current = known.get(host_id)
         if current is None:
@@ -111,9 +144,71 @@ def apply_client_settings(rpc: Rpc, clients: dict[str, dict]) -> list[str]:
         if current["latency"] != want["latency_ms"]:
             rpc("Client.SetLatency", {"id": host_id, "latency": want["latency_ms"]})
             touched = True
+        group = groups.get(host_id)
+        if (
+            group is not None
+            and group["id"] is not None
+            and group["stream"] != house_stream
+        ):
+            if group["id"] not in moved_groups:
+                rpc("Group.SetStream", {"id": group["id"], "stream_id": house_stream})
+                moved_groups.add(group["id"])
+            touched = True
         if touched:
             changed.append(host_id)
     return changed
+
+
+def check_streams(
+    rpc: Rpc,
+    *,
+    required: tuple[str, ...] = ("AirPlay", "Bluetooth", "House"),
+    bt_sampleformat: str = "44100:16:2",
+) -> list[str]:
+    """Return a list of problems with snapserver's streams (empty when healthy).
+
+    The hub's verify checks call this through the venv Python instead of jq:
+    Server.GetStatus carries cover art and track metadata inline, and that
+    payload can contain unescaped control characters that jq (and a strict JSON
+    parser) reject, so a bloated status would otherwise fail verify and roll the
+    hub back. `rpc` is a tolerant caller (HttpRpc parses with strict=False).
+    """
+    status = rpc("Server.GetStatus", {})
+    server = status.get("server")
+    if not server:
+        return ["snapserver returned no server status"]
+    streams = server.get("streams", [])
+    ids = {stream.get("id") for stream in streams}
+    problems: list[str] = []
+    missing = [want for want in required if want not in ids]
+    if missing:
+        problems.append("snapserver is missing streams: " + " ".join(missing))
+    bluetooth = next((s for s in streams if s.get("id") == "Bluetooth"), None)
+    if bluetooth is not None:
+        fmt = bluetooth.get("uri", {}).get("query", {}).get("sampleformat")
+        if fmt != bt_sampleformat:
+            problems.append(
+                f"Bluetooth stream sample format is '{fmt}', expected {bt_sampleformat}"
+            )
+    return problems
+
+
+def rpc_result(text: str, method: str) -> dict:
+    """Parse a JSON-RPC response body and return its `result`, or raise on error.
+
+    snapserver embeds cover art and track metadata straight into its responses
+    (Server.GetStatus carries the active stream's artData and title), and that
+    payload can contain unescaped control characters. Strict JSON (and jq) reject
+    those with 'control characters must be escaped', which made a bloated status
+    fail the hub's own readers: the apply step's apply-clients and the verify
+    checks, rolling the hub back to its last-good commit. json.loads(strict=False)
+    accepts control characters inside strings, so every hub-side reader tolerates
+    the payload. A JSON-RPC error field still raises.
+    """
+    body = json.loads(text, strict=False)
+    if "error" in body:
+        raise RuntimeError(f"snapserver error for {method}: {body['error']}")
+    return body.get("result", {})
 
 
 class HttpRpc:
@@ -121,7 +216,8 @@ class HttpRpc:
 
     Stdlib only (urllib): the hub applies settings against its own snapserver, so
     no third-party HTTP client is pulled in. A JSON-RPC error or a transport
-    failure raises.
+    failure raises. The response is parsed tolerantly (see rpc_result), so a
+    status bloated with inline art never fails the parse.
     """
 
     def __init__(self, url: str = DEFAULT_RPC_URL, *, timeout: float = 5.0):
@@ -144,10 +240,8 @@ class HttpRpc:
             method="POST",
         )
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-        if "error" in body:
-            raise RuntimeError(f"snapserver error for {method}: {body['error']}")
-        return body.get("result", {})
+            text = response.read().decode("utf-8")
+        return rpc_result(text, method)
 
 
 # --------------------------------------------------------------------------- #
@@ -404,10 +498,21 @@ def _speaker_mac(name: str, settings: Path) -> Optional[str]:
 
 def _cmd_apply_clients(args: argparse.Namespace) -> int:
     clients = json.loads(args.clients)
-    changed = apply_client_settings(HttpRpc(args.url), clients)
+    changed = apply_client_settings(HttpRpc(args.url), clients, args.house_stream)
     for host_id in changed:
         print(host_id)
     return 0
+
+
+def _cmd_verify_streams(args: argparse.Namespace) -> int:
+    try:
+        problems = check_streams(HttpRpc(args.url))
+    except Exception as exc:  # noqa: BLE001 - a verify check reports, never crashes
+        print(f"could not read snapserver status: {exc}", file=sys.stderr)
+        return 1
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    return 1 if problems else 0
 
 
 def _cmd_keepalive(args: argparse.Namespace) -> int:
@@ -496,7 +601,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     apply_clients.add_argument("--clients", required=True, help="JSON host_id -> {label, latency_ms}")
     apply_clients.add_argument("--url", default=DEFAULT_RPC_URL)
+    apply_clients.add_argument(
+        "--house-stream",
+        default="House",
+        help="the stream every room's group is set to (the House meta stream)",
+    )
     apply_clients.set_defaults(func=_cmd_apply_clients)
+
+    verify_streams = sub.add_parser(
+        "verify-streams", help="check snapserver serves the house streams (verify)"
+    )
+    verify_streams.add_argument("--url", default=DEFAULT_RPC_URL)
+    verify_streams.set_defaults(func=_cmd_verify_streams)
 
     keep = sub.add_parser("keepalive", help="reconnect a speaker if needed (timer)")
     keep.add_argument("name", help="which speaker (a key under speakers in local.yml)")

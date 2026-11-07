@@ -29,6 +29,13 @@ source = alsa:///?name=Bluetooth&device=hw:Loopback,1,0&sampleformat={{ house_sa
 # The stream the rooms play: the active input, AirPlay winning a tie.
 source = meta:///AirPlay/Bluetooth?name={{ house_stream_name }}
 
+# The stream a client snapserver has never seen before is assigned to. Without
+# this, snapserver defaults a new client to the first valid stream, which is
+# AirPlay (the sources must be listed AirPlay, Bluetooth, House so the meta
+# stream can reference the other two). That left every room on the bare AirPlay
+# input instead of the house. Pin the default to the House meta stream.
+default_source = {{ house_stream_name }}
+
 [http]
 # JSON-RPC, websockets, and the Snapweb control UI on the LAN. nginx proxies
 # /jsonrpc here, and port 1780 stays reachable directly for the nightstand frame.
