@@ -1,0 +1,36 @@
+# Managed by snaphouse (room_picker role). Do not edit by hand.
+#
+# Dropped into /etc/nginx/snaphouse.d/ on the hub only (the one host whose roles
+# include room_picker). It is pulled in by the server block the web role owns, so
+# it adds locations and sets no server-level directives. LAN-only: there is no
+# inbound access from the internet (AGENTS.md).
+
+# The page and its static assets, served from the room-picker web root. The web
+# role's exact-match location = /status.json keeps serving the status file from
+# the public root, since an exact match outranks this prefix.
+location / {
+    root /var/lib/snaphouse/room-picker;
+    index index.html;
+    try_files $uri $uri/ =404;
+}
+
+# The room list and health targets the page reads at startup, served as JSON.
+location = /rooms.json {
+    root /var/lib/snaphouse/room-picker;
+    default_type application/json;
+}
+
+# snapserver's JSON-RPC, proxied with the WebSocket upgrade so the page can hold
+# a notification socket open and also POST plain JSON-RPC calls. Port 1780 stays
+# reachable on the LAN directly for Snapweb and the nightstand frame (the
+# cross-repo contract in docs/cross-repo-features.md). The long read timeout
+# keeps an idle notification socket from being closed under us.
+location = /jsonrpc {
+    proxy_pass http://127.0.0.1:1780/jsonrpc;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $snaphouse_connection_upgrade;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}

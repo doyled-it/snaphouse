@@ -1,0 +1,22 @@
+{#
+  The room list and health targets the page reads at startup, built from the
+  inventory so vars/hosts.yml stays the single source of truth.
+
+  rooms:  one entry per room, in inventory order (living, office, bedroom), each
+          { id, label } where id is the snapclient hostID / snapserver client id.
+  health: one status endpoint per machine, plus the nightstand frame's own status
+          file that the hub serves on pi-bedroom. Hostnames are the mDNS .local
+          names from the cross-repo status contract; nothing identifying.
+
+  Rendered with Ansible's to_nice_json so the file is readable and valid JSON.
+#}
+{% set rooms = [] %}
+{% for name, host in snaphouse_hosts.items() %}
+{% set _ = rooms.append({'id': host.host_id, 'label': host.room_label}) %}
+{% endfor %}
+{% set health = [] %}
+{% for name in snaphouse_hosts.keys() %}
+{% set _ = health.append({'host': name, 'url': 'http://' ~ name ~ '.local/status.json'}) %}
+{% endfor %}
+{% set _ = health.append({'host': 'nightstand', 'url': 'http://pi-bedroom.local/nightstand/status.json'}) %}
+{{ {'rooms': rooms, 'health': health} | to_nice_json }}
