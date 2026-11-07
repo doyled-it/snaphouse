@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# snaphouse speaker check, managed by Ansible (roles/bt_speaker). The speaker is
+# connected, or absent. It is off most of the time, so absence is normal and
+# passes; the keepalive timer reconnects it when it powers on. The check only
+# fails if the Bluetooth stack itself cannot be read (bluetoothctl missing). Run
+# by `snaphouse verify` from /etc/snaphouse/verify.d.
+#
+# The speaker name (not its address) is derived from this host's output, so the
+# same role works on pi-bedroom (jbl) and the hub (vizio); snaphouse.clients
+# reads the address from local.yml and it never reaches stderr.
+set -euo pipefail
+
+PYTHONPATH=/opt/snaphouse/lib \
+    exec /opt/snaphouse/.venv/bin/python -m snaphouse.clients \
+    speaker-state {{ snaphouse_hosts[snaphouse_host].output.speaker }}

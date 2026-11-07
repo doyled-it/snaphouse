@@ -1,3 +1,83 @@
 ---
-# The bt_speaker role is implemented in a later task. No tasks yet.
-[]
+# Keep a Bluetooth speaker connected and own snapclient's lifecycle on this host.
+# The speaker is off much of the time; a 30-second timer runs the keepalive,
+# which reconnects it whenever it powers on, starts snapclient when the link
+# comes up and stops it when the speaker drops, and logs only when the connection
+# state changes. A speaker off for days leaves one log line rather than a restart
+# loop filling the journal, and it recovers within a tick plus the start (design:
+# "Bluetooth speakers that come and go", Review Focus 1). Both Bluetooth-output
+# hosts run this role: pi-bedroom (jbl) and the hub (vizio).
+#
+# The keepalive and its verify check pass the speaker name (derived from this
+# host's output.speaker); the address is the household's and is read from
+# local.yml on the device. Service steps are gated on common_systemd_init so the
+# CI container apply stays green.
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the speaker keepalive verify check
+  ansible.builtin.template:
+    src: bt_speaker-verify.sh.j2
+    dest: /etc/snaphouse/verify.d/bt_speaker.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure the systemd unit directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the speaker keepalive service unit
+  ansible.builtin.template:
+    src: snaphouse-bt-keepalive.service.j2
+    dest: /etc/systemd/system/snaphouse-bt-keepalive.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for bt_speaker
+
+- name: Install the speaker keepalive timer unit
+  ansible.builtin.copy:
+    src: snaphouse-bt-keepalive.timer
+    dest: /etc/systemd/system/snaphouse-bt-keepalive.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for bt_speaker
+
+# Make the units known before enabling the timer on a first install. The handler
+# is gated on systemd, so this is a no-op in the CI container.
+- name: Reload systemd now if the units changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the speaker keepalive timer
+  ansible.builtin.systemd_service:
+    name: snaphouse-bt-keepalive.timer
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service
+
+# Run the keepalive once now, so snapclient's state matches the speaker before
+# `snaphouse verify` runs at the end of this apply. Without it, a just-applied
+# host would wait up to 30 s for the first timer tick, and verify could see a
+# connected speaker with snapclient not yet started (or the reverse) and fail,
+# tripping a self-update rollback. A oneshot start blocks until it finishes.
+- name: Reconcile snapclient with the speaker now
+  ansible.builtin.systemd_service:
+    name: snaphouse-bt-keepalive.service
+    state: started
+  when: common_systemd_init
+  tags:
+    - service

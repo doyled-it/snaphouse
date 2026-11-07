@@ -1,0 +1,20 @@
+---
+# Every handler here touches systemd, so each is gated on common_systemd_init
+# (real machine only) and tagged service. A notified handler ignores
+# --skip-tags, so the when: is what keeps these out of the CI container; the tag
+# still marks them for a real-host --skip-tags service run.
+
+- name: Reload systemd for snapclient
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Restart snapclient
+  ansible.builtin.systemd_service:
+    name: snapclient.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service

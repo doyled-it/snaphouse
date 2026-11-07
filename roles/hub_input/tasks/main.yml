@@ -32,54 +32,15 @@
   tags:
     - service
 
-- name: Map the CPU architecture to the snapserver .deb for this host
-  ansible.builtin.set_fact:
-    hub_input_deb_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"
-  # A KeyError here is the right failure: the hub is x86_64 and the Pis (which
-  # get snapclient in a later task) are aarch64, nothing else.
-
-- name: Name the snapserver .deb asset for this host
-  ansible.builtin.set_fact:
-    hub_input_deb_name: "snapserver_{{ snapcast_version }}-1_{{ hub_input_deb_arch }}_{{ snapcast_deb_distro }}.deb"
-    hub_input_deb_base: "https://github.com/badaix/snapcast/releases/download/v{{ snapcast_version }}"
-
-- name: Check the installed snapserver version
-  ansible.builtin.command: dpkg-query -W -f='${Version}' snapserver
-  register: hub_input_snapserver_installed
-  changed_when: false
-  failed_when: false
-
+# The pinned snapserver .deb, installed by the shared snapcast_pkg role (the
+# same one snapclient uses for its package) so there is one source of truth for
+# how a Snapcast release lands. The version and checksums are in vars/all.yml.
 - name: Install the pinned snapserver release
-  # The .deb Version is "<snapcast_version>-1"; compare exactly so a different
-  # installed build is replaced. The string is empty when snapserver is absent.
-  when: hub_input_snapserver_installed.stdout != snapcast_version ~ '-1'
-  block:
-    - name: Create a private directory for the snapserver download
-      ansible.builtin.tempfile:
-        state: directory
-        prefix: snaphouse-snapserver.
-      register: hub_input_deb_tmp
-
-    - name: Download the pinned snapserver .deb from GitHub
-      ansible.builtin.get_url:
-        url: "{{ hub_input_deb_base }}/{{ hub_input_deb_name }}"
-        dest: "{{ hub_input_deb_tmp.path }}/snapserver.deb"
-        # Verified against the digest pinned in vars/all.yml, not one fetched
-        # from the same origin as the artifact.
-        checksum: "sha256:{{ snapcast_server_sha256[hub_input_deb_arch] }}"
-        owner: root
-        group: root
-        mode: "0644"
-
-    - name: Install snapserver and its dependencies
-      ansible.builtin.apt:
-        deb: "{{ hub_input_deb_tmp.path }}/snapserver.deb"
-  always:
-    - name: Remove the snapserver download directory
-      ansible.builtin.file:
-        path: "{{ hub_input_deb_tmp.path }}"
-        state: absent
-      when: hub_input_deb_tmp.path is defined
+  ansible.builtin.include_role:
+    name: snapcast_pkg
+  vars:
+    snapcast_pkg_name: snapserver
+    snapcast_pkg_sha256: "{{ snapcast_server_sha256 }}"
 
 - name: Load the ALSA loopback module at boot
   ansible.builtin.copy:

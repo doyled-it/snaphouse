@@ -1,0 +1,16 @@
+{#
+  Oneshot run of the Bluetooth speaker keepalive, fired by the matching timer.
+  It passes the speaker *name* (a key under speakers in local.yml, not an
+  address), and snaphouse.clients resolves the household's address on the device.
+  It runs from the on-device uv venv, which carries the YAML library the resolver
+  needs.
+#}
+[Unit]
+Description=snaphouse Bluetooth speaker keepalive
+After=bluetooth.service bluealsa.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/snaphouse/lib
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.clients keepalive {{ snaphouse_hosts[snaphouse_host].output.speaker }}

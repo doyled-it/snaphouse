@@ -1,0 +1,67 @@
+---
+# Install one pinned Snapcast .deb (snapserver on the hub, snapclient on every
+# machine) from the GitHub release for this host's architecture. This is the one
+# source of truth for how a Snapcast package lands: hub_input includes it for
+# snapserver, snapclient includes it for snapclient. The version lives in
+# vars/all.yml (snapcast_version, snapcast_deb_distro); the caller passes the
+# package name and its arch->sha256 map:
+#
+#   - name: Install the pinned snapclient release
+#     ansible.builtin.include_role:
+#       name: snapcast_pkg
+#     vars:
+#       snapcast_pkg_name: snapclient
+#       snapcast_pkg_sha256: "{{ snapcast_client_sha256 }}"
+#
+# The .deb is verified against the digest pinned in the repo, not one fetched
+# from the download origin, so a tampered mirror cannot swap the artifact and its
+# checksum together (same rule as uv in the common role).
+
+- name: Map the CPU architecture to the .deb for {{ snapcast_pkg_name }}
+  ansible.builtin.set_fact:
+    snapcast_pkg_deb_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"
+  # A KeyError here is the right failure: the hub is x86_64 and the Pis are
+  # aarch64, nothing else.
+
+- name: Name the .deb release asset for {{ snapcast_pkg_name }}
+  ansible.builtin.set_fact:
+    snapcast_pkg_deb_name: "{{ snapcast_pkg_name }}_{{ snapcast_version }}-1_{{ snapcast_pkg_deb_arch }}_{{ snapcast_deb_distro }}.deb"
+    snapcast_pkg_deb_base: "https://github.com/badaix/snapcast/releases/download/v{{ snapcast_version }}"
+
+- name: Check the installed version of {{ snapcast_pkg_name }}
+  ansible.builtin.command: dpkg-query -W -f='${Version}' {{ snapcast_pkg_name }}
+  register: snapcast_pkg_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install the pinned release of {{ snapcast_pkg_name }}
+  # The .deb Version is "<snapcast_version>-1"; compare exactly so a different
+  # installed build is replaced. The string is empty when the package is absent.
+  when: snapcast_pkg_installed.stdout != snapcast_version ~ '-1'
+  block:
+    - name: Create a private download directory for {{ snapcast_pkg_name }}
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: snaphouse-{{ snapcast_pkg_name }}.
+      register: snapcast_pkg_tmp
+
+    - name: Download from GitHub the pinned .deb for {{ snapcast_pkg_name }}
+      ansible.builtin.get_url:
+        url: "{{ snapcast_pkg_deb_base }}/{{ snapcast_pkg_deb_name }}"
+        dest: "{{ snapcast_pkg_tmp.path }}/{{ snapcast_pkg_name }}.deb"
+        # Verified against the digest pinned in vars/all.yml, not one fetched
+        # from the same origin as the artifact.
+        checksum: "sha256:{{ snapcast_pkg_sha256[snapcast_pkg_deb_arch] }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install the package and its dependencies for {{ snapcast_pkg_name }}
+      ansible.builtin.apt:
+        deb: "{{ snapcast_pkg_tmp.path }}/{{ snapcast_pkg_name }}.deb"
+  always:
+    - name: Remove the download directory for {{ snapcast_pkg_name }}
+      ansible.builtin.file:
+        path: "{{ snapcast_pkg_tmp.path }}"
+        state: absent
+      when: snapcast_pkg_tmp.path is defined

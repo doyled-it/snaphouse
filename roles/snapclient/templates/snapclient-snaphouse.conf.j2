@@ -1,0 +1,53 @@
+{#
+  systemd drop-in for the packaged snapclient.service. It replaces the packaged
+  ExecStart with this room's command and never touches /etc/default/snapclient,
+  so the whole command is here in one place.
+
+    --host      the hub (snapserver). hub_address overrides mDNS when set in
+                local.yml; otherwise the hub answers as zimablade.local.
+    --hostID    this room's stable id (living/office/bedroom), which is also the
+                client id the hub addresses in apply_client_settings.
+    --player    alsa.
+    --soundcard this room's output:
+                  bluetooth -> the snaphouse_bt bluealsa alias (asound.conf)
+                  alsa      -> the USB adapter's ALSA card name (vars/hosts.yml,
+                               filled during the pi-office build); "default"
+                               until it is set.
+
+  Restart policy depends on the output:
+
+    - A Bluetooth speaker comes and goes. snapclient is not enabled at boot on
+      these hosts; the keepalive timer (roles/bt_speaker) starts it when the
+      speaker connects and stops it when the speaker drops. So the only restart
+      that matters is the short window after a speaker vanishes mid-play and
+      before the next keepalive tick stops the service. Restart=on-failure with a
+      long RestartSec keeps that window from becoming a tight loop that fills the
+      journal, and the start rate limiter is disabled so keepalive always stays in
+      control of the lifecycle.
+    - A wired card is always present, so snapclient is restarted promptly to
+      reconnect to snapserver (for example after snapserver itself restarts).
+#}
+{% set host = snaphouse_hosts[snaphouse_host] %}
+{% set server = hub_address | default('zimablade.local', true) %}
+{% if host.output.kind == 'bluetooth' %}
+{% set soundcard = 'snaphouse_bt' %}
+{% elif host.output.device %}
+{% set soundcard = host.output.device %}
+{% else %}
+{% set soundcard = 'default' %}
+{% endif %}
+{% if host.output.kind == 'bluetooth' %}
+[Unit]
+StartLimitIntervalSec=0
+
+{% endif %}
+[Service]
+ExecStart=
+ExecStart=/usr/bin/snapclient --host {{ server }} --hostID {{ host.host_id }} --player alsa --soundcard {{ soundcard }}
+{% if host.output.kind == 'bluetooth' %}
+Restart=on-failure
+RestartSec=30
+{% else %}
+Restart=always
+RestartSec=10
+{% endif %}

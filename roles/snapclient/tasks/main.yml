@@ -1,3 +1,140 @@
 ---
-# The snapclient role is implemented in a later task. No tasks yet.
-[]
+# snapclient on every machine: the room's player. It connects to snapserver on
+# the hub and plays the House stream through this room's output, either a
+# wired/USB ALSA card (pi-office) or a Bluetooth speaker reached through a
+# bluealsa ALSA alias (the hub to the Vizio, pi-bedroom to the JBL).
+#
+# On the hub this role also pushes every room's name and tuned latency into
+# snapserver once it is up (hub_input runs earlier in the apply), so the repo's
+# room labels and latency offsets stay the source of truth. That step is gated on
+# the hub and on a real systemd host, so the CI container never runs it.
+#
+# Service steps are tagged and gated on common_systemd_init so the container
+# apply stays green.
+
+- name: Install the pinned snapclient release
+  ansible.builtin.include_role:
+    name: snapcast_pkg
+  vars:
+    snapcast_pkg_name: snapclient
+    snapcast_pkg_sha256: "{{ snapcast_client_sha256 }}"
+
+- name: Install the Bluetooth output ALSA alias
+  ansible.builtin.template:
+    src: asound-bt.conf.j2
+    dest: /etc/asound.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: snaphouse_hosts[snaphouse_host].output.kind == 'bluetooth'
+  # bluealsa and snapclient read the device at open time, so pick up a changed
+  # speaker address on the next connection.
+  notify: Restart snapclient
+
+- name: Ensure the snapclient systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/snapclient.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure the snapclient command for this room
+  ansible.builtin.template:
+    src: snapclient-snaphouse.conf.j2
+    dest: /etc/systemd/system/snapclient.service.d/snaphouse.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for snapclient
+    - Restart snapclient
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the snapclient verify check
+  ansible.builtin.template:
+    src: snapclient-verify.sh.j2
+    dest: /etc/snaphouse/verify.d/snapclient.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# Make the drop-in known before starting the service on a first install. The
+# handlers are gated on systemd, so this is a no-op in the CI container.
+- name: Reload systemd now if the drop-in changed
+  ansible.builtin.meta: flush_handlers
+
+# A wired room is always present, so snapclient is enabled and started here.
+- name: Enable and start snapclient on a wired host
+  ansible.builtin.systemd_service:
+    name: snapclient.service
+    enabled: true
+    state: started
+  when:
+    - common_systemd_init
+    - snaphouse_hosts[snaphouse_host].output.kind != 'bluetooth'
+  tags:
+    - service
+
+# A Bluetooth speaker comes and goes, so snapclient must not start at boot into a
+# device that is not there. It is left disabled; the keepalive timer (the
+# bt_speaker role, applied right after this one) owns its start and stop so it
+# only ever runs while the speaker is actually connected.
+- name: Do not enable snapclient at boot on a Bluetooth host
+  ansible.builtin.systemd_service:
+    name: snapclient.service
+    enabled: false
+  when:
+    - common_systemd_init
+    - snaphouse_hosts[snaphouse_host].output.kind == 'bluetooth'
+  tags:
+    - service
+
+# Hub only, once snapserver is up: push every room's name and latency. Built from
+# the inventory so one map covers all three rooms.
+- name: Build the client settings map for all rooms
+  ansible.builtin.set_fact:
+    snapclient_clients: >-
+      {{ snapclient_clients | default({}) | combine({
+           item.value.host_id: {
+             'label': item.value.room_label,
+             'latency_ms': item.value.latency_ms,
+           },
+         }) }}
+  loop: "{{ snaphouse_hosts | dict2items }}"
+  loop_control:
+    label: "{{ item.value.host_id }}"
+  when: "'hub_input' in snaphouse_hosts[snaphouse_host].roles"
+
+- name: Apply each room's name and latency from the hub
+  ansible.builtin.command:
+    argv:
+      - /opt/snaphouse/.venv/bin/python
+      - -m
+      - snaphouse.clients
+      - apply-clients
+      - --clients
+      - "{{ snapclient_clients | to_json }}"
+  environment:
+    PYTHONPATH: /opt/snaphouse/lib
+  register: snapclient_apply
+  # apply_client_settings prints the ids it changed, one per line, and nothing
+  # when every room already matches, so the task reports changed only when it was.
+  changed_when: snapclient_apply.stdout | trim | length > 0
+  # snapserver was started earlier in this apply (hub_input); on a cold boot it
+  # may take a moment to bind its port, so give it a few tries before failing.
+  retries: 5
+  delay: 3
+  until: snapclient_apply is succeeded
+  when:
+    - common_systemd_init
+    - "'hub_input' in snaphouse_hosts[snaphouse_host].roles"
+  tags:
+    - service

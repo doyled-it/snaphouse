@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the snaphouse Bluetooth speaker keepalive every 30 seconds
+
+[Timer]
+# Every 30 s, so a speaker that powers on is reconnected within a tick or two
+# (recovery within 60 s, Review Focus 1). The first run is shortly after boot.
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=snaphouse-bt-keepalive.service
+
+[Install]
+WantedBy=timers.target
