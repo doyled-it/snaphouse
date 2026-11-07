@@ -27,13 +27,19 @@
 # and on a real machine the checkout is at /opt/snaphouse.
 - name: Sync the on-device Python venv
   ansible.builtin.command:
-    cmd: uv sync --frozen --no-dev
+    # The hub adds the `hub` extra (Pillow, for AirPlay cover downscaling in
+    # lib/snaphouse/airplay_meta.py). The gate is the hub_input role, which only
+    # the hub has, so the Raspberry Pis sync without the extra and never install
+    # Pillow. tests/python/test_venv_extras.py pins this.
+    cmd: >-
+      uv sync --frozen --no-dev{{ ' --extra hub' if 'hub_input' in snaphouse_hosts[snaphouse_host].roles else '' }}
     chdir: /opt/snaphouse
   environment:
     # Use the system interpreter rather than letting uv download a managed one;
-    # outbound is limited. The runtime deps (ruamel.yaml, jeepney) are small
-    # pure-Python wheels fetched from PyPI; keep an eye on them if the hub's
-    # outbound is ever locked down further.
+    # outbound is limited. The shared runtime deps (ruamel.yaml, jeepney) are
+    # small pure-Python wheels fetched from PyPI; the hub extra adds Pillow, a
+    # larger prebuilt binary wheel. Keep an eye on them if the hub's outbound is
+    # ever locked down further.
     UV_PYTHON_PREFERENCE: only-system
   # Idempotent prepare step; health is reported by verify, not by this task.
   changed_when: false

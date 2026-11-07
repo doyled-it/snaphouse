@@ -30,6 +30,14 @@
   tags:
     - service
 
+- name: Restart the AirPlay input
+  ansible.builtin.systemd_service:
+    name: snaphouse-airplay-in.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service
+
 - name: Restart snapserver
   ansible.builtin.systemd_service:
     name: snapserver.service

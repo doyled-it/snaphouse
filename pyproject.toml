@@ -17,6 +17,16 @@ dependencies = [
     "jeepney>=0.9",
 ]
 
+# Hub-only runtime deps. Pillow downscales AirPlay cover art to a small JPEG for
+# the frame and the room picker (lib/snaphouse/airplay_meta.py), so it is only
+# needed where the AirPlay metadata bridge runs: the hub. The selfupdate venv
+# sync adds `--extra hub` only on a host whose roles include hub_input, so the
+# Raspberry Pis never install it. tests/python/test_venv_extras.py pins that.
+[project.optional-dependencies]
+hub = [
+    "pillow>=10",
+]
+
 # This project is not built or installed as a package. The CLI lives in bin/
 # and lib/ and runs in place; uv only manages the test toolchain below.
 [tool.uv]
@@ -30,6 +40,10 @@ dev = [
     # names and the empty-address guard are checked without an Ansible apply. Dev
     # only: the on-device venv installs no templating engine.
     "jinja2>=3",
+    # Also a runtime dep of the hub extra above. Kept in the dev group too so the
+    # cover-downscaling tests (tests/python/test_airplay_meta.py) have Pillow in
+    # CI without pulling the whole hub extra; the Pis install neither.
+    "pillow>=10",
 ]
 
 [tool.pytest.ini_options]

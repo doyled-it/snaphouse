@@ -1,0 +1,24 @@
+# snaphouse AirPlay input. Runs shairport-sync as the house's AirPlay receiver,
+# playing into the ALSA loopback (via the snaphouse_airplay_input plug) where
+# snapserver captures it (hw:Loopback,1,1) as the "AirPlay" stream. shairport
+# uses soxr interpolation to rate-match into the loopback, so the stream does not
+# drift and under/overflow the way the old stdout backend did. The packaged
+# shairport-sync.service stays masked (roles/hub_input), so only this instance
+# holds the AirPlay name and RTSP port. Installed by roles/hub_input.
+[Unit]
+Description=snaphouse AirPlay input (shairport-sync into the Snapcast loopback)
+# shairport advertises the receiver over mDNS (Avahi) and needs the network up.
+After=sound.target network-online.target avahi-daemon.service
+Wants=network-online.target avahi-daemon.service
+
+[Service]
+Type=simple
+# shairport-sync writes its metadata pipe under /run/snaphouse; make sure the
+# directory exists first (tmpfs, cleared on boot).
+ExecStartPre=/bin/mkdir -p /run/snaphouse
+ExecStart=/usr/bin/shairport-sync -c /etc/snaphouse/shairport-airplay.conf
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

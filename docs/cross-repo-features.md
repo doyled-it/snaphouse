@@ -33,9 +33,17 @@ git clone git@github.com:doyled-it/nightstand.git
   `Server.GetStatus` on the hub: the active stream's playback status and its metadata
   properties (title, artist, album, art URL when present), plus each client's mute state
   and name, which give "rooms playing". snaphouse must get AirPlay metadata and art, and
-  Bluetooth AVRCP metadata, into those stream properties. nightstand keeps a recorded
-  `Server.GetStatus` response as a test fixture; when the shape changes on the snaphouse
-  side, re-record it.
+  Bluetooth AVRCP metadata, into those stream properties. The cover travels only as an
+  `artUrl` (a `/cover/` URL, see below), never as inline `artData`: embedding the image
+  bytes bloated the status to megabytes and stalled the audio reader (issue #38).
+  nightstand keeps a recorded `Server.GetStatus` response as a test fixture; when the shape
+  changes on the snaphouse side, re-record it (the fixture no longer carries `artData`, and
+  `artUrl` now points at `/cover/<hash>.jpg`).
+- **Now-playing cover art (snaphouse produces, nightstand consumes).** The hub downscales
+  the active AirPlay cover to a small JPEG (<=600 px, under 150 KB) and serves it at
+  `http://house.local/cover/<hash>.jpg`; the `artUrl` in the now-playing metadata above is
+  that URL. This is distinct from the art share below: `/cover/` is the current track's
+  cover from snapserver's stream, `/art/` is the images people drop in for the frame.
 - **Art share (snaphouse produces, nightstand consumes).** One folder on the hub,
   `/srv/snaphouse/art`, exposed two ways on the LAN. People drop images in over a writable
   Samba share (`[art]`, one account whose password lives only in the hub's local settings).
