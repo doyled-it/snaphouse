@@ -33,12 +33,11 @@ slider per room, what is playing, and a per-machine health line. It also has an
 art history same-origin, so the section appears only when the frame has shown
 something. Open it in any browser on the home network.
 
-Reach it by the hub's IP address, not `house.local`. Android Chrome often
-cannot resolve `.local` mDNS names, so a phone may fail to load the page by name.
-Give the hub a fixed address with a DHCP reservation on the router and open the
-page at that address (and add it to the home screen there). The address is the
-household's, so it is not written down in this repo; it lives with the router
-and, if a role ever needs it, in the untracked `/etc/snaphouse/local.yml`. The
+Open it at `http://house.local/`. On Android this works once the browser has the
+local network permission (see below); if a phone or app still cannot resolve
+`.local` names, use the hub's IP address instead, and give the hub a fixed address
+with a DHCP reservation on the router so that bookmark keeps working. The address
+is the household's, so it is not written down in this repo. The
 page itself fetches only same-origin paths, so once it loads it needs no further
 name resolution from the phone: the hub polls every machine for the health line.
 
