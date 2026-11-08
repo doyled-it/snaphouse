@@ -18,8 +18,15 @@ general = {
   output_backend = "alsa";
   port = 5000;
   // Apply the AirPlay sender's volume to the audio (the default); with no mixer
-  // named below, shairport attenuates in software.
+  // named below, shairport attenuates in software. The sender controls the house
+  // volume (model A).
   ignore_volume_control = "no";
+  // Full scale at maximum sender volume, and a 30 dB control range. shairport's
+  // default range (~60 dB) maps a mid sender volume to about -43 dB (near
+  // silent); over 30 dB a mid sender volume lands near -15 dB, so the sender's
+  // slider stays usable while the top still reaches full volume.
+  volume_max_db = 0.0;
+  volume_range_db = 30;
 };
 
 alsa = {
