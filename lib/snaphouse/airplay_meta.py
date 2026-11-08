@@ -48,7 +48,7 @@ import tempfile
 import threading
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 
 # Where shairport-sync writes its metadata item stream, and where the downscaled
@@ -61,6 +61,16 @@ DEFAULT_COVER_DIR = "/var/lib/snaphouse/public/cover"
 # so cap the long edge and the file size and never ship more than that.
 COVER_MAX_PX = 600
 COVER_MAX_BYTES = 150_000
+
+# How many covers to keep in the cover directory. Covers are content-addressed,
+# so duplicates never accumulate, but distinct tracks would grow the directory
+# without bound on this unattended appliance; keep only the most recent ones and
+# prune the rest after each write.
+MAX_COVERS = 50
+
+# Backoff before reopening the metadata pipe after a read failure, so a broken
+# pipe cannot spin the reader.
+PIPE_RETRY_SECONDS = 1.0
 
 # shairport-sync 'ssnc' play-state codes to a Snapcast playbackStatus. A flush is
 # shairport pausing or clearing its buffer (also sent at a track skip), reported
@@ -177,13 +187,44 @@ def build_art_url(host: str, digest: str) -> str:
     return f"http://{host}/cover/{digest}.jpg"
 
 
-def store_cover(data: bytes, cover_dir: Path, host: str) -> Optional[str]:
+def prune_covers(cover_dir: Path, keep: int = MAX_COVERS) -> None:
+    """Keep only the `keep` most recently modified covers; delete the rest.
+
+    Covers are content-addressed, so this is a slow-growth guard on an unattended
+    appliance, not a hot path. Best-effort: any filesystem error is ignored so
+    pruning never breaks the metadata stream. Stray atomic-write temp files
+    (`.cover.*`) are swept too, so a crash mid-write cannot leave a dotfile
+    behind.
+    """
+    cover_dir = Path(cover_dir)
+    try:
+        for leftover in cover_dir.glob(".cover.*"):
+            try:
+                leftover.unlink()
+            except OSError:
+                pass
+        covers = sorted(
+            cover_dir.glob("*.jpg"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+    for stale in covers[keep:]:
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+
+
+def store_cover(data: bytes, cover_dir: Path, host: str, *, keep: int = MAX_COVERS) -> Optional[str]:
     """Downscale and store a cover, returning its URL, or None on any failure.
 
     The file name is the content hash of the downscaled JPEG, so identical art
     reuses one file and the URL is immutable. The write is atomic (temp file then
     os.replace) and world-readable so nginx can serve it. A decode or write
-    failure returns None, so bad art never breaks the metadata stream.
+    failure returns None, so bad art never breaks the metadata stream. After a
+    successful write the directory is pruned to the `keep` most recent covers.
     """
     if not data:
         return None
@@ -213,6 +254,7 @@ def store_cover(data: bytes, cover_dir: Path, host: str) -> Optional[str]:
                 raise
     except OSError:
         return None
+    prune_covers(cover_dir, keep=keep)
     return build_art_url(host, digest)
 
 
@@ -261,6 +303,12 @@ class Player:
         self.album: Optional[str] = None
         self.art_url: Optional[str] = None
         self.playback_status: str = "stopped"
+        # The committed track's identity (shairport's persistent id when present,
+        # else title/artist/album), used to tell a new track from a metadata
+        # resend so stale cover art is dropped only on a real track change.
+        self._track_id: object = None
+        # The identity accumulating in the current metadata bundle.
+        self._bundle_id: object = None
 
     def properties(self) -> dict:
         return build_properties(self)
@@ -277,10 +325,16 @@ def apply_item(
 ) -> bool:
     """Apply one pipe item to the player; return True when a property changed.
 
-    Text metadata (core/minm, asar, asal) is accumulated and committed to the
-    stream on the metadata-bundle end (ssnc/mden). A picture (ssnc/PICT) is
-    downscaled, stored, and its URL set. Play-state codes set the playback
-    status. The caller emits a properties notification when this returns True.
+    A metadata bundle starts at ssnc/mdst and ends at ssnc/mden. At the start the
+    track fields are cleared so a bundle that omits a field (a new track with no
+    album, say) does not keep the previous track's value; the core items
+    (minm/asar/asal, and the persistent id mper) then fill the bundle, and mden
+    commits it. On a real track change (the identity differs from the committed
+    one) the cover art URL is cleared, so a new track with no art does not keep
+    the previous track's cover; a metadata resend of the same track keeps it. A
+    picture (ssnc/PICT) is downscaled, stored, and its URL set. Play-state codes
+    set the playback status (ssnc/pend is a stop). The caller emits a properties
+    notification when this returns True.
     """
     if type_str == "core":
         if code_str == "minm":
@@ -289,11 +343,31 @@ def apply_item(
             player.artist = data.decode("utf-8", "replace") or None
         elif code_str == "asal":
             player.album = data.decode("utf-8", "replace") or None
+        elif code_str == "mper":
+            # shairport's persistent track id; the stable identity for a track.
+            player._bundle_id = data or None
         # Wait for the bundle end to emit, so title/artist/album land together.
         return False
 
     if type_str == "ssnc":
+        if code_str == "mdst":
+            # A (possibly new) track's metadata bundle is starting: clear the
+            # fields so an omitted one does not carry over from the last bundle.
+            player.title = None
+            player.artist = None
+            player.album = None
+            player._bundle_id = None
+            return False
         if code_str == "mden":
+            track_id = player._bundle_id or (player.title, player.artist, player.album)
+            has_track = bool(player._bundle_id) or any(
+                (player.title, player.artist, player.album)
+            )
+            if has_track and track_id != player._track_id:
+                # Real track change: drop the previous track's cover until this
+                # track's own picture arrives (or stays absent).
+                player.art_url = None
+                player._track_id = track_id
             return True
         if code_str == "PICT":
             player.art_url = store_cover(data, cover_dir, host) if data else None
@@ -410,28 +484,67 @@ def _parse_args(argv: Optional[list[str]]) -> argparse.Namespace:
     return args
 
 
-def _pipe_events(pipe_path: str) -> Iterable[tuple]:  # pragma: no cover
-    """Yield ("item", type, code, data) as shairport writes to the metadata pipe.
+def pipe_items(
+    open_session: Callable[[], Iterable[str]],
+    *,
+    log: Callable[[str], None],
+    sleep: Callable[[float], None],
+    parser_factory: Callable[[], PipeParser] = PipeParser,
+    backoff: float = PIPE_RETRY_SECONDS,
+    max_sessions: Optional[int] = None,
+) -> Iterable[tuple]:
+    """Yield ("item", type, code, data) resiliently across pipe sessions.
 
-    The pipe is opened read-only; shairport creates it, so a missing pipe is
-    retried. Confirmed on the real hub, not in CI, so the blocking IO lives here.
+    `open_session()` opens the metadata pipe and returns an iterator of text
+    chunks for one session, ending when shairport (the writer) closes it. A fresh
+    parser is built per session, so a partial `<item>` left behind when the pipe
+    closed never merges into the next session's first item. Any failure opening
+    or reading the pipe is logged once per failure streak (not on every retry),
+    backed off with `sleep(backoff)`, and retried, so the reader never dies; a
+    clean close just reopens. `max_sessions` bounds the loop for tests (None means
+    forever).
+    """
+    sessions = 0
+    logged = False
+    while max_sessions is None or sessions < max_sessions:
+        sessions += 1
+        parser = parser_factory()
+        try:
+            for chunk in open_session():
+                if not chunk:
+                    break
+                for item in parser.feed(chunk):
+                    yield ("item", item[0], item[1], item[2])
+            logged = False  # a session opened and closed without error
+        except Exception as exc:  # noqa: BLE001 - keep the reader alive
+            if not logged:
+                log(f"metadata pipe read failed, backing off and retrying: {exc}")
+                logged = True
+            sleep(backoff)
+
+
+def _pipe_events(pipe_path: str, *, log: Callable[[str], None]) -> Iterable[tuple]:  # pragma: no cover
+    """Resiliently yield items from shairport's metadata pipe (blocking IO).
+
+    shairport creates the pipe; a missing pipe, a read error, or shairport
+    restarting is handled by pipe_items (reopen, fresh parser, backoff). Confirmed
+    on the real hub, not in CI, so only the blocking IO lives here.
     """
     import time
 
-    parser = PipeParser()
-    while True:
+    def open_session() -> Iterable[str]:
+        fd = os.open(pipe_path, os.O_RDONLY)
+        pipe = os.fdopen(fd, "r", encoding="utf-8", errors="replace")
         try:
-            fd = os.open(pipe_path, os.O_RDONLY)
-        except OSError:
-            time.sleep(1.0)
-            continue
-        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as pipe:
             while True:
                 chunk = pipe.read(65536)
                 if chunk == "":
-                    break  # writer closed; reopen and keep following
-                for item in parser.feed(chunk):
-                    yield ("item", item[0], item[1], item[2])
+                    return  # writer closed; reopen and keep following
+                yield chunk
+        finally:
+            pipe.close()
+
+    yield from pipe_items(open_session, log=log, sleep=time.sleep)
 
 
 def main(argv: Optional[list[str]] = None) -> int:  # pragma: no cover
@@ -456,19 +569,24 @@ def main(argv: Optional[list[str]] = None) -> int:  # pragma: no cover
                 continue
         events.put(None)
 
+    def pipe_log(message: str) -> None:
+        write_message(
+            out,
+            {
+                "jsonrpc": "2.0",
+                "method": "Plugin.Stream.Log",
+                "params": {"severity": "warning", "message": message},
+            },
+        )
+
     def read_pipe() -> None:
+        # pipe_events is self-healing (reopen, fresh parser, backoff), so it does
+        # not return; the guard is only a last resort for an unexpected bug.
         try:
-            for event in _pipe_events(args.pipe):
+            for event in _pipe_events(args.pipe, log=pipe_log):
                 events.put(event)
         except Exception as exc:  # noqa: BLE001 - last resort, keep the stream alive
-            write_message(
-                out,
-                {
-                    "jsonrpc": "2.0",
-                    "method": "Plugin.Stream.Log",
-                    "params": {"severity": "error", "message": f"pipe loop stopped: {exc}"},
-                },
-            )
+            pipe_log(f"pipe loop stopped unexpectedly: {exc}")
 
     threading.Thread(target=read_requests, daemon=True).start()
     threading.Thread(target=read_pipe, daemon=True).start()
