@@ -5,18 +5,27 @@
 #   - AirPlay (Apple devices), carrying metadata and cover art.
 #   - Bluetooth (Android), carrying AVRCP title/artist via the control script.
 # The meta stream plays whichever input is active, AirPlay first when both are.
-# The pinned snapcast_version and the reason are in vars/all.yml.
+# Both inputs reach snapserver the same way: a program plays into an snd-aloop
+# cable and snapserver captures the other end as an alsa:// source at the shared
+# sample format. The pinned snapcast_version and the reason are in vars/all.yml.
 
 [stream]
-# Every member of the meta stream shares one sample format. snapserver fixes the
-# AirPlay source at 44100:16:2, so the global default and the Bluetooth source are
-# pinned to the same value; otherwise the House stream mixes mismatched rates and
-# plays at the wrong pitch. See house_sample_format in vars/all.yml.
+# Every member of the meta stream shares one sample format. Both the AirPlay and
+# Bluetooth sources, and the global default, are pinned to the same value;
+# otherwise the House stream mixes mismatched rates and plays at the wrong pitch.
+# See house_sample_format in vars/all.yml.
 sampleformat = {{ house_sample_format }}
 
-# AirPlay in: snapserver launches shairport-sync and advertises it as the house.
-# shairport-sync carries track metadata and cover art into the stream properties.
-source = airplay:///shairport-sync?name=AirPlay&devicename={{ house_stream_name }}
+# AirPlay in: a standalone shairport-sync (roles/hub_input, snaphouse-airplay-in
+# service) plays into the loopback with soxr rate matching (hw:Loopback,0,1 via
+# the snaphouse_airplay_input plug); this captures the other end (hw:Loopback,1,1)
+# at the same format. snapserver does NOT launch shairport here: its own airplay
+# source used shairport's stdout backend, which does no rate matching and drifts
+# until snapserver resyncs (issue #38). The control script reads shairport's
+# metadata pipe and publishes title/artist/album and a downscaled cover URL (never
+# inline artData). It carries a venv shebang, so snapserver runs it with the
+# on-device uv venv (which has Pillow, the hub-only extra).
+source = alsa:///?name=AirPlay&device=hw:Loopback,1,1&sampleformat={{ house_sample_format }}&controlscript=/opt/snaphouse/lib/snaphouse/airplay_meta.py
 
 # Bluetooth in: bluealsa-aplay decodes the phone's A2DP into the loopback at the
 # shared sample format (hw:Loopback,0,0 via the snaphouse_bt_input ALSA device);
@@ -45,6 +54,7 @@ bind_to_address = 0.0.0.0
 port = 1780
 # Snapweb is used to tune per-room latency (design step 8).
 doc_root = /usr/share/snapserver/snapweb
-# Hostname clients use to fetch cached cover art: snapserver caches AirPlay art
-# and publishes an artUrl built from this host.
+# snapserver's advertised HTTP host. Cover art no longer flows through snapserver
+# (the AirPlay metadata bridge downscales it and publishes a /cover/ URL served
+# by nginx), so this is just the host for Snapweb and the JSON-RPC endpoint.
 host = {{ snaphouse_host }}.local

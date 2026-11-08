@@ -1,16 +1,17 @@
 ---
-# Track metadata for the Bluetooth stream. Only `house` runs this role, after
-# hub_input. AirPlay metadata and cover art come for free from snapserver's
-# airplay source; this role wires the Bluetooth side: the AVRCP control script
-# (lib/snaphouse/avrcp_meta.py) that snapserver runs for the "Bluetooth" stream.
+# Track metadata for the hub's streams. Only `house` runs this role, after
+# hub_input. It wires the two control scripts snapserver runs:
+#   - lib/snaphouse/avrcp_meta.py for the "Bluetooth" stream (AVRCP over D-Bus);
+#   - lib/snaphouse/airplay_meta.py for the "AirPlay" stream (shairport-sync's
+#     metadata pipe, publishing a downscaled cover URL, never inline artData).
 #
-# The script ships in the repo checkout at /opt/snaphouse and carries a shebang
-# that points at the on-device uv venv, so snapserver runs it with the
-# interpreter that has the D-Bus library (jeepney, a runtime dependency in
-# pyproject.toml, installed by the selfupdate role's uv sync). This role makes
-# sure the script is executable and restarts snapserver when its contents change,
-# so an updated mapping takes effect on the next self-update rather than waiting
-# for a reboot. The "Restart snapserver" handler is defined in roles/hub_input.
+# Both ship in the repo checkout at /opt/snaphouse and carry a shebang that
+# points at the on-device uv venv, so snapserver runs them with the interpreter
+# that has their dependencies (jeepney for Bluetooth; Pillow, the hub-only extra,
+# for the AirPlay cover downscale). This role makes each script executable and
+# restarts snapserver when its contents change, so an updated mapping takes
+# effect on the next self-update rather than waiting for a reboot. The "Restart
+# snapserver" handler is defined in roles/hub_input.
 #
 # The /opt/snaphouse tasks are gated on common_systemd_init: that path is the
 # on-device checkout, absent in the CI container where the repo is read-only
@@ -33,19 +34,25 @@
     group: root
     mode: "0755"
 
-- name: Ensure the AVRCP control script is executable
+- name: Ensure the control scripts are executable
   ansible.builtin.file:
-    path: /opt/snaphouse/lib/snaphouse/avrcp_meta.py
+    path: "/opt/snaphouse/lib/snaphouse/{{ item }}"
     mode: "0755"
+  loop:
+    - avrcp_meta.py
+    - airplay_meta.py
   when: common_systemd_init
   notify: Restart snapserver
 
-- name: Record the control script digest so snapserver restarts when it changes
+- name: Record each control script digest so snapserver restarts when it changes
   ansible.builtin.copy:
-    content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/avrcp_meta.py') | hash('sha1') }}\n"
-    dest: /etc/snaphouse/avrcp_meta.sha1
+    content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/' ~ item) | hash('sha1') }}\n"
+    dest: "/etc/snaphouse/{{ item | replace('.py', '') }}.sha1"
     owner: root
     group: root
     mode: "0644"
+  loop:
+    - avrcp_meta.py
+    - airplay_meta.py
   when: common_systemd_init
   notify: Restart snapserver

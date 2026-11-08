@@ -1,0 +1,26 @@
+# snaphouse AirPlay loopback feed. Managed by Ansible (roles/hub_input).
+#
+# shairport-sync plays the AirPlay audio into this plug device, which resamples
+# (soxr, configured on shairport) to the shared sample format and writes it into
+# the snd-aloop loopback. snapserver captures the other end (hw:Loopback,1,1) at
+# the same format, so both ends of the loopback agree and the House meta stream
+# gets AirPlay at 44100:16:2 like every other member.
+#
+# This uses loopback subdevice 1 (hw:Loopback,0,1 -> hw:Loopback,1,1); the
+# Bluetooth input uses subdevice 0, so the two inputs are independent cables on
+# the one snd-aloop card and never cross.
+#
+# The name is snaphouse_airplay_input: no snaphouse PCM name may be a prefix of
+# another, because snapclient resolves its --soundcard by a name match (the hub
+# also defines snaphouse_bt_input and snaphouse_speaker). tests/python/test_alsa.py
+# pins that.
+{% set _fmt = house_sample_format.split(':') %}
+pcm.snaphouse_airplay_input {
+    type plug
+    slave {
+        pcm "hw:Loopback,0,1"
+        format {{ {'8': 'S8', '16': 'S16_LE', '24': 'S24_LE', '32': 'S32_LE'}[_fmt[1]] }}
+        rate {{ _fmt[0] }}
+        channels {{ _fmt[2] }}
+    }
+}

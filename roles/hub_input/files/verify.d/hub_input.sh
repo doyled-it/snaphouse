@@ -14,6 +14,9 @@
 set -euo pipefail
 
 systemctl is-active --quiet snapserver.service
+# The standalone shairport-sync that feeds the AirPlay loopback (the AirPlay
+# source reads the other end). Without it there is no AirPlay input.
+systemctl is-active --quiet snaphouse-airplay-in.service
 
 PYTHONPATH=/opt/snaphouse/lib /opt/snaphouse/.venv/bin/python \
     -m snaphouse.clients verify-streams --url http://localhost:1780/jsonrpc

@@ -35,6 +35,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 ASOUND_BT = "roles/snapclient/templates/asound-bt.conf.j2"
 BTLOOP = "roles/hub_input/templates/snaphouse-btloop.conf.j2"
+AIRPLAY_LOOP = "roles/hub_input/templates/snaphouse-airplay-loop.conf.j2"
 SNAPCLIENT_DROPIN = "roles/snapclient/templates/snapclient-snaphouse.conf.j2"
 
 # A synthetic hub matching vars/hosts.yml's `house`: both a hub_input host and a
@@ -81,10 +82,19 @@ def test_no_rendered_snaphouse_pcm_name_is_a_prefix_of_another():
             "house_sample_format": SAMPLE_FORMAT,
         },
     )
+    airplay = render(
+        AIRPLAY_LOOP,
+        {
+            "snaphouse_host": "house",
+            "snaphouse_hosts": HUB_HOSTS,
+            "house_sample_format": SAMPLE_FORMAT,
+        },
+    )
 
-    names = pcm_names(output) + pcm_names(loopback)
-    # Both PCMs are present on the hub, so there is something to collide.
-    assert len(names) >= 2
+    names = pcm_names(output) + pcm_names(loopback) + pcm_names(airplay)
+    # Three PCMs are present on the hub (speaker output, Bluetooth loopback,
+    # AirPlay loopback), so there is something to collide.
+    assert len(names) >= 3
 
     for a in names:
         for b in names:

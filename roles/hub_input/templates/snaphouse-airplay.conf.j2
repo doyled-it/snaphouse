@@ -1,0 +1,46 @@
+// shairport-sync configuration for the hub's AirPlay input. Managed by Ansible
+// (roles/hub_input). Do not edit on the host; change the template.
+//
+// snapserver no longer launches shairport-sync itself (that used the stdout
+// backend, which does no rate matching and drifts, issue #38). Instead this
+// standalone shairport-sync plays AirPlay audio into an ALSA loopback with soxr
+// interpolation, so it rate-matches to the loopback clock the way a real sound
+// card would; snapserver reads the other end as its "AirPlay" alsa:// source.
+//
+// The sender's volume is applied in software (no ALSA mixer is named), so the
+// whole house attenuates at the source, as before.
+
+general = {
+  name = "{{ house_stream_name }}";
+  // soxr rate matching: shairport is built with soxr (checked on the hub). This
+  // is what keeps the loopback from under/overflowing over time.
+  interpolation = "soxr";
+  output_backend = "alsa";
+  port = 5000;
+  // Apply the AirPlay sender's volume to the audio (the default); with no mixer
+  // named below, shairport attenuates in software. The sender controls the house
+  // volume (model A).
+  ignore_volume_control = "no";
+  // Full scale at maximum sender volume, and a 30 dB control range. shairport's
+  // default range (~60 dB) maps a mid sender volume to about -43 dB (near
+  // silent); over 30 dB a mid sender volume lands near -15 dB, so the sender's
+  // slider stays usable while the top still reaches full volume.
+  volume_max_db = 0.0;
+  volume_range_db = 30;
+};
+
+alsa = {
+  // The snaphouse plug device (roles/hub_input templates) that resamples into
+  // hw:Loopback,0,1. No mixer_control_name, so volume is software.
+  output_device = "snaphouse_airplay_input";
+};
+
+metadata = {
+  enabled = "yes";
+  include_cover_art = "yes";
+  // The AirPlay metadata bridge (lib/snaphouse/airplay_meta.py), run by
+  // snapserver as the AirPlay stream's control script, reads this pipe and
+  // republishes title/artist/album/playbackStatus and a downscaled cover URL.
+  pipe_name = "/run/snaphouse/airplay-metadata";
+  pipe_timeout = 5000;
+};
