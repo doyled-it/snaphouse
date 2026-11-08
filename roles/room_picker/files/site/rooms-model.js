@@ -9,6 +9,46 @@
 // machine status files (the cross-repo status schema). The requests it builds
 // are snapserver JSON-RPC calls the page sends back.
 
+// Parse a JSON-RPC message without ever throwing.
+//
+// snapserver can embed cover art and track metadata straight into a
+// Server.GetStatus response, and that payload has carried unescaped control
+// characters that JSON.parse rejects. A thrown parse must never break the page:
+// this returns the parsed value, or null when the body will not parse, so the
+// caller keeps its last good render and shows a quiet notice instead.
+export function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// Interpret a JSON-RPC HTTP reply and return its `result`, or throw a tagged
+// error the caller can tell apart:
+//
+//   - a non-ok HTTP status (`ok` false) is the unreachable path: a proxy 502/504
+//     page when snapserver is down is not a bad payload, so this throws a plain
+//     error (no `parseFailed`), which the page reports as "not reachable";
+//   - an ok reply whose body will not parse throws with `parseFailed` set, so the
+//     page keeps its last render and shows the quiet "status unavailable" notice;
+//   - a JSON-RPC error field throws its message.
+export function interpretRpcResponse(ok, text) {
+  if (!ok) {
+    throw new Error("snapserver is not reachable");
+  }
+  const body = safeJsonParse(text);
+  if (body === null) {
+    const err = new Error("unparseable JSON-RPC response");
+    err.parseFailed = true;
+    throw err;
+  }
+  if (body.error) {
+    throw new Error(body.error.message || "JSON-RPC error");
+  }
+  return body.result;
+}
+
 // Build one row per room, in the order the labels are given.
 //
 // `labels` is the ordered list the page loads from rooms.json:

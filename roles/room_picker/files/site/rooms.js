@@ -4,9 +4,10 @@
 // It loads the room list from rooms.json, then keeps a live picture of the house
 // from snapserver over a JSON-RPC WebSocket at /jsonrpc, re-reading the full
 // status whenever snapserver notifies a change. If the socket will not stay up
-// it falls back to polling Server.GetStatus every five seconds. Toggles and the
-// volume sliders send Client.SetVolume back the same way. A health line polls
-// each machine's status file.
+// it falls back to polling Server.GetStatus every 30 seconds. A status reply
+// that will not parse never breaks the page: it keeps the last good render and
+// shows a quiet notice. Toggles and the volume sliders send Client.SetVolume
+// back the same way. A health line polls each machine's status file.
 
 import {
   roomsFromStatus,
@@ -16,12 +17,24 @@ import {
   groupUnmuteRequest,
   healthBanner,
   artFromHistory,
+  interpretRpcResponse,
+  safeJsonParse,
 } from "./rooms-model.js";
 
-const POLL_MS = 5000;
+// The fallback poll is deliberately slow: it only runs when the live WebSocket
+// is down, and each Server.GetStatus is a full status read, so a slow cadence
+// keeps that cost off snapserver.
+const POLL_MS = 30000;
 const HEALTH_MS = 30000;
 const RECONNECT_MS = 3000;
 const SLIDER_DEBOUNCE_MS = 150;
+
+// Shown on the connection line when a status reply will not parse. The page
+// keeps its last good render and says so quietly rather than breaking.
+const STATUS_UNAVAILABLE_MSG = "Status unavailable; showing the last update.";
+// Shown while the live WebSocket is down and the page is polling instead. The
+// cadence is derived from POLL_MS so the text cannot drift from the real poll.
+const OFFLINE_MSG = `Live updates are offline; refreshing every ${POLL_MS / 1000} seconds.`;
 
 const els = {
   nowPlaying: document.getElementById("now-playing"),
@@ -178,16 +191,18 @@ function scheduleReconnect() {
 }
 
 function onMessage(data) {
-  let message;
-  try {
-    message = JSON.parse(data);
-  } catch (err) {
+  const message = safeJsonParse(data);
+  if (message === null) {
+    // The body would not parse (for example raw control characters snapserver
+    // emitted inline). Keep the last good render and say so quietly.
+    setConnection(STATUS_UNAVAILABLE_MSG);
     return;
   }
   const messages = Array.isArray(message) ? message : [message];
   for (const one of messages) {
     // A response to our Server.GetStatus carries the whole picture.
     if (one.result && one.result.server) {
+      clearStatusMessage();
       render(one.result);
       continue;
     }
@@ -197,6 +212,12 @@ function onMessage(data) {
       requestStatus();
     }
   }
+}
+
+// Restore the baseline connection line after a good read: empty when the live
+// socket is up, the offline notice while polling.
+function clearStatusMessage() {
+  setConnection(state.pollTimer ? OFFLINE_MSG : "");
 }
 
 // Ask snapserver for the whole status, over the socket when it is open, else by
@@ -209,10 +230,20 @@ function requestStatus() {
   postRpc("Server.GetStatus", {})
     .then((result) => {
       if (result && result.server) {
+        clearStatusMessage();
         render(result);
       }
     })
-    .catch(() => setConnection("snapserver is not reachable."));
+    .catch((err) => {
+      // A reply that would not parse is not the same as snapserver being gone:
+      // keep the last good render and show the quiet notice. Any other failure
+      // (network, HTTP error) is reported as unreachable.
+      if (err && err.parseFailed) {
+        setConnection(STATUS_UNAVAILABLE_MSG);
+      } else {
+        setConnection("snapserver is not reachable.");
+      }
+    });
 }
 
 function envelope(method, params) {
@@ -225,11 +256,11 @@ async function postRpc(method, params) {
     headers: { "Content-Type": "application/json" },
     body: envelope(method, params),
   });
-  const body = await response.json();
-  if (body.error) {
-    throw new Error(body.error.message || "JSON-RPC error");
-  }
-  return body.result;
+  // Interpret the reply in the model: a non-ok status (a proxy error page when
+  // snapserver is down) is the unreachable path, while an ok reply that will not
+  // parse is a tagged parse failure. This keeps "not reachable" and "status
+  // unavailable" distinct.
+  return interpretRpcResponse(response.ok, await response.text());
 }
 
 function sendControl(request) {
@@ -246,7 +277,7 @@ function startPolling() {
   if (state.pollTimer) {
     return;
   }
-  setConnection("Live updates are offline; refreshing every few seconds.");
+  setConnection(OFFLINE_MSG);
   requestStatus();
   state.pollTimer = setInterval(requestStatus, POLL_MS);
 }

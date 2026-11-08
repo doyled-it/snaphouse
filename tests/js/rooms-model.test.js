@@ -16,6 +16,8 @@ import {
   groupUnmuteRequest,
   healthBanner,
   artFromHistory,
+  safeJsonParse,
+  interpretRpcResponse,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // Ordered labels, the shape the page loads from rooms.json.
@@ -343,4 +345,70 @@ test("artFromHistory coerces a missing or non-string artist to null", () => {
   assert.equal(art.current.artist, null);
   assert.equal(art.history[0].artist, null);
   assert.equal(art.history[1].artist, null);
+});
+
+// --------------------------------------------------------------------------- #
+// safeJsonParse: never throw on a malformed Server.GetStatus body
+// --------------------------------------------------------------------------- #
+
+test("safeJsonParse returns the parsed value for valid JSON", () => {
+  const parsed = safeJsonParse('{"result":{"server":{"groups":[]}}}');
+  assert.deepEqual(parsed, { result: { server: { groups: [] } } });
+});
+
+test("safeJsonParse returns null for syntactically invalid JSON", () => {
+  assert.equal(safeJsonParse("{not json"), null);
+});
+
+test("safeJsonParse returns null when a string holds a raw control character", () => {
+  // snapserver has emitted unescaped control characters inside metadata, which a
+  // strict JSON.parse rejects. The page must keep working, so this yields null
+  // rather than throwing.
+  const body = '{"result":{"server":{}},"x":"' + String.fromCharCode(1) + '"}';
+  assert.equal(safeJsonParse(body), null);
+});
+
+test("safeJsonParse returns null for a non-string input", () => {
+  assert.equal(safeJsonParse(undefined), null);
+});
+
+// --------------------------------------------------------------------------- #
+// interpretRpcResponse: a down server is unreachable, not a parse failure
+// --------------------------------------------------------------------------- #
+
+test("interpretRpcResponse returns the result for an ok, valid reply", () => {
+  const result = interpretRpcResponse(true, '{"result":{"server":{"groups":[]}}}');
+  assert.deepEqual(result, { server: { groups: [] } });
+});
+
+test("interpretRpcResponse treats a non-ok reply as unreachable, not parseFailed", () => {
+  // A proxy 502 page when snapserver is down: not a bad payload. The error must
+  // not carry parseFailed, so the page says "not reachable", not "status
+  // unavailable".
+  let thrown;
+  try {
+    interpretRpcResponse(false, "<html>502 Bad Gateway</html>");
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown instanceof Error);
+  assert.equal(thrown.parseFailed, undefined);
+});
+
+test("interpretRpcResponse tags an ok but unparseable reply as parseFailed", () => {
+  let thrown;
+  try {
+    interpretRpcResponse(true, "{not json");
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown instanceof Error);
+  assert.equal(thrown.parseFailed, true);
+});
+
+test("interpretRpcResponse throws a JSON-RPC error message", () => {
+  assert.throws(
+    () => interpretRpcResponse(true, '{"error":{"code":-32601,"message":"nope"}}'),
+    /nope/
+  );
 });
