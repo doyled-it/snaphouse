@@ -186,7 +186,8 @@ def test_fallback_removes_a_check_only_the_failed_commit_shipped(world):
 
 def test_expected_checks_reads_the_real_host_inventory():
     office = update.expected_checks(REPO_ROOT, "office")
-    assert office == {"web.sh", "selfupdate.sh", "snapclient.sh"}
+    # The common role ships avahi_mdns.sh on every host (issue #84).
+    assert office == {"avahi_mdns.sh", "web.sh", "selfupdate.sh", "snapclient.sh"}
     assert "artadmin.sh" not in office
 
     house = update.expected_checks(REPO_ROOT, "house")

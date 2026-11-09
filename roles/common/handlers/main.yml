@@ -1,0 +1,14 @@
+---
+# avahi-daemon reads /etc/avahi/avahi-daemon.conf only at start, so a change to
+# the mDNS advertise settings takes effect on a restart, and only when the file
+# changed. The handler touches a running service, so it runs only where systemd
+# is PID 1 (a real machine), never in the CI container; a notified handler
+# ignores --skip-tags, so the gate is the when:, and the service tag still marks
+# it for a real-host --skip-tags service run.
+- name: Restart avahi-daemon
+  ansible.builtin.systemd_service:
+    name: avahi-daemon.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service

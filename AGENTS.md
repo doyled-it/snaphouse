@@ -69,6 +69,16 @@ another name (the ZimaBlade shipped as `casaos`) is named with
 `bootstrap.sh --host <key>`, which validates the key against `vars/hosts.yml`
 and sets the hostname before applying.
 
+## mDNS advertises IPv4 only
+
+The `common` role sets `use-ipv6=no` ([server]) and `publish-aaaa-on-ipv4=no`
+([publish]) in `/etc/avahi/avahi-daemon.conf` on every host, so `.local` names
+resolve to IPv4 only. A phone VPN (for example Proton with Allow LAN
+connections) exempts private IPv4 ranges from the tunnel but not global IPv6, so
+a name that also carried a global IPv6 address would be tried over IPv6 first and
+sent into the tunnel: the IP worked but `house.local` did not. The `avahi_mdns`
+verify check pins both settings on device.
+
 ## Verify checks and self-update pruning
 
 A role installs an on-device check by copying or templating it to
