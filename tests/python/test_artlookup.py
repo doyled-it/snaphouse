@@ -166,6 +166,189 @@ def test_audiobook_genre_uses_open_library(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# base name before a suffix
+# --------------------------------------------------------------------------- #
+
+
+def _itunes_result(collection_name: str) -> bytes:
+    # A one-result iTunes podcast search body with a given collectionName and an
+    # artwork URL on the mzstatic CDN, so a matched result fetches a cover.
+    return json.dumps(
+        {
+            "resultCount": 1,
+            "results": [
+                {
+                    "collectionName": collection_name,
+                    "artistName": collection_name,
+                    "artworkUrl600": "https://is1-ssl.mzstatic.com/image/x/600x600bb.jpg",
+                }
+            ],
+        }
+    ).encode("utf-8")
+
+
+def test_podcast_suffix_finds_base_show(tmp_path):
+    # A podcast app sends "<Show> - Patreon Feed"; the public show is "<Show>".
+    # The full name finds no exact match, so the base before the separator does.
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _itunes_result("Harbor Notes")),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find(
+        "Episode 7",
+        "Harbor Notes - Patreon Feed",
+        "Harbor Notes - Patreon Feed",
+        "long_form",
+        ["Podcast"],
+    )
+
+    assert url is not None
+    assert url.startswith("/cover/lookup/")
+    # Two searches ran: the full name, then the base name. Both carry only names.
+    itunes_calls = [c for c in fetch.calls if "itunes.apple.com" in c]
+    assert len(itunes_calls) == 2
+    terms = [
+        urllib.parse.parse_qs(urllib.parse.urlsplit(c).query).get("term")[0]
+        for c in itunes_calls
+    ]
+    assert terms == ["Harbor Notes - Patreon Feed", "Harbor Notes"]
+    for call in itunes_calls:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(call).query)
+        assert set(query) == {"media", "entity", "term"}
+    # No miss marker: the second attempt found a cover.
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_podcast_no_separator_single_search(tmp_path):
+    # A show with no separator behaves as today: one search, and a parsed miss.
+    fetch = FakeFetch([("itunes.apple.com", _itunes_result("Harbor Notes"))])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    # Music kind with a Podcast genre routes to the podcast lookup without the
+    # long-form Open Library fallback, so this exercises only the one search.
+    url = lookup.find(
+        "Episode 7", "Seaside Review", "Seaside Review", "music", ["Podcast"]
+    )
+
+    assert url is None
+    itunes_calls = [c for c in fetch.calls if "itunes.apple.com" in c]
+    assert len(itunes_calls) == 1
+    # A single parsed miss is cached.
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_podcast_base_must_match_exactly(tmp_path):
+    # The base name search returns a near name, not an exact match, so it is still
+    # a miss and the marker is written.
+    fetch = FakeFetch([("itunes.apple.com", _itunes_result("Harbor Notes Daily"))])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    # Music kind with a Podcast genre keeps the podcast route without the
+    # long-form fallback, so both attempts parse and a single marker is written.
+    url = lookup.find(
+        "Episode 7",
+        "Harbor Notes - Patreon Feed",
+        "Harbor Notes - Patreon Feed",
+        "music",
+        ["Podcast"],
+    )
+
+    assert url is None
+    itunes_calls = [c for c in fetch.calls if "itunes.apple.com" in c]
+    assert len(itunes_calls) == 2
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_music_suffix_finds_base_release(tmp_path):
+    # The release title carries a suffix; the base matches, artist still enforced.
+    body = json.dumps(
+        {
+            "releases": [
+                {
+                    "id": "11111111-2222-3333-4444-555555555555",
+                    "title": "Night Harbor",
+                    "artist-credit": [{"name": "The Lantern Keepers"}],
+                }
+            ]
+        }
+    ).encode("utf-8")
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", body),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find(
+        "Track 2",
+        "The Lantern Keepers",
+        "Night Harbor (Deluxe Edition)",
+        "music",
+        None,
+    )
+
+    assert url is not None
+    mb_calls = [c for c in fetch.calls if "musicbrainz.org" in c]
+    assert len(mb_calls) == 2
+    queries = [
+        urllib.parse.parse_qs(urllib.parse.urlsplit(c).query)["query"][0]
+        for c in mb_calls
+    ]
+    assert queries == [
+        'artist:"The Lantern Keepers" AND release:"Night Harbor (Deluxe Edition)"',
+        'artist:"The Lantern Keepers" AND release:"Night Harbor"',
+    ]
+
+
+def test_music_base_miss_writes_marker_once(tmp_path):
+    # Both attempts parse and miss, so a single miss marker is cached.
+    fetch = FakeFetch([("musicbrainz.org", _empty_musicbrainz())])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find(
+        "Track 2", "The Lantern Keepers", "Night Harbor: Live", "music", None
+    )
+
+    assert url is None
+    assert len(list(_lookup_dir(tmp_path).glob("*.none"))) == 1
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 2
+
+
+def test_base_attempt_error_is_not_cached(tmp_path):
+    # The full-name search parses and misses, but the base-name search fetch fails
+    # (returns None). That is transient, so no miss marker is written.
+    first = {"done": False}
+
+    def itunes(url):
+        if not first["done"]:
+            first["done"] = True
+            return _itunes_result("Harbor Notes")
+        return None
+
+    fetch = FakeFetch([("itunes.apple.com", itunes)])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find(
+        "Episode 7",
+        "Harbor Notes - Patreon Feed",
+        "Harbor Notes - Patreon Feed",
+        "long_form",
+        ["Podcast"],
+    )
+
+    assert url is None
+    assert len([c for c in fetch.calls if "itunes.apple.com" in c]) == 2
+    lookup_dir = _lookup_dir(tmp_path)
+    assert not (lookup_dir.exists() and list(lookup_dir.glob("*.none")))
+
+
+# --------------------------------------------------------------------------- #
 # music
 # --------------------------------------------------------------------------- #
 

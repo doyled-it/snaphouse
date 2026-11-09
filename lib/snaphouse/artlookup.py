@@ -62,6 +62,13 @@ _COVER_ART_ARCHIVE = "https://coverartarchive.org/release/{mbid}/front-500"
 # MusicBrainz asks for no more than one request per second.
 _MUSICBRAINZ_MIN_INTERVAL = 1.0
 
+# A feed that carries a show, book, or release under a decorated name ("<Show> -
+# Patreon Feed") hides the public title before one of these separators. When the
+# full name finds no exact match, a lookup retries on the part before the first
+# separator that appears.
+_BASE_SEPARATORS = (" - ", " | ", ": ", " (")
+_MIN_BASE_LENGTH = 3
+
 _NONE_SUFFIX = ".none"
 _DEFAULT_MISS_TTL = 7 * 86400
 _DEFAULT_MAX_FILES = 300
@@ -156,6 +163,27 @@ def _normalize(value: Optional[str]) -> str:
     folded = without_marks.casefold()
     collapsed = re.sub(r"[^0-9a-z]+", " ", folded)
     return collapsed.strip()
+
+
+def _base_name(name: str) -> Optional[str]:
+    """The title before the first suffix separator, or None when there is none.
+
+    Cuts at the earliest occurrence of any separator in ``_BASE_SEPARATORS`` and
+    trims the part before it. Returns None when no separator appears, the base is
+    shorter than ``_MIN_BASE_LENGTH``, or the base equals the full name, so a
+    plain or barely-there name yields nothing extra to search for.
+    """
+    cut = None
+    for separator in _BASE_SEPARATORS:
+        index = name.find(separator)
+        if index != -1 and (cut is None or index < cut):
+            cut = index
+    if cut is None:
+        return None
+    base = name[:cut].strip()
+    if len(base) < _MIN_BASE_LENGTH or base == name:
+        return None
+    return base
 
 
 def _names_match(left: Optional[str], right: Optional[str]) -> bool:
@@ -356,12 +384,36 @@ class ArtLookup:
             return self._open_library(artist, album)
         return self._music(artist, album)
 
+    def _with_base(
+        self,
+        name: str,
+        search: Callable[[str], tuple[str, Optional[bytes]]],
+    ) -> tuple[str, Optional[bytes]]:
+        """Search the full name, then the base name before its first suffix.
+
+        ``search`` runs one lookup for a given name and returns its outcome. The
+        full name is tried first; only on a parsed miss, and only when a base
+        name exists, is a second search run on that base. A fetch error on either
+        attempt returns ``_ERROR`` at once, so the miss marker is written only
+        when both attempts parse and miss.
+        """
+        outcome, image = search(name)
+        if outcome != _MISS:
+            return (outcome, image)
+        base = _base_name(name)
+        if base is None:
+            return (_MISS, None)
+        return search(base)
+
     def _podcast(
         self, artist: Optional[str], album: Optional[str]
     ) -> tuple[str, Optional[bytes]]:
         show = album or artist
         if not show:
             return (_MISS, None)
+        return self._with_base(show, self._podcast_search)
+
+    def _podcast_search(self, show: str) -> tuple[str, Optional[bytes]]:
         url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
             {"media": "podcast", "entity": "podcast", "term": show}
         )
@@ -384,6 +436,13 @@ class ArtLookup:
         # The book title is the album; the author is the artist.
         if not album:
             return (_MISS, None)
+        return self._with_base(
+            album, lambda title: self._open_library_search(artist, title)
+        )
+
+    def _open_library_search(
+        self, artist: Optional[str], album: str
+    ) -> tuple[str, Optional[bytes]]:
         params = {"title": album}
         if artist:
             params["author"] = artist
@@ -406,6 +465,13 @@ class ArtLookup:
     ) -> tuple[str, Optional[bytes]]:
         if not album:
             return (_MISS, None)
+        return self._with_base(
+            album, lambda release: self._music_search(artist, release)
+        )
+
+    def _music_search(
+        self, artist: Optional[str], album: str
+    ) -> tuple[str, Optional[bytes]]:
         self._await_musicbrainz_gate()
         if artist:
             query = (
