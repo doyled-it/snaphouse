@@ -201,6 +201,7 @@ is whatever is on the House stream right now, from either input. Shape:
     "artist": "The Long Version",
     "album": "The Long Version",
     "kind": "long_form",
+    "genre": ["Podcast"],
     "source": "bluetooth",
     "status": "playing",
     "duration": 3120.0,
@@ -216,8 +217,10 @@ is whatever is on the House stream right now, from either input. Shape:
 `track` is `null` when nothing with a title is on House, and also once a track has been
 paused (or the House stream idle) for 10 minutes; before that it stays with
 `status: "paused"`. `status` is `"playing"` or `"paused"`; `source` is `"airplay"` or
-`"bluetooth"`; `kind` is `"music"` or `"long_form"`. `artist`, `album`, `duration`,
-`position`, `position_at`, and `art_url` may each be `null`. `art_url` is always a
+`"bluetooth"`; `kind` is `"music"` or `"long_form"`. `genre` is a list of strings from
+the stream metadata (the hub's additive field), or `null` when unknown; it is additive and
+the nightstand frame ignores it (the room-picker page uses it to route the "Open in" sheet).
+`artist`, `album`, `duration`, `position`, `position_at`, and `art_url` may each be `null`. `art_url` is always a
 same-origin `/cover/...` path on the hub (or `null`), never an absolute or off-origin URL.
 `position` is the position at the moment the properties were emitted and `position_at` is
 when the service received it, so a consumer ticks `position + (now - position_at)` while
@@ -235,7 +238,7 @@ it at `http://house.local/play-history.json`. Shape:
   "plays": [
     {
       "title": "...", "artist": "...", "album": "...",
-      "kind": "music", "source": "airplay",
+      "kind": "music", "genre": ["Rock"], "source": "airplay",
       "duration": 322.0, "started_at": "2026-11-08T21:01:10-08:00",
       "art_url": "/cover/history/....jpg"
     }
@@ -248,8 +251,10 @@ track's identity is `(title, artist, album)`, so pausing and resuming the same t
 play (not two), as is a mid-track service restart within the track's duration plus 10
 minutes. `art_url` is a same-origin `/cover/history/...` path (a durable copy the service
 keeps so it survives cover pruning) or `null`, and is filled in later if the cover lookup
-finishes after the play was recorded. `artist`, `album`, `duration`, and `art_url` may be
-`null`.
+finishes after the play was recorded. `genre` is a list of strings from the stream metadata,
+or `null` when unknown; it is additive, so entries written before this field have no `genre`
+key and stay valid (a consumer treats a missing `genre` as unknown). `artist`, `album`,
+`duration`, `genre`, and `art_url` may be `null`.
 
 **Art index file.** snaphouse produces, the room-picker page and nightstand consume. The
 `snaphouse-artadmin` service writes `/var/lib/snaphouse/public/art/art-index.json` atomically

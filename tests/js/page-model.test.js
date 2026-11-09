@@ -231,12 +231,13 @@ test("openInLinks offers song apps for a music play, searching title and artist"
   assert.equal(links[3].url, `https://duckduckgo.com/?q=${q}`);
 });
 
-test("openInLinks offers podcast apps for a long-form play, searching title and show", () => {
+test("openInLinks offers podcast apps for a podcast-genre play, searching title and show", () => {
   const links = openInLinks({
     title: "Episode 412",
     artist: "A Host",
     album: "The Long Version",
     kind: "long_form",
+    genre: ["Podcast"],
   });
   assert.deepEqual(
     links.map((l) => l.label),
@@ -247,6 +248,45 @@ test("openInLinks offers podcast apps for a long-form play, searching title and 
   assert.equal(links[0].url, `https://podcasts.apple.com/search?term=${q}`);
   assert.equal(links[1].url, `https://open.spotify.com/search/${q}`);
   assert.equal(links[2].url, `https://duckduckgo.com/?q=${q}`);
+});
+
+test("openInLinks offers libro.fm for an audiobook-genre play", () => {
+  const links = openInLinks({
+    title: "A Great Novel",
+    artist: "An Author",
+    album: "A Great Novel",
+    kind: "long_form",
+    genre: ["Audiobook"],
+  });
+  assert.deepEqual(links.map((l) => l.label), ["libro.fm", "Web search"]);
+  const q = "A%20Great%20Novel%20A%20Great%20Novel";
+  assert.equal(links[0].url, `https://libro.fm/search?q=${q}`);
+  assert.equal(links[1].url, `https://duckduckgo.com/?q=${q}`);
+});
+
+test("openInLinks treats spoken-word and 'audio book' genres as audiobooks", () => {
+  for (const genre of [["Spoken Word"], ["Audio Book"], ["AUDIOBOOK"]]) {
+    const links = openInLinks({ title: "A Book", album: "A Book", kind: "long_form", genre });
+    assert.deepEqual(links.map((l) => l.label), ["libro.fm", "Web search"], JSON.stringify(genre));
+  }
+});
+
+test("openInLinks offers both podcast apps and libro.fm for long_form with no telling genre", () => {
+  const links = openInLinks({
+    title: "Episode 1",
+    album: "Some Show",
+    kind: "long_form",
+    genre: null,
+  });
+  assert.deepEqual(
+    links.map((l) => l.label),
+    ["Apple Podcasts", "Spotify", "libro.fm", "Web search"]
+  );
+  const q = "Episode%201%20Some%20Show";
+  assert.equal(links[0].url, `https://podcasts.apple.com/search?term=${q}`);
+  assert.equal(links[1].url, `https://open.spotify.com/search/${q}`);
+  assert.equal(links[2].url, `https://libro.fm/search?q=${q}`);
+  assert.equal(links[3].url, `https://duckduckgo.com/?q=${q}`);
 });
 
 test("openInLinks searches the title alone when there is no artist or show", () => {
@@ -271,6 +311,36 @@ test("openInLinks returns nothing when there is no title to search", () => {
   assert.deepEqual(openInLinks({ kind: "music" }), []);
   assert.deepEqual(openInLinks(null), []);
   assert.deepEqual(openInLinks("nope"), []);
+});
+
+test("openInLinks treats a malformed genre as no genre and routes by kind", () => {
+  // A long_form play whose genre is not a usable list of strings routes to the
+  // "could be either" case (both podcast apps and libro.fm), never crashing.
+  for (const genre of ["Audiobook", 7, { g: "x" }, [1, 2], ["", "   "], [], true]) {
+    const links = openInLinks({ title: "Episode 1", album: "Some Show", kind: "long_form", genre });
+    assert.deepEqual(
+      links.map((l) => l.label),
+      ["Apple Podcasts", "Spotify", "libro.fm", "Web search"],
+      JSON.stringify(genre)
+    );
+  }
+});
+
+test("openInLinks routes an older entry with no genre by kind", () => {
+  // Older history entries predate the genre field; they still render and route.
+  const longform = openInLinks({ title: "Episode 1", album: "Some Show", kind: "long_form" });
+  assert.deepEqual(
+    longform.map((l) => l.label),
+    ["Apple Podcasts", "Spotify", "libro.fm", "Web search"]
+  );
+  const music = openInLinks({ title: "Song A", artist: "Artist B", kind: "music" });
+  assert.deepEqual(music.map((l) => l.label), ["Apple Music", "Spotify", "YouTube Music", "Web search"]);
+});
+
+test("openInLinks ignores non-string items inside a genre list", () => {
+  // A list whose only usable string names an audiobook still routes to libro.fm.
+  const links = openInLinks({ title: "A Book", album: "A Book", kind: "long_form", genre: [7, "Audiobook", null] });
+  assert.deepEqual(links.map((l) => l.label), ["libro.fm", "Web search"]);
 });
 
 // --------------------------------------------------------------------------- #
