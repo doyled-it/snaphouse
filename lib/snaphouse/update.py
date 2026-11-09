@@ -40,11 +40,33 @@ DEFAULT_REPO = Path("/opt/snaphouse")
 DEFAULT_STATE = Path("/var/lib/snaphouse/state.json")
 
 # A role declares a check by copying or templating it to this destination. The
-# basename is the check's file name in /etc/snaphouse/verify.d. Both the copy and
-# the template tasks spell the dest the same way, so one pattern finds either.
+# convention (AGENTS.md) is one static line per check: a bare or quoted
+# `dest: /etc/snaphouse/verify.d/<name>`, no loop item, variable, or templated
+# path. This pattern reads the basename off such a line (both the copy and the
+# template tasks spell it the same way), tolerating surrounding quotes and a
+# trailing YAML comment. The name charset is deliberately literal: a `{{ ... }}`
+# or an interpolated segment does not match, so a non-static dest is not mistaken
+# for a real basename.
 _VERIFY_DEST_RE = re.compile(
-    r"^\s*dest:\s*/etc/snaphouse/verify\.d/([^\s/]+)\s*$"
+    r"""^\s*dest:\s*["']?/etc/snaphouse/verify\.d/([A-Za-z0-9._-]+)["']?\s*(?:\#.*)?$"""
 )
+
+# A looser detector for "this line sets a dest somewhere under verify.d", used to
+# catch an install shape the strict pattern cannot read (a loop item, a variable,
+# a templated or oddly-quoted path). When a line matches this but not the strict
+# pattern, the derivation cannot know the real basename, so pruning skips the run
+# rather than risk deleting a check it failed to account for.
+_VERIFY_DEST_LOOSE_RE = re.compile(r"""^\s*dest:\s*["']?.*?/etc/snaphouse/verify\.d/""")
+
+
+class _UnparseableCheckDest(Exception):
+    """A verify.d dest line the strict convention pattern could not read.
+
+    Raised while deriving a role's checks. It makes prune_verify_dir skip the
+    whole run: an unreadable dest means the expected set may be missing a check
+    that is on disk, and deleting a legitimate check is the one outcome pruning
+    must never cause.
+    """
 
 
 def _repo() -> Path:
@@ -102,22 +124,35 @@ def _write_state(path: Path, last_good: str | None, failed: str | None) -> None:
     os.replace(tmp, path)
 
 
+def _role_task_files(repo: Path, role: str) -> list[Path]:
+    """Every task file in a role, both .yml and .yaml extensions."""
+    tasks = repo / "roles" / role / "tasks"
+    if not tasks.is_dir():
+        return []
+    return sorted(set(tasks.rglob("*.yml")) | set(tasks.rglob("*.yaml")))
+
+
 def _role_checks(repo: Path, role: str) -> set[str]:
     """The verify.d check names a role declares installing, read from its tasks.
 
     The source of truth is the role's own `dest: /etc/snaphouse/verify.d/<name>`
     task lines, so this sees checks a role copies and checks it templates
     (bt_speaker, snapclient) alike. A role without a tasks dir contributes none.
+
+    A dest under verify.d that does not match the static convention (a loop, a
+    variable, a templated path) raises _UnparseableCheckDest: the name cannot be
+    known, so the caller must not prune on a half-known expected set.
     """
-    tasks = repo / "roles" / role / "tasks"
     names: set[str] = set()
-    if not tasks.is_dir():
-        return names
-    for task_file in sorted(tasks.rglob("*.yml")):
+    for task_file in _role_task_files(repo, role):
         for line in task_file.read_text().splitlines():
             match = _VERIFY_DEST_RE.match(line)
             if match:
                 names.add(match.group(1))
+            elif _VERIFY_DEST_LOOSE_RE.match(line):
+                raise _UnparseableCheckDest(
+                    f"{task_file}: cannot read a static check name from {line.strip()!r}"
+                )
     return names
 
 
@@ -162,35 +197,38 @@ def prune_verify_dir(repo: Path, host: str) -> list[str]:
     are never touched. The list of removed names is returned, newest apply wins.
 
     Pruning is best effort. If the checkout does not let us name this host's
-    checks (no vars/hosts.yml, an unlisted host, an unreadable inventory), nothing
-    is removed: leaving a possibly-stale check in place is safe, deleting the
-    wrong one is not. Pruning never raises into the update algorithm.
+    checks (no vars/hosts.yml, an unlisted host, an unreadable inventory, or a
+    dest the static convention cannot read), nothing is removed: leaving a
+    possibly-stale check in place is safe, deleting the wrong one is not. Pruning
+    never raises into the update algorithm; every path here is guarded.
     """
-    directory = verify.verify_dir()
-    if not directory.is_dir():
-        return []
     try:
+        directory = verify.verify_dir()
+        if not directory.is_dir():
+            return []
         roles = _host_roles(repo, host)
         if roles is None:
             return []
         expected: set[str] = set()
         for role in roles:
             expected |= _role_checks(repo, role)
+        removed: list[str] = []
+        for entry in sorted(directory.iterdir()):
+            try:
+                if not entry.is_file() or entry.name in expected:
+                    continue
+                if verify.MANAGED_MARKER not in entry.read_text(errors="ignore"):
+                    continue
+                entry.unlink()
+            except OSError:
+                # A file that vanished mid-loop (a TOCTOU race) or any other
+                # per-file OS error must not stop the sweep or crash the updater.
+                continue
+            removed.append(entry.name)
+        return removed
     except Exception as exc:  # noqa: BLE001 - never let pruning break the update
         print(f"snaphouse update: skipped verify.d pruning: {exc}", file=sys.stderr)
         return []
-    removed: list[str] = []
-    for entry in sorted(directory.iterdir()):
-        if not entry.is_file() or entry.name in expected:
-            continue
-        try:
-            marked = verify.MANAGED_MARKER in entry.read_text(errors="ignore")
-        except OSError:
-            marked = False
-        if marked:
-            entry.unlink()
-            removed.append(entry.name)
-    return removed
 
 
 def _apply(repo: Path) -> bool:

@@ -69,6 +69,25 @@ another name (the ZimaBlade shipped as `casaos`) is named with
 `bootstrap.sh --host <key>`, which validates the key against `vars/hosts.yml`
 and sets the hostname before applying.
 
+## Verify checks and self-update pruning
+
+A role installs an on-device check by copying or templating it to
+`/etc/snaphouse/verify.d/<name>`, and every shipped check carries the
+`snaphouse-managed-check` marker comment near the top. On a fallback the
+self-update wrapper prunes marked checks the applied checkout no longer installs
+(`lib/snaphouse/update.py`), so a rolled-back commit does not keep failing on a
+check only the newer, failed commit shipped.
+
+For that pruning to be safe, install each check with one static `dest` line:
+`dest: /etc/snaphouse/verify.d/<name>`, bare or quoted, with no loop item, no
+variable, and no templated path. The pruner reads the expected set from those
+`dest` lines across the host's roles (both `.yml` and `.yaml` task files). A
+dest it cannot read as a static name makes it skip pruning for that run rather
+than risk deleting a check, and `tests/python/test_update_prune.py` fails CI if a
+shipped check (any `roles/*/files/verify.d/*` or any verify-check template) is not
+captured by the derivation, so a new install shape is caught in review, not in
+the field.
+
 ## Tooling
 
 - Python: `uv run pytest tests/python`. Dev deps (pytest, pyyaml) are in

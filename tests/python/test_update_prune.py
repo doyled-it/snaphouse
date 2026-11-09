@@ -218,3 +218,116 @@ def test_every_shipped_check_carries_the_marker():
     assert checks, "no shipped checks found"
     for path in checks + templates:
         assert MARKER in path.read_text(), f"{path} is missing the managed marker"
+
+
+def _real_roles():
+    return [d for d in sorted((REPO_ROOT / "roles").iterdir()) if d.is_dir()]
+
+
+def test_derivation_captures_every_shipped_check():
+    """Every check a role actually ships must be seen by the dest derivation.
+
+    This is the guard the review asked for: if a future role installs a check in
+    a shape the parser cannot read (a loop, a variable, a templated dest), the
+    check is on disk but absent from the derived set, and the next fallback would
+    delete it. Here that mismatch fails CI instead. A copied check leaves a file
+    under files/verify.d; a templated check leaves a marked .j2 under templates.
+    The derived set must account for every one of them.
+    """
+    for role_dir in _real_roles():
+        role = role_dir.name
+        derived = update._role_checks(REPO_ROOT, role)
+
+        copied = sorted((role_dir / "files" / "verify.d").glob("*"))
+        for check in copied:
+            assert check.name in derived, (
+                f"{role} ships {check.name} on disk but the dest derivation does "
+                f"not capture it (derived: {sorted(derived)})"
+            )
+
+        templates_dir = role_dir / "templates"
+        marked_templates = [
+            t
+            for t in sorted(templates_dir.glob("*.j2"))
+            if templates_dir.is_dir() and MARKER in t.read_text()
+        ]
+        # Copied and templated check names are disjoint, so the derived set must
+        # hold at least one name per shipped source. A missed templated dest
+        # drops the count below this floor.
+        assert len(derived) >= len(copied) + len(marked_templates), (
+            f"{role}: derivation found {sorted(derived)} but the role ships "
+            f"{len(copied)} copied and {len(marked_templates)} templated checks"
+        )
+
+
+def test_no_role_installs_a_verify_check_with_a_nonstatic_dest():
+    """The static-dest convention holds across the repo today.
+
+    _role_checks raises _UnparseableCheckDest on a verify.d dest it cannot read
+    as a static name. Walking every role proves none trips it now, so the runtime
+    skip-pruning guard stays dormant unless someone introduces a new shape.
+    """
+    for role_dir in _real_roles():
+        update._role_checks(REPO_ROOT, role_dir.name)  # must not raise
+
+
+def test_unlink_failure_mid_loop_does_not_propagate(tmp_path, monkeypatch):
+    verifydir = tmp_path / "verify.d"
+    verifydir.mkdir()
+    # Both are marked and neither is in office's expected set, so both are prune
+    # targets. The sweep hits aaa.sh first.
+    (verifydir / "aaa.sh").write_text(_check("aaa.sh", passes=True))
+    (verifydir / "zzz.sh").write_text(_check("zzz.sh", passes=True))
+    monkeypatch.setenv("SNAPHOUSE_VERIFY_DIR", str(verifydir))
+
+    real_unlink = Path.unlink
+
+    def flaky_unlink(self, *args, **kwargs):
+        if self.name == "aaa.sh":
+            raise FileNotFoundError(self)  # a TOCTOU race: gone before we unlink
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+
+    # Must not raise, and must keep going past the failed unlink.
+    removed = update.prune_verify_dir(REPO_ROOT, "office")
+
+    assert removed == ["zzz.sh"]
+    assert "aaa.sh" not in removed
+    assert not (verifydir / "zzz.sh").exists()
+
+
+def test_unparseable_dest_skips_pruning_entirely(tmp_path, monkeypatch):
+    """A dest the parser cannot read makes the whole run skip, deleting nothing.
+
+    Deleting a legitimate check is the one outcome pruning must never cause, so
+    when a role installs checks in a loop (a dest the static convention cannot
+    name) the updater does not prune at all rather than act on a half-known set.
+    """
+    host = socket.gethostname()
+    repo = tmp_path / "repo"
+    (repo / "vars").mkdir(parents=True)
+    (repo / "vars" / "hosts.yml").write_text(_hosts_yaml(host, ["looper"]))
+    tasks = repo / "roles" / "looper" / "tasks"
+    tasks.mkdir(parents=True)
+    (tasks / "main.yml").write_text(
+        "---\n"
+        "- name: Install several checks in a loop\n"
+        "  ansible.builtin.template:\n"
+        '    src: "{{ item }}-verify.sh.j2"\n'
+        '    dest: "/etc/snaphouse/verify.d/{{ item }}.sh"\n'
+        "  loop:\n"
+        "    - alpha\n"
+        "    - beta\n"
+    )
+
+    verifydir = tmp_path / "verify.d"
+    verifydir.mkdir()
+    orphan = verifydir / "orphan.sh"
+    orphan.write_text(_check("orphan.sh", passes=True))  # marked, not statically expected
+    monkeypatch.setenv("SNAPHOUSE_VERIFY_DIR", str(verifydir))
+
+    removed = update.prune_verify_dir(repo, host)
+
+    assert removed == []
+    assert orphan.exists()
