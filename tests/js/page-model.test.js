@@ -18,6 +18,7 @@ import {
   pageSlice,
   historyDeleteTarget,
   mirrorState,
+  mirrorCaption,
   openInLinks,
   artFromHistory,
   parsePlayHistory,
@@ -147,6 +148,55 @@ test("mirrorState drops a future timestamp (clock skew) rather than show a wrong
     mirrorState({ updated_at: "2026-11-09T15:00:00-08:00", screen: "art" }, NOW),
     { visible: true, updatedLabel: "" }
   );
+});
+
+// --------------------------------------------------------------------------- #
+// mirrorCaption: what the frame is showing, and how to frame the art piece
+// --------------------------------------------------------------------------- #
+
+test("mirrorCaption keeps today's framing when the frame is showing art", () => {
+  // Art is on the panel: no plain caption, and the piece is what is showing, so
+  // no "next in rotation" label.
+  assert.deepEqual(mirrorCaption({ updated_at: "x", screen: "art" }), {
+    isArt: true,
+    caption: "",
+    nextLabel: null,
+  });
+});
+
+test("mirrorCaption defaults to art framing when the screen is missing or malformed", () => {
+  // Without a usable screen name, keep today's behavior rather than mislabel the
+  // piece or invent a caption.
+  for (const bad of [null, undefined, "", 0, [], 42, { updated_at: "x" }, { screen: "" }, { screen: 7 }]) {
+    assert.deepEqual(mirrorCaption(bad), { isArt: true, caption: "", nextLabel: null });
+  }
+});
+
+test("mirrorCaption captions a now-playing frame plainly and reframes the piece", () => {
+  assert.deepEqual(mirrorCaption({ screen: "now_playing" }), {
+    isArt: false,
+    caption: "Showing now playing. Art resumes when the audio stops.",
+    nextLabel: "Next in rotation",
+  });
+});
+
+test("mirrorCaption has matching text for weather and a game", () => {
+  assert.equal(
+    mirrorCaption({ screen: "weather" }).caption,
+    "Showing the weather. Art resumes shortly."
+  );
+  assert.equal(
+    mirrorCaption({ screen: "game" }).caption,
+    "Showing a game. Art resumes shortly."
+  );
+});
+
+test("mirrorCaption falls back to a generic line for any other screen", () => {
+  assert.deepEqual(mirrorCaption({ screen: "calendar" }), {
+    isArt: false,
+    caption: "Showing another screen. Art resumes shortly.",
+    nextLabel: "Next in rotation",
+  });
 });
 
 // --------------------------------------------------------------------------- #

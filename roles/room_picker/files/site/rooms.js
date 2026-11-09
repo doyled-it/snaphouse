@@ -37,6 +37,7 @@ import {
   apiRequest,
   libraryRefreshMayRebuild,
   mirrorState,
+  mirrorCaption,
   historyDeleteTarget,
   openInLinks,
   pageCount,
@@ -83,6 +84,7 @@ const els = {
   mirror: document.getElementById("mirror"),
   mirrorImg: document.getElementById("mirror-img"),
   mirrorUpdated: document.getElementById("mirror-updated"),
+  mirrorCaption: document.getElementById("mirror-caption"),
   frameCaption: document.getElementById("frame-caption"),
   frameControls: document.getElementById("frame-controls"),
   frameBack: document.getElementById("frame-back"),
@@ -166,6 +168,10 @@ const state = {
   // The frame mirror state (mirrorState result) and the cover-busting src set.
   mirror: { visible: false, updatedLabel: "" },
   mirrorSrc: null,
+  // What the frame is actually showing (mirrorCaption result): art, or a screen
+  // that has taken the panel over. When it is not art, the mirror carries a plain
+  // caption and the art piece below is labelled as the next piece in rotation.
+  frameShowing: { isArt: true, caption: "", nextLabel: null },
 
   // The frame's current piece and its shown history (from art-history.json).
   artCurrent: null,
@@ -559,13 +565,19 @@ async function refreshFrame() {
     return;
   }
   state.mirror = mirrorState(json, Date.now());
+  state.frameShowing = mirrorCaption(json);
   renderMirror(json);
+  // The art piece and its label depend on what the frame is showing, so re-render
+  // the caption with the latest reading (the piece itself comes from refreshArt).
+  renderFrameCaption(state.artCurrent);
   updateSections();
 }
 
 function renderMirror(json) {
   if (!state.mirror.visible) {
     els.mirror.hidden = true;
+    els.mirrorCaption.hidden = true;
+    els.mirrorCaption.textContent = "";
     state.mirrorSrc = null;
     return;
   }
@@ -580,8 +592,12 @@ function renderMirror(json) {
   // If the image itself 404s (the json landed before the png), hide the mirror.
   els.mirrorImg.onerror = () => {
     els.mirror.hidden = true;
+    els.mirrorCaption.hidden = true;
+    els.mirrorCaption.textContent = "";
     state.mirror = { visible: false, updatedLabel: "" };
+    state.frameShowing = { isArt: true, caption: "", nextLabel: null };
     state.mirrorSrc = null;
+    renderFrameCaption(state.artCurrent);
     updateSections();
   };
   els.mirror.hidden = false;
@@ -591,6 +607,15 @@ function renderMirror(json) {
   } else {
     els.mirrorUpdated.hidden = true;
     els.mirrorUpdated.textContent = "";
+  }
+  // When a screen other than art holds the panel, name it plainly under the
+  // image so the mirror does not read as if the art piece were showing.
+  if (state.frameShowing.caption) {
+    els.mirrorCaption.textContent = state.frameShowing.caption;
+    els.mirrorCaption.hidden = false;
+  } else {
+    els.mirrorCaption.hidden = true;
+    els.mirrorCaption.textContent = "";
   }
 }
 
@@ -622,6 +647,15 @@ function renderFrameCaption(current) {
   els.frameCaption.replaceChildren();
   if (!current) {
     return;
+  }
+  // When another screen holds the panel, this piece is the next one in rotation,
+  // not what is on the glass; label it so the title and its Back / Next controls
+  // read as changing what comes next rather than what is showing now.
+  if (state.frameShowing.nextLabel) {
+    const label = document.createElement("span");
+    label.className = "frame-next-label";
+    label.textContent = state.frameShowing.nextLabel;
+    els.frameCaption.append(label);
   }
   els.frameCaption.append(titleNode(current, "frame-title"));
   if (current.artist) {

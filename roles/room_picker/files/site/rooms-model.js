@@ -799,6 +799,46 @@ export function mirrorState(frameJson, nowMs) {
   return { visible: true, updatedLabel: updatedLabelFor(frameJson.updated_at, nowMs) };
 }
 
+// What the frame is actually showing, so the page captions the mirror by the
+// truth rather than always naming the art piece. The frame rotates art but also
+// takes over the panel for now playing, weather, a game, or another screen; when
+// it does, the art piece under the mirror is the next piece in rotation, not what
+// is on the glass, so labelling it "title, artist" with Back / Next reads as if
+// that painting were showing.
+//
+// `frameJson` is the same-origin /frame.json ({ updated_at, screen }). Returns
+// { isArt, caption, nextLabel }:
+//   - isArt is true when art is on the panel, or when `screen` is missing or
+//     unusable (default to today's framing rather than invent a caption);
+//   - caption is "" when art shows, otherwise a plain sentence naming the screen;
+//   - nextLabel is null when art shows, otherwise "Next in rotation", the label
+//     the page puts on the art piece so its controls read as changing what comes
+//     next, not what is up now.
+export function mirrorCaption(frameJson) {
+  const art = { isArt: true, caption: "", nextLabel: null };
+  if (!frameJson || typeof frameJson !== "object" || Array.isArray(frameJson)) {
+    return art;
+  }
+  const screen = frameJson.screen;
+  if (typeof screen !== "string" || screen.length === 0 || screen === "art") {
+    return art;
+  }
+  return {
+    isArt: false,
+    caption: SCREEN_CAPTIONS[screen] ?? SCREEN_CAPTIONS.default,
+    nextLabel: "Next in rotation",
+  };
+}
+
+// The plain caption for each non-art screen the frame can hold, with a generic
+// fallback for a screen name the page does not have specific wording for.
+const SCREEN_CAPTIONS = {
+  now_playing: "Showing now playing. Art resumes when the audio stops.",
+  weather: "Showing the weather. Art resumes shortly.",
+  game: "Showing a game. Art resumes shortly.",
+  default: "Showing another screen. Art resumes shortly.",
+};
+
 function updatedLabelFor(updatedAt, nowMs) {
   if (typeof updatedAt !== "string") {
     return "";
