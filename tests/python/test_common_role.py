@@ -71,6 +71,33 @@ def test_role_pins_both_mdns_settings_in_their_own_sections():
     assert "avahi" in str(task.get("notify", "")).lower()
 
 
+def test_role_flushes_handlers_right_after_the_mdns_edit():
+    # The restart must be bound to the edit, not deferred to the end of the play:
+    # a later task failing would otherwise drop the notify and leave avahi on the
+    # old config while the file (and the file-only part of the check) looks fine.
+    tasks = _tasks()
+    edit_idx = next(
+        i
+        for i, task in enumerate(tasks)
+        if (found := _module(task))
+        and found[0].endswith("lineinfile")
+        and "avahi-daemon.conf" in str(found[1].get("path", ""))
+    )
+    flush_idx = next(
+        (
+            i
+            for i, task in enumerate(tasks)
+            if (found := _module(task))
+            and found[0].endswith("meta")
+            and found[1] == "flush_handlers"
+        ),
+        None,
+    )
+    assert flush_idx is not None, "no flush_handlers after the mDNS edit"
+    # It comes right after the edit, before the verify-check install.
+    assert flush_idx == edit_idx + 1
+
+
 def test_restart_handler_is_gated_on_real_systemd_and_tagged_service():
     restart = [
         handler
@@ -102,3 +129,13 @@ def test_verify_check_asserts_both_settings_and_carries_the_managed_marker():
     assert "snaphouse-managed-check" in text
     assert "use-ipv6" in text and "publish-aaaa-on-ipv4" in text
     assert "avahi-daemon.conf" in text
+
+
+def test_verify_check_names_the_offending_setting_on_failure():
+    # `snaphouse verify` surfaces only the last stderr line, so a silent `grep
+    # -q` would print an empty detail. The check must say which setting is wrong.
+    text = VERIFY.read_text()
+    assert "is not set to no" in text
+    # The value is anchored to the whole line, so a prefix like "notreally" cannot
+    # satisfy the key.
+    assert "[[:space:]]*no[[:space:]]*" in text
