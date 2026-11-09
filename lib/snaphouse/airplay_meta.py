@@ -46,6 +46,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -71,6 +72,16 @@ MAX_COVERS = 50
 # Backoff before reopening the metadata pipe after a read failure, so a broken
 # pipe cannot spin the reader.
 PIPE_RETRY_SECONDS = 1.0
+
+# RTP audio frames per second: ssnc/prgr progress frame numbers are counted at
+# this rate, so a frame delta divided by this is seconds.
+RTP_FRAMES_PER_SECOND = 44100
+
+# At a real track change (mden) the previous track's duration and position are
+# dropped, unless a progress frame (ssnc/prgr) for the new track arrived within
+# this many seconds before the mden: prgr for a new track can arrive just before
+# or during its metadata bundle, so a very recent one is kept as the new track's.
+PRGR_KEEP_WINDOW_SECONDS = 3.0
 
 # shairport-sync 'ssnc' play-state codes to a Snapcast playbackStatus. A flush is
 # shairport pausing or clearing its buffer (also sent at a track skip), reported
@@ -263,13 +274,36 @@ def store_cover(data: bytes, cover_dir: Path, host: str, *, keep: int = MAX_COVE
 # --------------------------------------------------------------------------- #
 
 
+def current_position(player: "Player") -> Optional[float]:
+    """The track position in seconds at this moment, or None when unknown.
+
+    From the anchor `(position, monotonic time)` the player last recorded, the
+    position is extrapolated forward while playing (`anchor_pos + elapsed`) and
+    held at the anchor while paused or stopped, so a properties resend for an
+    unrelated change never carries a stale position. When the duration is known
+    the result is clamped to `[0, duration]`, so a track that plays past its end
+    with no fresh progress frame never reports beyond its length.
+    """
+    if player._anchor_pos is None or player._anchor_at is None:
+        return None
+    if player.playback_status == "playing":
+        position = player._anchor_pos + (player._clock() - player._anchor_at)
+    else:
+        position = player._anchor_pos
+    if player.duration is not None:
+        position = max(0.0, min(position, player.duration))
+    return position
+
+
 def build_properties(player: "Player") -> dict:
     """Assemble a Snapcast stream properties object from the AirPlay state.
 
     The metadata block is left out entirely when there is nothing to show, so the
     notification says "playing, no title" rather than carrying an empty block.
-    The cover travels only as `artUrl`, never as inline `artData`. The capability
-    flags report that the house does not control this stream.
+    The cover travels only as `artUrl`, never as inline `artData`. Duration and
+    genre ride in the metadata block when known; the top-level `position` is the
+    extrapolated position at emit time. The capability flags report that the
+    house does not control this stream.
     """
     properties: dict[str, Any] = {
         "playbackStatus": player.playback_status,
@@ -280,6 +314,9 @@ def build_properties(player: "Player") -> dict:
         "canSeek": False,
         "canControl": False,
     }
+    position = current_position(player)
+    if position is not None:
+        properties["position"] = position
     metadata: dict[str, Any] = {}
     if player.title:
         metadata["title"] = player.title
@@ -287,6 +324,10 @@ def build_properties(player: "Player") -> dict:
         metadata["artist"] = [player.artist]
     if player.album:
         metadata["album"] = player.album
+    if player.duration is not None:
+        metadata["duration"] = player.duration
+    if player.genre:
+        metadata["genre"] = [player.genre]
     if player.art_url:
         metadata["artUrl"] = player.art_url
     if metadata:
@@ -297,18 +338,35 @@ def build_properties(player: "Player") -> dict:
 class Player:
     """The last AirPlay state seen on the pipe, rendered into stream properties."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self.title: Optional[str] = None
         self.artist: Optional[str] = None
         self.album: Optional[str] = None
         self.art_url: Optional[str] = None
         self.playback_status: str = "stopped"
+        self.duration: Optional[float] = None
+        self.genre: Optional[str] = None
         # The committed track's identity (shairport's persistent id when present,
         # else title/artist/album), used to tell a new track from a metadata
         # resend so stale cover art is dropped only on a real track change.
         self._track_id: object = None
         # The identity accumulating in the current metadata bundle.
         self._bundle_id: object = None
+        # Position anchor: the position (seconds) last known and the monotonic
+        # time it was known at, from which current_position extrapolates.
+        self._clock = clock
+        self._anchor_pos: Optional[float] = None
+        self._anchor_at: Optional[float] = None
+        # The monotonic time ssnc/prgr last set the anchor, so a very recent
+        # progress frame is recognised as belonging to a just-changed track.
+        self._prgr_at: Optional[float] = None
+        # True once ssnc/prgr has set the duration for the current track, so the
+        # core/astm fallback does not override a real progress duration.
+        self._duration_from_prgr: bool = False
+        # True once the current metadata bundle (since the last mdst) has set a
+        # duration (via core/astm), so a real track change keeps a duration the
+        # new track's own bundle supplied.
+        self._duration_in_bundle: bool = False
 
     def properties(self) -> dict:
         return build_properties(self)
@@ -343,6 +401,16 @@ def apply_item(
             player.artist = data.decode("utf-8", "replace") or None
         elif code_str == "asal":
             player.album = data.decode("utf-8", "replace") or None
+        elif code_str == "asgn":
+            player.genre = data.decode("utf-8", "replace") or None
+        elif code_str == "astm":
+            # Song time in ms (4-byte big-endian): a duration fallback used only
+            # when no ssnc/prgr progress frame has already set the duration. It
+            # rides inside the metadata bundle, so note that this bundle carried a
+            # duration, which lets a real track change keep it.
+            if not player._duration_from_prgr and len(data) == 4:
+                player.duration = int.from_bytes(data, "big") / 1000.0
+                player._duration_in_bundle = True
         elif code_str == "mper":
             # shairport's persistent track id; the stable identity for a track.
             player._bundle_id = data or None
@@ -352,10 +420,19 @@ def apply_item(
     if type_str == "ssnc":
         if code_str == "mdst":
             # A (possibly new) track's metadata bundle is starting: clear the
-            # fields so an omitted one does not carry over from the last bundle.
+            # text fields so an omitted one does not carry over from the last
+            # bundle. The duration and position anchor are NOT cleared here: they
+            # are refilled only by a separate progress frame, so clearing them at
+            # the bundle start would blank the bar on a same-track resend. They
+            # are instead dropped at mden when the track identity actually
+            # changes. The duration-source flags reset so this bundle's own
+            # core/astm can set the duration.
             player.title = None
             player.artist = None
             player.album = None
+            player.genre = None
+            player._duration_from_prgr = False
+            player._duration_in_bundle = False
             player._bundle_id = None
             return False
         if code_str == "mden":
@@ -364,15 +441,54 @@ def apply_item(
                 (player.title, player.artist, player.album)
             )
             if has_track and track_id != player._track_id:
-                # Real track change: drop the previous track's cover until this
-                # track's own picture arrives (or stays absent).
+                # Real track change: drop the previous track's cover, and drop its
+                # duration and position anchor too, unless a progress frame for
+                # the new track arrived within the keep window (prgr can precede
+                # or overlap the bundle) or the new track's own bundle carried a
+                # duration (core/astm).
                 player.art_url = None
+                recent_prgr = (
+                    player._prgr_at is not None
+                    and (player._clock() - player._prgr_at) <= PRGR_KEEP_WINDOW_SECONDS
+                )
+                if not recent_prgr:
+                    player._anchor_pos = None
+                    player._anchor_at = None
+                    player._prgr_at = None
+                    if not player._duration_in_bundle:
+                        player.duration = None
+                        player._duration_from_prgr = False
                 player._track_id = track_id
+            return True
+        if code_str == "prgr":
+            # ASCII start/current/end RTP frame numbers at 44100 Hz: duration is
+            # (end - start) / 44100, the anchor position is (current - start) /
+            # 44100 at the moment this frame arrived. prgr arrives at track start
+            # and on resume or seek.
+            try:
+                start, current, end = (
+                    int(part) for part in data.decode("ascii").split("/")
+                )
+            except (ValueError, UnicodeDecodeError):
+                return False
+            now = player._clock()
+            player.duration = (end - start) / RTP_FRAMES_PER_SECOND
+            player._duration_from_prgr = True
+            player._anchor_pos = (current - start) / RTP_FRAMES_PER_SECOND
+            player._anchor_at = now
+            player._prgr_at = now
             return True
         if code_str == "PICT":
             player.art_url = store_cover(data, cover_dir, host) if data else None
             return True
         if code_str in _PLAY_STATE:
+            # Freeze or thaw the position: capture the current extrapolated value
+            # as the new anchor so a pause holds where it stopped and a resume
+            # continues from there, independent of any fresh progress frame.
+            position = current_position(player)
+            if position is not None:
+                player._anchor_pos = position
+                player._anchor_at = player._clock()
             player.playback_status = _PLAY_STATE[code_str]
             return True
 

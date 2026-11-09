@@ -25,7 +25,22 @@ import json
 import threading
 import time
 
+import pytest
+
 from snaphouse import avrcp_meta
+
+
+class FakeClock:
+    """A monotonic clock the tests advance by hand, to pin position at emit time."""
+
+    def __init__(self, now: float = 0.0) -> None:
+        self.t = float(now)
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, seconds: float) -> None:
+        self.t += seconds
 
 
 # A full BlueZ MediaPlayer1 Track property, the way BlueZ exposes it over D-Bus:
@@ -52,6 +67,54 @@ def test_track_to_metadata_maps_a_full_track():
     assert isinstance(meta["trackNumber"], int)
     # BlueZ Duration is milliseconds; Snapcast duration is seconds.
     assert meta["duration"] == 305.293
+
+
+def test_genre_maps_to_list():
+    # Snapcast's genre field is a list, even for a single genre.
+    assert avrcp_meta.track_to_metadata({"Title": "t", "Genre": "Podcast"})["genre"] == ["Podcast"]
+
+
+def test_position_anchor_extrapolates_and_freezes():
+    # MediaPlayer1.Position arrives as uint32 ms; the serve loop anchors it and
+    # extrapolates while playing, then freezes it on pause (Review Focus 1).
+    clock = FakeClock(0.0)
+    p = avrcp_meta.Player(clock=clock)
+    out = io.StringIO()
+    avrcp_meta.process_event(p, ("status", "playing"), out)
+    avrcp_meta.process_event(p, ("position", 10000), out)  # 10 s
+    clock.advance(5)
+    assert p.properties()["position"] == pytest.approx(15.0)
+    avrcp_meta.process_event(p, ("status", "paused"), out)
+    clock.advance(100)
+    assert p.properties()["position"] == pytest.approx(15.0)
+
+
+def test_new_track_without_position_drops_the_old_anchor():
+    # Ruling R4: a new track (different identity) with no accompanying Position
+    # must drop the previous track's position anchor rather than extrapolate it.
+    clock = FakeClock(0.0)
+    p = avrcp_meta.Player(clock=clock)
+    out = io.StringIO()
+    avrcp_meta.process_event(p, ("track", {"Title": "A"}), out)
+    avrcp_meta.process_event(p, ("status", "playing"), out)
+    avrcp_meta.process_event(p, ("position", 10000), out)  # 10 s, at t=0
+    clock.advance(100)
+    avrcp_meta.process_event(p, ("track", {"Title": "B"}), out)  # new track, no Position
+    assert "position" not in p.properties()
+
+
+def test_position_just_before_a_new_track_is_kept():
+    # Ruling R4: a Position that arrives within the keep window before a new
+    # Track is kept as the new track's position (BlueZ reports them close).
+    clock = FakeClock(0.0)
+    p = avrcp_meta.Player(clock=clock)
+    out = io.StringIO()
+    avrcp_meta.process_event(p, ("track", {"Title": "A"}), out)
+    avrcp_meta.process_event(p, ("status", "playing"), out)
+    avrcp_meta.process_event(p, ("position", 10000), out)  # 10 s, at t=0
+    clock.advance(1)
+    avrcp_meta.process_event(p, ("track", {"Title": "B"}), out)  # 1 s later, kept
+    assert p.properties()["position"] == pytest.approx(11.0)  # 10 s anchor + 1 s played
 
 
 def test_track_to_metadata_omits_missing_keys_and_empty_strings():

@@ -35,7 +35,8 @@ import argparse
 import json
 import sys
 import threading
-from typing import Any, Iterable
+import time
+from typing import Any, Callable, Iterable
 
 
 # The AVRCP interface BlueZ exposes the phone's media player on. The player
@@ -43,6 +44,12 @@ from typing import Any, Iterable
 # discovers it rather than hard-coding it.
 MEDIA_PLAYER_INTERFACE = "org.bluez.MediaPlayer1"
 PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
+
+# On a track change the previous track's position anchor is dropped, unless a
+# MediaPlayer1.Position for the new track arrived within this many seconds before
+# it: BlueZ can report Position just before or alongside the new Track, so a very
+# recent one is kept as the new track's position.
+POSITION_KEEP_WINDOW_SECONDS = 3.0
 
 # BlueZ MediaPlayer1 `Status` to Snapcast `playbackStatus`. BlueZ also reports
 # the two seek states and `error`; a seek is still playback, anything unknown is
@@ -72,6 +79,12 @@ def _clean_int(value: Any) -> int | None:
     return None
 
 
+def _track_identity(track: dict) -> tuple:
+    """A track's identity (title, artist, album), for telling a real track change
+    from a same-track metadata resend."""
+    return (track.get("Title"), track.get("Artist"), track.get("Album"))
+
+
 def track_to_metadata(track: dict) -> dict:
     """Map a BlueZ `MediaPlayer1.Track` dict to Snapcast stream metadata.
 
@@ -94,6 +107,11 @@ def track_to_metadata(track: dict) -> dict:
     if album is not None:
         metadata["album"] = album
 
+    genre = _clean_string(track.get("Genre"))
+    if genre is not None:
+        # Snapcast wants genre as a list, even for a single genre.
+        metadata["genre"] = [genre]
+
     track_number = _clean_int(track.get("TrackNumber"))
     if track_number is not None:
         # Snapcast wants trackNumber as a number; a string makes snapserver 0.35
@@ -112,12 +130,13 @@ def status_to_playback_status(status: Any) -> str:
     return _PLAYBACK_STATUS.get(status, "stopped")
 
 
-def build_properties(track: dict, status: Any) -> dict:
+def build_properties(track: dict, status: Any, *, position: float | None = None) -> dict:
     """Assemble a Snapcast stream properties object from AVRCP state.
 
     The metadata block is left out entirely when there is no metadata, so the
     notification says "playing, no title" rather than carrying an empty block
-    (Review Focus 5). The capability flags report that the house does not control
+    (Review Focus 5). When known, the extrapolated `position` (seconds) rides at
+    the top level. The capability flags report that the house does not control
     this stream: playback is driven from the phone.
     """
     properties: dict[str, Any] = {
@@ -129,6 +148,8 @@ def build_properties(track: dict, status: Any) -> dict:
         "canSeek": False,
         "canControl": False,
     }
+    if position is not None:
+        properties["position"] = position
     metadata = track_to_metadata(track)
     if metadata:
         properties["metadata"] = metadata
@@ -138,12 +159,85 @@ def build_properties(track: dict, status: Any) -> dict:
 class Player:
     """The last AVRCP state seen from BlueZ, rendered into stream properties."""
 
-    def __init__(self, track: dict | None = None, status: Any = None) -> None:
+    def __init__(
+        self,
+        track: dict | None = None,
+        status: Any = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.track: dict = track or {}
         self.status: Any = status
+        # Position anchor: the position (seconds) last reported by BlueZ and the
+        # monotonic time it was reported at, from which the position is
+        # extrapolated while playing and frozen while paused or stopped.
+        self._clock = clock
+        self._anchor_pos: float | None = None
+        self._anchor_at: float | None = None
+        # The monotonic time a MediaPlayer1.Position last set the anchor, so a
+        # very recent Position is recognised as belonging to a just-changed track.
+        self._position_at: float | None = None
+
+    def current_position(self) -> float | None:
+        """The track position in seconds now, or None when no anchor is known.
+
+        Extrapolated forward while playing and held at the anchor while paused or
+        stopped, so a properties resend for an unrelated change never carries a
+        stale position (Review Focus 1). Clamped to `[0, duration]` when the
+        track's duration is known.
+        """
+        if self._anchor_pos is None or self._anchor_at is None:
+            return None
+        if status_to_playback_status(self.status) == "playing":
+            position = self._anchor_pos + (self._clock() - self._anchor_at)
+        else:
+            position = self._anchor_pos
+        duration = track_to_metadata(self.track).get("duration")
+        if duration is not None:
+            position = max(0.0, min(position, duration))
+        return position
+
+    def anchor_position(self, position_ms: Any) -> None:
+        """Anchor the position from a BlueZ `MediaPlayer1.Position` value (ms)."""
+        value = _clean_int(position_ms)
+        if value is None:
+            return
+        now = self._clock()
+        self._anchor_pos = value / 1000.0
+        self._anchor_at = now
+        self._position_at = now
+
+    def set_track(self, track: dict | None) -> None:
+        """Apply a new track, dropping a stale position anchor on a real change.
+
+        A track's identity is (title, artist, album). When it differs from the
+        current track's, the previous track's position anchor is dropped so it
+        does not extrapolate against the new track, unless a Position arrived
+        within the keep window before this track (BlueZ can report the two close
+        together). A same-track resend leaves the anchor untouched.
+        """
+        new_track = track or {}
+        if _track_identity(new_track) != _track_identity(self.track):
+            recent_position = (
+                self._position_at is not None
+                and (self._clock() - self._position_at) <= POSITION_KEEP_WINDOW_SECONDS
+            )
+            if not recent_position:
+                self._anchor_pos = None
+                self._anchor_at = None
+                self._position_at = None
+        self.track = new_track
+
+    def set_status(self, status: Any) -> None:
+        """Apply a new status, re-anchoring so a pause freezes and a resume
+        continues from the position the track reached."""
+        position = self.current_position()
+        if position is not None:
+            self._anchor_pos = position
+            self._anchor_at = self._clock()
+        self.status = status
 
     def properties(self) -> dict:
-        return build_properties(self.track, self.status)
+        return build_properties(self.track, self.status, position=self.current_position())
 
 
 def ready_notification() -> dict:
@@ -201,7 +295,8 @@ def process_event(player: Player, event: tuple, out: Any) -> None:
     """Apply one event and emit the JSON-RPC it produces.
 
     Events are `("request", dict)` for a server request, `("track", dict)` for a
-    new AVRCP track, and `("status", value)` for a new playback status.
+    new AVRCP track, `("status", value)` for a new playback status, and
+    `("position", ms)` for a new `MediaPlayer1.Position` value.
     """
     kind = event[0]
     if kind == "request":
@@ -209,10 +304,13 @@ def process_event(player: Player, event: tuple, out: Any) -> None:
         if response is not None:
             write_message(out, response)
     elif kind == "track":
-        player.track = event[1] or {}
+        player.set_track(event[1])
         write_message(out, properties_notification(player.properties()))
     elif kind == "status":
-        player.status = event[1]
+        player.set_status(event[1])
+        write_message(out, properties_notification(player.properties()))
+    elif kind == "position":
+        player.anchor_position(event[1])
         write_message(out, properties_notification(player.properties()))
 
 
@@ -284,6 +382,8 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
             yield ("track", {k: unwrap(v) for k, v in unwrap(player["Track"]).items()})
         if "Status" in player:
             yield ("status", unwrap(player["Status"]))
+        if "Position" in player:
+            yield ("position", unwrap(player["Position"]))
 
     while True:
         message = connection.receive()
@@ -297,6 +397,8 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
             yield ("track", {k: unwrap(v) for k, v in unwrap(changed["Track"]).items()})
         if "Status" in changed:
             yield ("status", unwrap(changed["Status"]))
+        if "Position" in changed:
+            yield ("position", unwrap(changed["Position"]))
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover
