@@ -91,7 +91,7 @@ land by PR with CI green.
 
 `snaphouse` is the hub of a two-repo system; `nightstand` (the bedside e-ink
 frame on the `nightstand` host) consumes snapserver's API and the art share. The seams
-and pinned contracts (status file schema, art listing, `/jsonrpc` proxy) are in
-`docs/cross-repo-features.md`. A change to a seam updates that file and both
-repos' docs in the same PR set. The pull-request template carries the
+and pinned contracts (status file schema, art listing, the art index and control files,
+`/jsonrpc` proxy) are in `docs/cross-repo-features.md`. A change to a seam updates that
+file and both repos' docs in the same PR set. The pull-request template carries the
 completeness checklist.

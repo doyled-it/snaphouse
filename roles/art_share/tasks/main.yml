@@ -154,8 +154,77 @@
     group: root
     mode: "0755"
 
+# The art admin service (snaphouse-artadmin) writes the library and publishes
+# art-index.json, art-control.json, and the thumbnails. It writes four places,
+# each owned by the art account it runs as, never the root-owned public web root
+# (re-owning that fights the web role, breaking the art-share idempotency gate).
+# The two public documents go in an art-owned docs subdir and the thumbnails in a
+# sibling subdir of the public root; nginx serves both (art.conf). All three (plus
+# the state dir below) are listed in the unit's ReadWritePaths, so they must exist
+# before the service starts.
+- name: Ensure the art admin public directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: art
+    group: art
+    mode: "0755"
+  loop:
+    - /var/lib/snaphouse/public/art
+    - /var/lib/snaphouse/public/art-thumbs
+
+# The private state (rotation settings and last command) persists here, rewritten
+# atomically by the service. It needs its own art-owned directory because the
+# service writes via a temp file plus rename and /var/lib/snaphouse itself is
+# root-owned; the served art-control.json is a separate copy in the docs subdir
+# above.
+- name: Ensure the art admin state directory exists
+  ansible.builtin.file:
+    path: /var/lib/snaphouse/artadmin
+    state: directory
+    owner: art
+    group: art
+    mode: "0755"
+
+- name: Install the art admin service unit
+  ansible.builtin.template:
+    src: snaphouse-artadmin.service.j2
+    dest: /etc/systemd/system/snaphouse-artadmin.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for art_share
+    - Restart the art admin service
+
+- name: Install the art admin verify check
+  ansible.builtin.copy:
+    src: verify.d/artadmin.sh
+    dest: /etc/snaphouse/verify.d/artadmin.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# The service runs its code in place from /opt/snaphouse, so restart it when its
+# modules change on a self-update rather than waiting for a reboot. artadmin.py is
+# the service; artlib.py is the library it drives. Gated on the on-device checkout
+# (absent in the CI container, where the repo is read-only elsewhere).
+- name: Record the art admin module digests so the service restarts when they change
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/' ~ item) | hash('sha1') }}\n"
+    dest: "/etc/snaphouse/{{ item | replace('.py', '') }}.sha1"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - artadmin.py
+    - artlib.py
+  when: common_systemd_init
+  notify: Restart the art admin service
+
 # Reload nginx and smbd now if their config changed, so the share is live before
-# `snaphouse verify` runs at the end of this apply. Both handlers are gated on
+# `snaphouse verify` runs at the end of this apply, and reload systemd and restart
+# the art admin service if its unit or modules changed. Every handler is gated on
 # systemd, so this is a no-op in the CI container.
 - name: Reload services now if their config changed
   ansible.builtin.meta: flush_handlers
@@ -167,6 +236,17 @@
     enabled: true
   # Only on a real systemd host; the CI container has no running init, so smbd is
   # started by hand in the art-share container test instead.
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Enable and start the art admin service
+  ansible.builtin.systemd_service:
+    name: snaphouse-artadmin.service
+    enabled: true
+    state: started
+  # Only on a real systemd host; the CI container gates the service off and never
+  # starts it (it has no running init).
   when: common_systemd_init
   tags:
     - service
