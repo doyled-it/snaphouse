@@ -1,0 +1,23 @@
+{
+  "count": 39,
+  "releases": [
+    {
+      "id": "6a09041b-0f79-3278-88d9-0552dd28d37f",
+      "title": "OK Computer",
+      "artist-credit": [
+        {
+          "name": "Radiohead"
+        }
+      ]
+    },
+    {
+      "id": "425d8db9-88a3-31e2-bd23-b1a967626dd5",
+      "title": "OK Computer",
+      "artist-credit": [
+        {
+          "name": "Radiohead"
+        }
+      ]
+    }
+  ]
+}

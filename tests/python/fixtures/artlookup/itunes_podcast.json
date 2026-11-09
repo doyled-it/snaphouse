@@ -1,0 +1,15 @@
+{
+  "resultCount": 2,
+  "results": [
+    {
+      "collectionName": "This American Life",
+      "artistName": "This American Life",
+      "artworkUrl600": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/fd/3c/12/fd3c1215-892b-1c4d-2ff5-cfb7998c3f7c/mza_10880637376617104220.png/600x600bb.jpg"
+    },
+    {
+      "collectionName": "School Colors",
+      "artistName": "Brooklyn Deep",
+      "artworkUrl600": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts112/v4/ca/bc/cd/cabccdcb-28e8-b2bd-ada6-aa831a517ba4/mza_7307657303280053596.jpg/600x600bb.jpg"
+    }
+  ]
+}
