@@ -363,9 +363,11 @@ class Tracker:
         self._rooms = _rooms_for(groups, self._house_stream)
 
         properties = (house or {}).get("properties", {}) or {}
-        self._ingest_props(properties, now)
+        self._ingest_props(properties, now, from_snapshot=True)
 
-    def _ingest_props(self, properties: dict, now: datetime) -> None:
+    def _ingest_props(
+        self, properties: dict, now: datetime, *, from_snapshot: bool = False
+    ) -> None:
         playback = properties.get("playbackStatus")
         if playback is not None:
             self._playback_status = playback
@@ -382,8 +384,17 @@ class Tracker:
             self._art_url = info.art
 
         if "position" in properties:
-            self._anchor_pos = properties["position"]
-            self._anchor_at = now
+            # A Stream.OnProperties notification carries the position
+            # extrapolated to its emit time (Task 1), so it anchors on every
+            # update. A Server.GetStatus snapshot returns the properties exactly
+            # as last emitted, so its position is stale (possibly minutes old);
+            # it only seeds an anchor when the current key has none yet (service
+            # start, reconnect, or a key change), never re-anchoring an already
+            # anchored track, which would move the bar backward on an unrelated
+            # refresh (Review Focus 1).
+            if not from_snapshot or self._anchor_pos is None:
+                self._anchor_pos = properties["position"]
+                self._anchor_at = now
 
         self._update_status(now)
 

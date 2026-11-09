@@ -294,6 +294,49 @@ def test_stale_position_resend_does_not_reanchor_backward():
     assert track["position_at"] == dt(50).isoformat()
 
 
+def test_get_status_does_not_reanchor_an_existing_position():
+    # Snapserver returns the House properties exactly as last emitted; its
+    # position is not re-extrapolated to now. A GetStatus refresh (fired by a
+    # volume or mute change) must not re-anchor that stale value, or the bar jumps
+    # backward (Review Focus 1).
+    tracker = Tracker("House", [])
+    tracker.on_properties("House", props(position=100.0, duration=300.0), dt(0))
+    track = tracker.now_playing_doc(dt(0))["track"]
+    assert track["position"] == 100.0
+    assert track["position_at"] == dt(0).isoformat()
+
+    # 300 s later a snapshot carries the same, now-stale, position 100.
+    tracker.on_server(server(props(position=100.0, duration=300.0)), dt(300))
+    track = tracker.now_playing_doc(dt(300))["track"]
+    # The anchor is untouched, so a consumer still computes 100 + 300 = 400.
+    assert track["position"] == 100.0
+    assert track["position_at"] == dt(0).isoformat()
+
+
+def test_get_status_seeds_the_first_anchor():
+    # When the service's first information is a GetStatus snapshot (start or just
+    # after a reconnect), there is no anchor yet, so the snapshot's position seeds
+    # one.
+    tracker = Tracker("House", [])
+    tracker.on_server(server(props(position=50.0, duration=300.0)), dt(0))
+    track = tracker.now_playing_doc(dt(0))["track"]
+    assert track["position"] == 50.0
+    assert track["position_at"] == dt(0).isoformat()
+
+
+def test_get_status_anchors_position_for_a_new_key():
+    # A snapshot that brings a different track than the one anchored carries that
+    # new track's own position, and there is no anchor for it yet, so it is
+    # anchored.
+    tracker = Tracker("House", [])
+    tracker.on_properties("House", props(title="A", position=100.0), dt(0))
+    tracker.on_server(server(props(title="B", position=10.0)), dt(300))
+    track = tracker.now_playing_doc(dt(300))["track"]
+    assert track["title"] == "B"
+    assert track["position"] == 10.0
+    assert track["position_at"] == dt(300).isoformat()
+
+
 def test_wants_art_once_per_key():
     tracker = Tracker("House", [])
     tracker.on_server(
