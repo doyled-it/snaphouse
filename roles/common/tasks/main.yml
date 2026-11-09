@@ -88,6 +88,58 @@
         state: absent
       when: common_uv_tmp.path is defined
 
+# Advertise .local names over IPv4 only. A phone with a VPN on (private IPv4
+# ranges exempted from the tunnel, but not global IPv6) resolves house.local to
+# the hub's global IPv6 address, tries it first, and sends the request into the
+# tunnel, so the name fails while the IP works. use-ipv6=no keeps avahi off IPv6
+# entirely; publish-aaaa-on-ipv4=no stops it advertising AAAA records over the
+# IPv4 socket. Each key is matched whether commented or set: an existing line
+# (the stock commented default, or a hand edit) is rewritten in place, and a key
+# absent entirely is inserted after its section header. The rest of the stock
+# avahi-daemon.conf is left untouched. A change restarts avahi-daemon (a handler,
+# so only when the file changes).
+- name: Advertise mDNS over IPv4 only
+  ansible.builtin.lineinfile:
+    path: /etc/avahi/avahi-daemon.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    insertafter: "{{ item.insertafter }}"
+    state: present
+  loop:
+    - regexp: '^#?\s*use-ipv6\s*='
+      line: "use-ipv6=no"
+      insertafter: '^\[server\]'
+    - regexp: '^#?\s*publish-aaaa-on-ipv4\s*='
+      line: "publish-aaaa-on-ipv4=no"
+      insertafter: '^\[publish\]'
+  notify: Restart avahi-daemon
+
+# Restart avahi now, while this task is the one that changed the file. Handlers
+# otherwise run only at the end of the play, so a later task or role failing in
+# the same apply would drop the restart: the conf would carry the new settings
+# while the daemon kept running the old ones, and the next apply (seeing the file
+# already correct, changed=0) would never notify. Flushing here binds the restart
+# to the edit. The handler itself is gated on real systemd, so this is a no-op in
+# the CI container.
+- name: Restart avahi-daemon now if the mDNS settings changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the mDNS verify check
+  ansible.builtin.copy:
+    src: verify.d/avahi_mdns.sh
+    dest: /etc/snaphouse/verify.d/avahi_mdns.sh
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Set the hostname to this machine's snaphouse host name
   ansible.builtin.hostname:
     name: "{{ snaphouse_host }}"
