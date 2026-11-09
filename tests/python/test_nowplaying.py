@@ -429,3 +429,112 @@ def test_empty_rooms_still_published():
     doc = tracker.now_playing_doc(dt(0))
     assert doc["rooms"] == []
     assert doc["track"] is not None
+
+
+def test_wants_art_again_when_metadata_fills_in():
+    # The live bug: the phone's first AVRCP update for a Bluetooth podcast
+    # episode carries title, artist, and album but no duration or genre, so the
+    # one lookup goes out as "music" (the wrong route) and finds nothing. A
+    # later update adds the duration and a Podcast genre; the track still has no
+    # cover, so a second request must go out on the corrected route, and the
+    # cover then lands without a service restart.
+    key = ("Ep 5", "The Show", "The Show")
+    tracker = Tracker("House", [])
+    tracker.on_properties(
+        "House",
+        props(title="Ep 5", artist="The Show", album="The Show"),
+        dt(0),
+    )
+    # First sight: no duration, no genre, so the route is music.
+    assert tracker.wants_art() == (key, "music", None)
+    # Suppressed while nothing about the route has changed.
+    assert tracker.wants_art() is None
+    # That lookup came back empty (wrong route).
+    tracker.art_missing(key)
+
+    # Later metadata arrives: a duration and a Podcast genre.
+    tracker.on_properties(
+        "House",
+        props(title="Ep 5", artist="The Show", album="The Show", duration=1800, genre=["Podcast"]),
+        dt(1),
+    )
+    # The route changed, and the track still has no cover, so a fresh request
+    # goes out on the podcast route.
+    assert tracker.wants_art() == (key, "long_form", ["Podcast"])
+    assert tracker.wants_art() is None
+
+    tracker.set_art(key, "/cover/lookup/show.jpg")
+    assert tracker.now_playing_doc(dt(1))["track"]["art_url"] == "/cover/lookup/show.jpg"
+    assert tracker.wants_art() is None
+
+
+def test_wants_art_retries_empty_lookup_after_backoff():
+    # A lookup that returns None (a transient failure) is retried for the same
+    # track after a back-off: 2 minutes, then 10 minutes, at most 3 attempts per
+    # play. An injected clock drives the back-off without real waiting.
+    clock = {"t": 0.0}
+    key = ("A", "Ar", "Al")
+    tracker = Tracker("House", [], clock=lambda: clock["t"])
+    tracker.on_properties("House", props(title="A", artist="Ar", album="Al"), dt(0))
+
+    # Attempt 1 at first sight.
+    assert tracker.wants_art() == (key, "music", None)
+    assert tracker.wants_art() is None  # pending, awaiting the result
+    tracker.art_missing(key)
+    assert tracker.wants_art() is None  # back-off not elapsed yet
+
+    clock["t"] = 119.0
+    assert tracker.wants_art() is None  # still inside the 2-minute wait
+    clock["t"] = 120.0
+    # Attempt 2 after the 2-minute back-off.
+    assert tracker.wants_art() == (key, "music", None)
+    assert tracker.wants_art() is None
+    tracker.art_missing(key)
+
+    clock["t"] = 120.0 + 599.0
+    assert tracker.wants_art() is None  # inside the 10-minute wait
+    clock["t"] = 120.0 + 600.0
+    # Attempt 3 after the 10-minute back-off.
+    assert tracker.wants_art() == (key, "music", None)
+    tracker.art_missing(key)
+
+    clock["t"] = 1_000_000.0
+    # No fourth attempt: at most 3 per play.
+    assert tracker.wants_art() is None
+
+
+def test_wants_art_backoff_stops_once_a_cover_lands():
+    clock = {"t": 0.0}
+    key = ("A", "Ar", "Al")
+    tracker = Tracker("House", [], clock=lambda: clock["t"])
+    tracker.on_properties("House", props(title="A", artist="Ar", album="Al"), dt(0))
+    assert tracker.wants_art() == (key, "music", None)
+    tracker.art_missing(key)
+    clock["t"] = 120.0
+    # The retry recovers a cover.
+    assert tracker.wants_art() == (key, "music", None)
+    tracker.set_art(key, "/cover/lookup/x.jpg")
+    clock["t"] = 1_000_000.0
+    assert tracker.wants_art() is None  # a cover landed; no more retries
+
+
+def test_art_attempt_budget_resets_on_a_new_play():
+    clock = {"t": 0.0}
+    tracker = Tracker("House", [], clock=lambda: clock["t"])
+    a = ("A", "Ar", "Al")
+    tracker.on_properties("House", props(title="A", artist="Ar", album="Al"), dt(0))
+    assert tracker.wants_art() == (a, "music", None)
+    tracker.art_missing(a)
+    clock["t"] = 120.0
+    assert tracker.wants_art() == (a, "music", None)
+    tracker.art_missing(a)
+    clock["t"] = 720.0
+    assert tracker.wants_art() == (a, "music", None)
+    tracker.art_missing(a)
+    clock["t"] = 1_000_000.0
+    assert tracker.wants_art() is None  # the budget is spent for this play
+
+    # A new track resets the attempt budget.
+    b = ("B", "Br", "Bl")
+    tracker.on_properties("House", props(title="B", artist="Br", album="Bl"), dt(1))
+    assert tracker.wants_art() == (b, "music", None)

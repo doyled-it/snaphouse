@@ -128,6 +128,47 @@ def test_podcast_exact_match_saves_cover(tmp_path):
         assert image.format == "JPEG"
 
 
+def test_find_logs_one_line_per_outcome(tmp_path, caplog):
+    import logging
+
+    # A cover found, a real miss, and a transient failure each log one INFO line
+    # naming the lookup and its outcome, carrying only the show name.
+    found = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("itunes_podcast.json")),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, found)
+    with caplog.at_level(logging.INFO, logger="snaphouse.artlookup"):
+        lookup.find(
+            "Episode 1", "This American Life", "This American Life", "long_form", ["Podcast"]
+        )
+    assert any(
+        record.levelno == logging.INFO
+        and "This American Life" in record.getMessage()
+        and "cover found" in record.getMessage()
+        for record in caplog.records
+    )
+
+    # A music search whose body parses but names no matching release is a real
+    # miss (no image fetch, a marker written).
+    miss = FakeFetch([("musicbrainz.org", b'{"releases": []}')])
+    lookup = ArtLookup(tmp_path, miss, clock=_frozen_clock(), sleep=lambda _s: None)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="snaphouse.artlookup"):
+        lookup.find("Track", "Nobody", "Unknown Album", "music", None)
+    assert any("miss" in r.getMessage() and "Unknown Album" in r.getMessage() for r in caplog.records)
+
+    # Every fetch fails (no routes match), so the search is a transient failure.
+    failing = FakeFetch([])
+    lookup = ArtLookup(tmp_path, failing)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="snaphouse.artlookup"):
+        lookup.find("Episode 1", "Fresh Show", "Fresh Show", "long_form", ["Podcast"])
+    assert any("failure" in r.getMessage() and "Fresh Show" in r.getMessage() for r in caplog.records)
+
+
 def test_podcast_no_exact_match_returns_none(tmp_path):
     fetch = FakeFetch(
         [

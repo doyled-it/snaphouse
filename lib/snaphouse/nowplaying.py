@@ -72,6 +72,14 @@ _HOUSE_INPUTS = (("AirPlay", "airplay"), ("Bluetooth", "bluetooth"))
 
 _TrackInfo = namedtuple("_TrackInfo", ["key", "duration", "genre", "art"])
 
+# A lookup that comes back empty is retried for the same current track after a
+# back-off: 2 minutes after the first empty attempt, then 10 minutes after the
+# second. Three attempts per play at most, so a transient failure recovers
+# without a service restart while a genuine miss (short-circuited by ArtLookup's
+# own miss cache) costs no repeated network calls.
+_ART_RETRY_BACKOFF_S = (120.0, 600.0)
+_MAX_ART_ATTEMPTS = 1 + len(_ART_RETRY_BACKOFF_S)
+
 
 def classify(duration: float | None, genre: list[str] | None) -> str:
     """Return ``"long_form"`` or ``"music"`` for a track's duration and genre.
@@ -201,12 +209,14 @@ class Tracker:
         count_after_s: float = 30,
         max_plays: int = 50,
         keep_art: Callable[[str | None], str | None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._house_stream = house_stream
         self._hold_s = hold_s
         self._count_after_s = count_after_s
         self._max_plays = max_plays
         self._keep_art = keep_art if keep_art is not None else (lambda url: url)
+        self._clock = clock
         self._history: list[dict] = list(history)
 
         # Last known House playback status and whether the stream is idle. The
@@ -244,8 +254,15 @@ class Tracker:
         # When the current track went continuously not-playing, for the hold.
         self._not_playing_since: datetime | None = None
 
-        # Track keys a cover lookup has already been requested for.
-        self._art_wanted: set[TrackKey] = set()
+        # Art-lookup bookkeeping for the current play. A request is identified by
+        # its route signature (key, kind, genre): the track key plus what decides
+        # the lookup route. When the route changes because later metadata fills in
+        # a kind or genre, a fresh request goes out. A lookup that comes back
+        # empty is retried after a back-off, up to _MAX_ART_ATTEMPTS per play.
+        self._art_signature: tuple | None = None
+        self._art_pending = False
+        self._art_attempts = 0
+        self._art_retry_at: float | None = None
 
         self.now_playing_changed = False
         self.history_changed = False
@@ -301,19 +318,65 @@ class Tracker:
     # -- public outputs ---------------------------------------------------
 
     def wants_art(self) -> tuple[TrackKey, str, list[str] | None] | None:
-        """A current track with no cover and no lookup yet, else ``None``.
+        """A current track that needs a cover lookup started, else ``None``.
 
         Returns ``(key, kind, genre)`` for the runtime to start a background
-        lookup, and marks the key so it is handed out only once.
+        lookup. A request is handed out at first sight of a route signature
+        ``(key, kind, genre)`` and again whenever that signature changes (later
+        metadata fills in the kind or genre and the track still has no cover). A
+        lookup that came back empty, reported through ``art_missing``, is handed
+        out again after a back-off, up to ``_MAX_ART_ATTEMPTS`` per play.
         """
         if not self._track_present or self._current_key is None:
             return None
         if self._art_url:
             return None
-        if self._current_key in self._art_wanted:
+
+        kind = self._kind or "music"
+        genre_key = tuple(self._genre) if self._genre else ()
+        signature = (self._current_key, kind, genre_key)
+        if signature != self._art_signature:
+            # A new track, or the route changed because later metadata arrived:
+            # start a fresh attempt sequence for this signature.
+            self._art_signature = signature
+            self._art_pending = False
+            self._art_attempts = 0
+            self._art_retry_at = None
+
+        if self._art_pending:
+            return None  # a request is out; wait for its result
+        if self._art_attempts == 0:
+            return self._hand_out_art()
+        if self._art_attempts >= _MAX_ART_ATTEMPTS:
             return None
-        self._art_wanted.add(self._current_key)
+        if self._art_retry_at is None or self._clock() < self._art_retry_at:
+            return None
+        return self._hand_out_art()
+
+    def _hand_out_art(self) -> tuple[TrackKey, str, list[str] | None]:
+        self._art_attempts += 1
+        self._art_pending = True
+        assert self._current_key is not None
         return (self._current_key, self._kind or "music", self._genre)
+
+    def art_missing(self, key: TrackKey) -> None:
+        """Record that the lookup for ``key`` returned no cover.
+
+        Clears the in-flight flag and, while attempts remain for the current
+        signature, schedules the next retry after the back-off. A result for a
+        signature the track has since moved past is dropped: the newer signature
+        starts fresh on the next ``wants_art``.
+        """
+        if not self._art_pending:
+            return
+        self._art_pending = False
+        if self._art_signature is None or self._art_signature[0] != key:
+            return
+        index = self._art_attempts - 1
+        if 0 <= index < len(_ART_RETRY_BACKOFF_S):
+            self._art_retry_at = self._clock() + _ART_RETRY_BACKOFF_S[index]
+        else:
+            self._art_retry_at = None
 
     def now_playing_doc(self, now: datetime) -> dict:
         """The ``now-playing.json`` shape at ``now``."""
@@ -408,12 +471,17 @@ class Tracker:
         self._anchor_pos = None
         self._anchor_at = None
 
-        # A new identity clears the per-key art-wanted suppression, so a track
-        # that replays (its key becomes current again) asks for art once more.
-        # ArtLookup answers a repeat request from its own disk cache, so this
-        # costs no network call for a track whose cover was already resolved, and
-        # recovers one for a no-art track that had nothing to show before.
-        self._art_wanted.clear()
+        # A new identity resets the art-lookup bookkeeping (signature, in-flight
+        # flag, attempt budget, and retry clock), so a track that replays (its
+        # key becomes current again) asks for art once more and gets a fresh set
+        # of attempts. ArtLookup answers a repeat request from its own disk
+        # cache, so this costs no network call for a track whose cover was
+        # already resolved, and recovers one for a no-art track that had nothing
+        # to show before.
+        self._art_signature = None
+        self._art_pending = False
+        self._art_attempts = 0
+        self._art_retry_at = None
 
         newest = self._history[0] if self._history else None
         if newest is not None and _key_of(newest) == new_key:
@@ -802,6 +870,8 @@ class Service:
                 return
             if url:
                 self._tracker.set_art(key, url)
+            else:
+                self._tracker.art_missing(key)
 
     # -- writing ----------------------------------------------------------
 
