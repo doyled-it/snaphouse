@@ -77,6 +77,12 @@ PIPE_RETRY_SECONDS = 1.0
 # this rate, so a frame delta divided by this is seconds.
 RTP_FRAMES_PER_SECOND = 44100
 
+# At a real track change (mden) the previous track's duration and position are
+# dropped, unless a progress frame (ssnc/prgr) for the new track arrived within
+# this many seconds before the mden: prgr for a new track can arrive just before
+# or during its metadata bundle, so a very recent one is kept as the new track's.
+PRGR_KEEP_WINDOW_SECONDS = 3.0
+
 # shairport-sync 'ssnc' play-state codes to a Snapcast playbackStatus. A flush is
 # shairport pausing or clearing its buffer (also sent at a track skip), reported
 # as paused; anything else playing/stopped.
@@ -351,9 +357,16 @@ class Player:
         self._clock = clock
         self._anchor_pos: Optional[float] = None
         self._anchor_at: Optional[float] = None
+        # The monotonic time ssnc/prgr last set the anchor, so a very recent
+        # progress frame is recognised as belonging to a just-changed track.
+        self._prgr_at: Optional[float] = None
         # True once ssnc/prgr has set the duration for the current track, so the
         # core/astm fallback does not override a real progress duration.
         self._duration_from_prgr: bool = False
+        # True once the current metadata bundle (since the last mdst) has set a
+        # duration (via core/astm), so a real track change keeps a duration the
+        # new track's own bundle supplied.
+        self._duration_in_bundle: bool = False
 
     def properties(self) -> dict:
         return build_properties(self)
@@ -392,9 +405,12 @@ def apply_item(
             player.genre = data.decode("utf-8", "replace") or None
         elif code_str == "astm":
             # Song time in ms (4-byte big-endian): a duration fallback used only
-            # when no ssnc/prgr progress frame has already set the duration.
+            # when no ssnc/prgr progress frame has already set the duration. It
+            # rides inside the metadata bundle, so note that this bundle carried a
+            # duration, which lets a real track change keep it.
             if not player._duration_from_prgr and len(data) == 4:
                 player.duration = int.from_bytes(data, "big") / 1000.0
+                player._duration_in_bundle = True
         elif code_str == "mper":
             # shairport's persistent track id; the stable identity for a track.
             player._bundle_id = data or None
@@ -404,16 +420,19 @@ def apply_item(
     if type_str == "ssnc":
         if code_str == "mdst":
             # A (possibly new) track's metadata bundle is starting: clear the
-            # fields so an omitted one does not carry over from the last bundle,
-            # including the duration, genre, and position anchor.
+            # text fields so an omitted one does not carry over from the last
+            # bundle. The duration and position anchor are NOT cleared here: they
+            # are refilled only by a separate progress frame, so clearing them at
+            # the bundle start would blank the bar on a same-track resend. They
+            # are instead dropped at mden when the track identity actually
+            # changes. The duration-source flags reset so this bundle's own
+            # core/astm can set the duration.
             player.title = None
             player.artist = None
             player.album = None
             player.genre = None
-            player.duration = None
             player._duration_from_prgr = False
-            player._anchor_pos = None
-            player._anchor_at = None
+            player._duration_in_bundle = False
             player._bundle_id = None
             return False
         if code_str == "mden":
@@ -422,11 +441,23 @@ def apply_item(
                 (player.title, player.artist, player.album)
             )
             if has_track and track_id != player._track_id:
-                # Real track change: drop the previous track's cover and position
-                # anchor until this track's own picture and progress frame arrive.
+                # Real track change: drop the previous track's cover, and drop its
+                # duration and position anchor too, unless a progress frame for
+                # the new track arrived within the keep window (prgr can precede
+                # or overlap the bundle) or the new track's own bundle carried a
+                # duration (core/astm).
                 player.art_url = None
-                player._anchor_pos = None
-                player._anchor_at = None
+                recent_prgr = (
+                    player._prgr_at is not None
+                    and (player._clock() - player._prgr_at) <= PRGR_KEEP_WINDOW_SECONDS
+                )
+                if not recent_prgr:
+                    player._anchor_pos = None
+                    player._anchor_at = None
+                    player._prgr_at = None
+                    if not player._duration_in_bundle:
+                        player.duration = None
+                        player._duration_from_prgr = False
                 player._track_id = track_id
             return True
         if code_str == "prgr":
@@ -440,10 +471,12 @@ def apply_item(
                 )
             except (ValueError, UnicodeDecodeError):
                 return False
+            now = player._clock()
             player.duration = (end - start) / RTP_FRAMES_PER_SECOND
             player._duration_from_prgr = True
             player._anchor_pos = (current - start) / RTP_FRAMES_PER_SECOND
-            player._anchor_at = player._clock()
+            player._anchor_at = now
+            player._prgr_at = now
             return True
         if code_str == "PICT":
             player.art_url = store_cover(data, cover_dir, host) if data else None

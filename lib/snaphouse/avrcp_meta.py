@@ -45,6 +45,12 @@ from typing import Any, Callable, Iterable
 MEDIA_PLAYER_INTERFACE = "org.bluez.MediaPlayer1"
 PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
 
+# On a track change the previous track's position anchor is dropped, unless a
+# MediaPlayer1.Position for the new track arrived within this many seconds before
+# it: BlueZ can report Position just before or alongside the new Track, so a very
+# recent one is kept as the new track's position.
+POSITION_KEEP_WINDOW_SECONDS = 3.0
+
 # BlueZ MediaPlayer1 `Status` to Snapcast `playbackStatus`. BlueZ also reports
 # the two seek states and `error`; a seek is still playback, anything unknown is
 # reported as stopped so the stream degrades quietly.
@@ -71,6 +77,12 @@ def _clean_int(value: Any) -> int | None:
     if isinstance(value, int) and value >= 0:
         return value
     return None
+
+
+def _track_identity(track: dict) -> tuple:
+    """A track's identity (title, artist, album), for telling a real track change
+    from a same-track metadata resend."""
+    return (track.get("Title"), track.get("Artist"), track.get("Album"))
 
 
 def track_to_metadata(track: dict) -> dict:
@@ -161,6 +173,9 @@ class Player:
         self._clock = clock
         self._anchor_pos: float | None = None
         self._anchor_at: float | None = None
+        # The monotonic time a MediaPlayer1.Position last set the anchor, so a
+        # very recent Position is recognised as belonging to a just-changed track.
+        self._position_at: float | None = None
 
     def current_position(self) -> float | None:
         """The track position in seconds now, or None when no anchor is known.
@@ -186,8 +201,31 @@ class Player:
         value = _clean_int(position_ms)
         if value is None:
             return
+        now = self._clock()
         self._anchor_pos = value / 1000.0
-        self._anchor_at = self._clock()
+        self._anchor_at = now
+        self._position_at = now
+
+    def set_track(self, track: dict | None) -> None:
+        """Apply a new track, dropping a stale position anchor on a real change.
+
+        A track's identity is (title, artist, album). When it differs from the
+        current track's, the previous track's position anchor is dropped so it
+        does not extrapolate against the new track, unless a Position arrived
+        within the keep window before this track (BlueZ can report the two close
+        together). A same-track resend leaves the anchor untouched.
+        """
+        new_track = track or {}
+        if _track_identity(new_track) != _track_identity(self.track):
+            recent_position = (
+                self._position_at is not None
+                and (self._clock() - self._position_at) <= POSITION_KEEP_WINDOW_SECONDS
+            )
+            if not recent_position:
+                self._anchor_pos = None
+                self._anchor_at = None
+                self._position_at = None
+        self.track = new_track
 
     def set_status(self, status: Any) -> None:
         """Apply a new status, re-anchoring so a pause freezes and a resume
@@ -266,7 +304,7 @@ def process_event(player: Player, event: tuple, out: Any) -> None:
         if response is not None:
             write_message(out, response)
     elif kind == "track":
-        player.track = event[1] or {}
+        player.set_track(event[1])
         write_message(out, properties_notification(player.properties()))
     elif kind == "status":
         player.set_status(event[1])
