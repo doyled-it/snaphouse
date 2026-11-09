@@ -52,6 +52,71 @@
     <section id="art" class="art" aria-labelledby="art-heading" hidden>
       <h2 id="art-heading" class="art-heading">On the frame</h2>
       <div id="art-current" class="art-current"></div>
+
+      <div id="art-nowshowing" class="art-nowshowing" hidden>
+        <div class="art-nav">
+          <button id="art-back" class="art-btn" type="button">Back</button>
+          <button id="art-next" class="art-btn" type="button">Next</button>
+        </div>
+        <p class="art-redraw-note">The frame is e-ink; a change takes a few seconds to redraw.</p>
+      </div>
+
+      <p id="art-message" class="art-message" role="status" hidden></p>
+
+      <div id="art-manager" class="art-manager" hidden>
+        <div class="art-rotation">
+          <p id="art-rotation-summary" class="art-rotation-summary"></p>
+          <label class="art-interval-label">Change every
+            <select id="art-interval" class="art-select"></select>
+          </label>
+          <div class="art-chips-wrap">
+            <span class="art-chips-label">In rotation</span>
+            <div id="art-folder-chips" class="art-chips" role="group" aria-label="Folders in rotation"></div>
+          </div>
+        </div>
+
+        <div class="art-library">
+          <div class="art-library-head">
+            <h3 class="art-subheading">Library</h3>
+            <label class="art-filter-label">Show
+              <select id="art-folder-filter" class="art-select"></select>
+            </label>
+          </div>
+          <ul id="art-grid" class="art-grid"></ul>
+          <p id="art-grid-empty" class="art-empty" hidden>No pieces here yet.</p>
+        </div>
+
+        <div class="art-upload">
+          <h3 class="art-subheading">Add art</h3>
+          <div class="art-upload-row">
+            <label class="art-upload-folder-label">Add to
+              <select id="art-upload-folder" class="art-select"></select>
+            </label>
+            <label class="art-btn art-upload-btn">
+              Choose images
+              <input id="art-upload-input" class="art-upload-input" type="file" accept="image/*" multiple />
+            </label>
+          </div>
+          <ul id="art-upload-progress" class="art-upload-progress"></ul>
+        </div>
+
+        <details id="art-folders" class="art-folders">
+          <summary class="art-subheading">Folders</summary>
+          <form id="art-folder-create" class="art-folder-create">
+            <input id="art-folder-name" class="art-text" type="text" placeholder="New folder name"
+                   maxlength="40" aria-label="New folder name" />
+            <button class="art-btn" type="submit">Create</button>
+          </form>
+          <ul id="art-folder-list" class="art-folder-list"></ul>
+        </details>
+
+        <details id="art-trash" class="art-trash">
+          <summary class="art-subheading">Trash</summary>
+          <ul id="art-trash-list" class="art-trash-list"></ul>
+          <p id="art-trash-empty" class="art-empty" hidden>Trash is empty.</p>
+        </details>
+      </div>
+
       <h3 id="art-recent-heading" class="art-recent-heading" hidden>Recently shown</h3>
       <ul id="art-history" class="art-history"></ul>
     </section>

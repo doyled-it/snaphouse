@@ -22,6 +22,12 @@ import {
   historyFromBody,
   interpretRpcResponse,
   safeJsonParse,
+  parseArtIndex,
+  parseArtControl,
+  piecesInFolder,
+  rotationSummary,
+  intervalOptions,
+  apiRequest,
 } from "./rooms-model.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -37,6 +43,13 @@ const SLIDER_DEBOUNCE_MS = 150;
 const NOW_PLAYING_MS = 5000;
 const HISTORY_MS = 30000;
 const TICK_MS = 1000;
+// The art library documents the admin service publishes, refreshed on the same
+// slow cadence as the frame history and re-read after every manager action.
+const LIBRARY_MS = 30000;
+// The default library filter: every folder.
+const ALL_FOLDERS = "all";
+// How long the manager's status line lingers before it clears itself.
+const ART_MESSAGE_MS = 6000;
 
 // Shown on the connection line when a status reply will not parse. The page
 // keeps its last good render and says so quietly rather than breaking.
@@ -66,6 +79,26 @@ const els = {
   npStatus: document.getElementById("np-status"),
   npHistory: document.getElementById("np-history"),
   npHistoryList: document.getElementById("np-history-list"),
+  artNowshowing: document.getElementById("art-nowshowing"),
+  artBack: document.getElementById("art-back"),
+  artNext: document.getElementById("art-next"),
+  artMessage: document.getElementById("art-message"),
+  artManager: document.getElementById("art-manager"),
+  artRotationSummary: document.getElementById("art-rotation-summary"),
+  artInterval: document.getElementById("art-interval"),
+  artFolderChips: document.getElementById("art-folder-chips"),
+  artFolderFilter: document.getElementById("art-folder-filter"),
+  artGrid: document.getElementById("art-grid"),
+  artGridEmpty: document.getElementById("art-grid-empty"),
+  artUploadFolder: document.getElementById("art-upload-folder"),
+  artUploadInput: document.getElementById("art-upload-input"),
+  artUploadProgress: document.getElementById("art-upload-progress"),
+  artFolderCreate: document.getElementById("art-folder-create"),
+  artFolderName: document.getElementById("art-folder-name"),
+  artFolderList: document.getElementById("art-folder-list"),
+  artTrash: document.getElementById("art-trash"),
+  artTrashList: document.getElementById("art-trash-list"),
+  artTrashEmpty: document.getElementById("art-trash-empty"),
 };
 
 const state = {
@@ -81,6 +114,16 @@ const state = {
   // swapped when it changes rather than reloaded on every poll.
   nowTrack: null,
   npArtSrc: null,
+  // The parsed art library and rotation control (null until the admin service's
+  // documents have been read at least once), the folder the library grid is
+  // filtered to, whether the interval selector has been populated, and the timer
+  // that clears the manager's status line.
+  artIndex: null,
+  artControl: null,
+  artHasHistory: false,
+  artFilter: ALL_FOLDERS,
+  artIntervalBuilt: false,
+  artMessageTimer: null,
 };
 
 // The JSON-RPC endpoint and its WebSocket twin, both relative to this page so
@@ -98,12 +141,15 @@ async function start() {
   await loadConfig();
   buildCards();
   connect();
+  wireArtManager();
   refreshHealth();
   refreshArt();
+  refreshLibrary();
   refreshNowPlaying();
   refreshHistory();
   setInterval(refreshHealth, HEALTH_MS);
   setInterval(refreshArt, HEALTH_MS);
+  setInterval(refreshLibrary, LIBRARY_MS);
   setInterval(refreshNowPlaying, NOW_PLAYING_MS);
   setInterval(refreshHistory, HISTORY_MS);
   // The card's elapsed time and bar advance between polls, driven only by the
@@ -128,6 +174,7 @@ async function start() {
     // CONNECTING or CLOSING: leave the in-flight transition alone.
     refreshHealth();
     refreshArt();
+    refreshLibrary();
     refreshNowPlaying();
     refreshHistory();
   });
@@ -429,22 +476,25 @@ function renderArt(art) {
   // the pieces other than the current one.
   const recent = art.history.filter((piece) => !samePiece(piece, current));
 
-  if (!current && recent.length === 0) {
-    els.art.hidden = true;
-    els.artCurrent.replaceChildren();
-    els.artHistory.replaceChildren();
-    els.artRecentHeading.hidden = true;
-    return;
-  }
-
-  els.art.hidden = false;
   renderArtCurrent(current);
-
   els.artHistory.replaceChildren();
   for (const piece of recent) {
     els.artHistory.append(historyItem(piece));
   }
   els.artRecentHeading.hidden = recent.length === 0;
+  state.artHasHistory = Boolean(current) || recent.length > 0;
+  updateArtSection();
+}
+
+// The "On the frame" section is shown when there is a frame piece or history to
+// show, or when the admin service's library is available (the manager). The
+// now-showing nav (Back and Next) rides with the manager, since it issues
+// rotation commands only that service answers.
+function updateArtSection() {
+  const managerActive = state.artIndex !== null;
+  els.art.hidden = !state.artHasHistory && !managerActive;
+  els.artNowshowing.hidden = !managerActive;
+  els.artManager.hidden = !managerActive;
 }
 
 function samePiece(a, b) {
@@ -764,6 +814,450 @@ function formatStartTime(iso) {
   }
   const date = then.toLocaleDateString([], { month: "short", day: "numeric" });
   return `${date}, ${time}`;
+}
+
+// --------------------------------------------------------------------------- //
+// The art manager: the frame rotation and the library, driven by the admin
+// service's two same-origin documents (art-index.json and art-control.json) and
+// its /api/art/ write endpoints. The pure reading and request-building live in
+// the model; this is the DOM and network glue around it. Every untrusted string
+// reaches the DOM through textContent, and every image src is a same-origin
+// /art/ or /art-thumbs/ path the model already validated.
+// --------------------------------------------------------------------------- //
+
+function wireArtManager() {
+  els.artBack.addEventListener("click", () => runAction("/api/art/command", { action: "previous" }));
+  els.artNext.addEventListener("click", () => runAction("/api/art/command", { action: "next" }));
+
+  els.artInterval.addEventListener("change", () => {
+    runAction("/api/art/settings", { rotate_minutes: Number(els.artInterval.value) });
+  });
+
+  els.artFolderFilter.addEventListener("change", () => {
+    state.artFilter = els.artFolderFilter.value;
+    renderLibraryGrid();
+  });
+
+  els.artUploadInput.addEventListener("change", () => {
+    const files = Array.from(els.artUploadInput.files || []);
+    const folder = els.artUploadFolder.value;
+    // Let the same file be chosen again after this batch.
+    els.artUploadInput.value = "";
+    if (files.length === 0 || !folder) {
+      return;
+    }
+    for (const file of files) {
+      uploadOne(file, folder);
+    }
+  });
+
+  els.artFolderCreate.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = els.artFolderName.value.trim();
+    if (name === "") {
+      return;
+    }
+    els.artFolderName.value = "";
+    runAction("/api/art/folder/create", { name });
+  });
+}
+
+// Read both library documents and repaint, or leave the last render alone on a
+// network failure. A 404 (an older hub without the admin service) clears the
+// manager so the page falls back to the frame-history view. The parse is kept
+// out of the fetch try so a bad body degrades to an empty library rather than
+// looking like a transient error.
+async function refreshLibrary() {
+  let indexBody;
+  let controlBody;
+  try {
+    const [indexRes, controlRes] = await Promise.all([
+      fetch("art-index.json", { cache: "no-store" }),
+      fetch("art-control.json", { cache: "no-store" }),
+    ]);
+    if (!indexRes.ok) {
+      state.artIndex = null;
+      state.artControl = null;
+      updateArtSection();
+      return;
+    }
+    indexBody = await indexRes.text();
+    controlBody = controlRes.ok ? await controlRes.text() : "";
+  } catch (err) {
+    return;
+  }
+  state.artIndex = parseArtIndex(safeJsonParse(indexBody));
+  state.artControl = parseArtControl(safeJsonParse(controlBody));
+  renderLibrary();
+}
+
+function renderLibrary() {
+  const index = state.artIndex;
+  const control = state.artControl;
+  if (!index || !control) {
+    updateArtSection();
+    return;
+  }
+
+  // Interval selector: built once, its value tracks the control file so a change
+  // made elsewhere shows here too.
+  if (!state.artIntervalBuilt) {
+    els.artInterval.replaceChildren();
+    for (const option of intervalOptions()) {
+      const el = document.createElement("option");
+      el.value = String(option.minutes);
+      el.textContent = option.label;
+      els.artInterval.append(el);
+    }
+    state.artIntervalBuilt = true;
+  }
+  els.artInterval.value = String(control.rotateMinutes);
+
+  // Rotation summary and the folder chips that toggle rotation.
+  const summary = rotationSummary(index, control);
+  els.artRotationSummary.textContent = summary.text;
+  els.artRotationSummary.classList.toggle("empty", summary.empty);
+  renderFolderChips(index, control);
+
+  // The folder filter and the upload target both list every folder; the filter
+  // also offers "All". Both keep the current choice when it still exists.
+  const folderNames = index.folders.map((f) => f.name);
+  if (state.artFilter !== ALL_FOLDERS && !folderNames.includes(state.artFilter)) {
+    state.artFilter = ALL_FOLDERS;
+  }
+  fillSelect(els.artFolderFilter, [{ value: ALL_FOLDERS, label: "All folders" }, ...folderNames.map((n) => ({ value: n, label: n }))], state.artFilter);
+  fillSelect(els.artUploadFolder, folderNames.map((n) => ({ value: n, label: n })), els.artUploadFolder.value);
+
+  renderLibraryGrid();
+  renderFolderList(index);
+  renderTrash(index);
+  updateArtSection();
+}
+
+function renderFolderChips(index, control) {
+  const enabled = new Set(control.foldersEnabled);
+  els.artFolderChips.replaceChildren();
+  for (const folder of index.folders) {
+    const chip = document.createElement("button");
+    chip.className = "art-chip";
+    chip.type = "button";
+    const on = enabled.has(folder.name);
+    chip.setAttribute("aria-pressed", on ? "true" : "false");
+    chip.classList.toggle("on", on);
+    chip.textContent = `${folder.name} (${folder.count})`;
+    chip.addEventListener("click", () => {
+      runAction("/api/art/folder/enable", { name: folder.name, enabled: !on });
+    });
+    els.artFolderChips.append(chip);
+  }
+}
+
+function renderLibraryGrid() {
+  const index = state.artIndex;
+  if (!index) {
+    return;
+  }
+  const pieces = piecesInFolder(index, state.artFilter);
+  els.artGrid.replaceChildren();
+  for (const piece of pieces) {
+    els.artGrid.append(libraryTile(piece, index));
+  }
+  els.artGridEmpty.hidden = pieces.length > 0;
+}
+
+function libraryTile(piece, index) {
+  const li = document.createElement("li");
+  li.className = "art-tile";
+
+  const figure = document.createElement("div");
+  figure.className = "art-tile-thumb-wrap";
+  figure.append(thumbNode(piece.thumb, piece.title, "art-thumb art-tile-thumb"));
+  if (!piece.landscape) {
+    const badge = document.createElement("span");
+    badge.className = "art-badge";
+    badge.textContent = "Portrait";
+    badge.title = "Portrait pieces do not rotate on the frame.";
+    figure.append(badge);
+  }
+  li.append(figure);
+
+  const title = document.createElement("span");
+  title.className = "art-tile-title";
+  title.textContent = piece.title;
+  li.append(title);
+
+  li.append(tileMenu(piece, index));
+  return li;
+}
+
+// The per-piece actions, tucked behind a disclosure so the grid stays compact.
+// A portrait piece gets no "Show now" (the frame would skip it).
+function tileMenu(piece, index) {
+  const menu = document.createElement("details");
+  menu.className = "art-menu";
+  const summary = document.createElement("summary");
+  summary.className = "art-menu-summary";
+  summary.textContent = "Options";
+  menu.append(summary);
+
+  const body = document.createElement("div");
+  body.className = "art-menu-body";
+
+  if (piece.landscape) {
+    body.append(menuButton("Show now", () => runAction("/api/art/command", { action: "show", piece: piece.id })));
+  }
+
+  const others = index.folders.map((f) => f.name).filter((n) => n !== piece.folder);
+  if (others.length > 0) {
+    const moveLabel = document.createElement("label");
+    moveLabel.className = "art-menu-move";
+    moveLabel.append(document.createTextNode("Move to "));
+    const select = document.createElement("select");
+    select.className = "art-select";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "folder...";
+    select.append(placeholder);
+    for (const name of others) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      select.append(option);
+    }
+    select.addEventListener("change", () => {
+      if (select.value) {
+        runAction("/api/art/move", { id: piece.id, folder: select.value });
+      }
+    });
+    moveLabel.append(select);
+    body.append(moveLabel);
+  }
+
+  body.append(menuButton("Delete", () => runAction("/api/art/delete", { id: piece.id }), "art-menu-danger"));
+  menu.append(body);
+  return menu;
+}
+
+function renderFolderList(index) {
+  els.artFolderList.replaceChildren();
+  for (const folder of index.folders) {
+    if (folder.builtin) {
+      // The reserved Collection folder is not renamed or deleted.
+      continue;
+    }
+    const li = document.createElement("li");
+    li.className = "art-folder-row";
+
+    const form = document.createElement("form");
+    form.className = "art-folder-rename";
+    const input = document.createElement("input");
+    input.className = "art-text";
+    input.type = "text";
+    input.maxLength = 40;
+    input.value = folder.name;
+    input.setAttribute("aria-label", `Rename ${folder.name}`);
+    form.append(input);
+
+    const rename = document.createElement("button");
+    rename.className = "art-btn art-btn-small";
+    rename.type = "submit";
+    rename.textContent = "Rename";
+    form.append(rename);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const to = input.value.trim();
+      if (to === "" || to === folder.name) {
+        return;
+      }
+      runAction("/api/art/folder/rename", { from: folder.name, to });
+    });
+    li.append(form);
+
+    const del = document.createElement("button");
+    del.className = "art-btn art-btn-small art-menu-danger";
+    del.type = "button";
+    del.textContent = "Delete";
+    // Delete is only offered for an empty folder; the service also enforces it.
+    del.disabled = folder.count > 0;
+    if (folder.count > 0) {
+      del.title = "Only an empty folder can be deleted.";
+    }
+    del.addEventListener("click", () => runAction("/api/art/folder/delete", { name: folder.name }));
+    li.append(del);
+
+    els.artFolderList.append(li);
+  }
+}
+
+function renderTrash(index) {
+  els.artTrashList.replaceChildren();
+  for (const entry of index.trash) {
+    const li = document.createElement("li");
+    li.className = "art-item art-trash-item";
+
+    li.append(thumbNode(entry.thumb, entry.original, "art-thumb"));
+
+    const meta = document.createElement("div");
+    meta.className = "art-meta";
+    const name = document.createElement("span");
+    name.className = "art-item-title";
+    name.textContent = entry.original;
+    meta.append(name);
+    const when = relativeTime(entry.deletedAt);
+    if (when) {
+      const time = document.createElement("time");
+      time.className = "art-when";
+      time.dateTime = entry.deletedAt;
+      time.textContent = `deleted ${when}`;
+      meta.append(time);
+    }
+    li.append(meta);
+
+    const restore = document.createElement("button");
+    restore.className = "art-btn art-btn-small";
+    restore.type = "button";
+    restore.textContent = "Restore";
+    restore.addEventListener("click", () => runAction("/api/art/restore", { id: entry.id }));
+    li.append(restore);
+
+    els.artTrashList.append(li);
+  }
+  els.artTrashEmpty.hidden = index.trash.length > 0;
+}
+
+// Upload one file with a live progress line and the server's error text on
+// failure. A separate request per file keeps the progress honest and one bad
+// file from sinking the rest. XHR is used for the upload-progress events fetch
+// does not surface; the model builds the multipart request so the guard header
+// and the browser-set boundary stay correct.
+function uploadOne(file, folder) {
+  const li = document.createElement("li");
+  li.className = "art-upload-item";
+  const name = document.createElement("span");
+  name.className = "art-upload-name";
+  name.textContent = file.name;
+  const status = document.createElement("span");
+  status.className = "art-upload-status";
+  status.textContent = "0%";
+  li.append(name, status);
+  els.artUploadProgress.append(li);
+
+  const form = new FormData();
+  form.append("file", file);
+  form.append("folder", folder);
+  const { url, init } = apiRequest("/api/art/upload", form);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", url);
+  for (const [key, value] of Object.entries(init.headers)) {
+    xhr.setRequestHeader(key, value);
+  }
+  xhr.upload.addEventListener("progress", (event) => {
+    if (event.lengthComputable) {
+      status.textContent = `${Math.round((event.loaded / event.total) * 100)}%`;
+    }
+  });
+  xhr.addEventListener("load", () => {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      status.textContent = "Added";
+      li.classList.add("ok");
+      setTimeout(() => li.remove(), 4000);
+    } else {
+      const data = safeJsonParse(xhr.responseText);
+      status.textContent = (data && data.error) || `Failed (${xhr.status}).`;
+      li.classList.add("err");
+    }
+    refreshArt();
+    refreshLibrary();
+  });
+  xhr.addEventListener("error", () => {
+    status.textContent = "Upload failed.";
+    li.classList.add("err");
+  });
+  xhr.send(init.body);
+}
+
+// Send a write to the admin service, show the server's error text on failure,
+// then re-read both documents so the manager reflects the change (and the frame
+// history catches up as it redraws).
+async function runAction(path, body) {
+  const { url, init } = apiRequest(path, body);
+  try {
+    const response = await fetch(url, init);
+    if (!response.ok) {
+      const data = safeJsonParse(await response.text());
+      showArtMessage((data && data.error) || `Request failed (${response.status}).`);
+    }
+  } catch (err) {
+    showArtMessage("Could not reach the art service.");
+  }
+  refreshArt();
+  refreshLibrary();
+}
+
+// A short-lived status line for a failed action. It clears itself so a stale
+// error does not sit under a later success.
+function showArtMessage(text) {
+  clearTimeout(state.artMessageTimer);
+  els.artMessage.textContent = text;
+  els.artMessage.hidden = false;
+  state.artMessageTimer = setTimeout(() => {
+    els.artMessage.hidden = true;
+    els.artMessage.textContent = "";
+  }, ART_MESSAGE_MS);
+}
+
+// Replace a <select>'s options, keeping the given value selected when it still
+// exists (otherwise the first option).
+function fillSelect(select, options, selected) {
+  select.replaceChildren();
+  for (const { value, label } of options) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.append(option);
+  }
+  if (options.some((o) => o.value === selected)) {
+    select.value = selected;
+  }
+}
+
+// A thumbnail image, or a placeholder when there is no thumb yet. The hub can
+// publish the index before thumbnails are generated, so a fresh piece arrives
+// with a null thumb; it still belongs in the grid. When a thumb path is present
+// but 404s (a thumbnail still being written), onerror swaps in the same
+// placeholder rather than leaving a broken-image icon. `className` carries the
+// sizing classes the placeholder reuses so the tile keeps its shape.
+function thumbNode(src, label, className) {
+  if (!src) {
+    return thumbPlaceholder(className);
+  }
+  const img = document.createElement("img");
+  img.className = className;
+  img.src = src;
+  img.alt = label;
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.addEventListener("error", () => {
+    img.replaceWith(thumbPlaceholder(className));
+  });
+  return img;
+}
+
+function thumbPlaceholder(className) {
+  const ph = document.createElement("div");
+  ph.className = `${className} art-thumb-ph`;
+  ph.setAttribute("aria-hidden", "true");
+  return ph;
+}
+
+function menuButton(label, onClick, extraClass) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = extraClass ? `art-menu-item ${extraClass}` : "art-menu-item";
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
 }
 
 function setConnection(message) {
