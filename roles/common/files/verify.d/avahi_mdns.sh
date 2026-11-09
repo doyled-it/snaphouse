@@ -6,10 +6,13 @@
 # Both settings must be active in /etc/avahi/avahi-daemon.conf: use-ipv6=no (do
 # not bind IPv6 at all) and publish-aaaa-on-ipv4=no (do not advertise AAAA
 # records over the IPv4 socket). The value is anchored to the whole line (an
-# optional trailing comment aside) so a prefix like "note" cannot pass. When the
-# running daemon can be inspected, the check also fails if the conf was edited
-# after avahi last started, which would mean the daemon is still serving the old
-# config. Run by `snaphouse verify` from /etc/snaphouse/verify.d.
+# optional trailing comment aside) so a prefix like "note" cannot pass. The role
+# flushes handlers right after the edit, so the restart is already bound to the
+# change; this check proves the file, and deliberately does not compare the conf
+# mtime against avahi's start time, because the Pis have no RTC and boot with a
+# stale clock until NTP syncs, which would make a healthy host fail verify and
+# fall back on every timer run. Run by `snaphouse verify` from
+# /etc/snaphouse/verify.d.
 set -euo pipefail
 
 conf=/etc/avahi/avahi-daemon.conf
@@ -27,22 +30,3 @@ check_setting() {
 
 check_setting use-ipv6
 check_setting publish-aaaa-on-ipv4
-
-# Prove the running daemon, not just the file, when that is cheap. If avahi is
-# active under systemd and the conf's mtime is newer than avahi's last start, the
-# daemon is running a stale config and a restart was missed. Any uncertainty
-# (no systemctl, inactive, or an unparseable timestamp) skips this: the file
-# check above is the hard gate, and this only fails on clear evidence of drift.
-if command -v systemctl >/dev/null 2>&1 \
-    && systemctl is-active --quiet avahi-daemon.service 2>/dev/null; then
-    started="$(systemctl show -p ActiveEnterTimestamp --value avahi-daemon.service 2>/dev/null || true)"
-    if [ -n "${started}" ]; then
-        started_epoch="$(date -d "${started}" +%s 2>/dev/null || true)"
-        conf_mtime="$(stat -c %Y "${conf}" 2>/dev/null || true)"
-        if [ -n "${started_epoch}" ] && [ -n "${conf_mtime}" ] \
-            && [ "${conf_mtime}" -gt "${started_epoch}" ]; then
-            echo "avahi-daemon started before ${conf} was last edited; running a stale config" >&2
-            exit 1
-        fi
-    fi
-fi

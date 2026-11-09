@@ -139,3 +139,15 @@ def test_verify_check_names_the_offending_setting_on_failure():
     # The value is anchored to the whole line, so a prefix like "notreally" cannot
     # satisfy the key.
     assert "[[:space:]]*no[[:space:]]*" in text
+
+
+def test_verify_check_does_not_compare_conf_mtime_to_avahi_start():
+    # The Pis have no RTC and boot with a stale clock until NTP syncs, so a check
+    # that compared the conf mtime against avahi's realtime start could fail on a
+    # healthy host and make the self-update fall back every timer run. The
+    # flush_handlers in the role already guarantees the restart, so the check
+    # proves only the file.
+    text = VERIFY.read_text()
+    assert "systemctl" not in text
+    assert "ActiveEnterTimestamp" not in text
+    assert "stat -c" not in text
