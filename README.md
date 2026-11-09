@@ -55,6 +55,18 @@ check these, in this order:
 - **HTTPS-only browser modes.** The page is plain `http` on the LAN. Type the
   `http://` address explicitly and accept the browser's "not secure" prompt once.
 
+## Now playing
+
+The hub runs a small service, `snaphouse-nowplaying`, that is the single source of
+now-playing data for the whole house. It follows the House stream through snapserver
+and publishes two files the room-picker page and the bedside frame both read:
+`now-playing.json` (the current track, with a ticking progress bar driven by a position
+anchor) and `play-history.json` (the last 50 plays). For a track that arrives without
+cover art, such as from Bluetooth, it looks one up from public catalogues (Apple's podcast
+search, Open Library, MusicBrainz and the Cover Art Archive) in the background, carrying
+only the track, show, book, or artist names. Both files are served same-origin on the LAN,
+so the page and the frame never resolve another machine's name to show what is playing.
+
 ## Part of a multi-repo system
 
 `snaphouse` is one of several repos. A feature usually spans repos; before calling

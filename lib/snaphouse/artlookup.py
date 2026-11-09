@@ -66,6 +66,15 @@ _NONE_SUFFIX = ".none"
 _DEFAULT_MISS_TTL = 7 * 86400
 _DEFAULT_MAX_FILES = 300
 
+# A lookup resolves to one of three outcomes. FOUND carries the cover bytes. MISS
+# means the search ran, parsed, and matched nothing: a real miss, cached so the
+# track is not searched for on every play. ERROR means a fetch failed (a bad
+# status, a timeout, a transport error, or an image fetch that came back empty):
+# transient, never cached, so a Wi-Fi blip does not cost a week of missing art.
+_FOUND = "found"
+_MISS = "miss"
+_ERROR = "error"
+
 _user_agent_cache: str | None = None
 
 
@@ -289,8 +298,12 @@ class ArtLookup:
         if self._miss_fresh(miss_path):
             return None
 
-        raw = self._resolve(chosen, kind, title, artist, album)
+        outcome, raw = self._resolve(chosen, kind, title, artist, album)
+        if outcome == _ERROR:
+            # A fetch failed; transient, so leave no marker and retry next play.
+            return None
         if raw is None:
+            # A real miss: the search ran and matched nothing.
             self._write_miss(miss_path)
             return None
 
@@ -317,67 +330,98 @@ class ArtLookup:
         title: str,
         artist: Optional[str],
         album: Optional[str],
-    ) -> Optional[bytes]:
+    ) -> tuple[str, Optional[bytes]]:
+        """Resolve a cover, returning ``(outcome, image)``.
+
+        ``outcome`` is ``_FOUND`` (``image`` holds the bytes), ``_MISS`` (a real
+        miss the caller should cache), or ``_ERROR`` (a transient fetch failure
+        the caller must not cache).
+        """
         if chosen == "podcast":
-            image = self._podcast(artist, album)
-            if image is None and kind == "long_form":
+            outcome, image = self._podcast(artist, album)
+            if outcome == _FOUND:
+                return (_FOUND, image)
+            if kind == "long_form":
                 # A long-form track with no genre: the podcast search found
-                # nothing, so try it as an audiobook.
-                image = self._open_library(artist, album)
-            return image
+                # nothing, so try it as an audiobook. A blip on either leg stays
+                # a transient error so the miss is not cached over an outage.
+                fallback, fb_image = self._open_library(artist, album)
+                if fallback == _FOUND:
+                    return (_FOUND, fb_image)
+                if _ERROR in (outcome, fallback):
+                    return (_ERROR, None)
+                return (_MISS, None)
+            return (outcome, None)
         if chosen == "audiobook":
             return self._open_library(artist, album)
         return self._music(artist, album)
 
-    def _podcast(self, artist: Optional[str], album: Optional[str]) -> Optional[bytes]:
+    def _podcast(
+        self, artist: Optional[str], album: Optional[str]
+    ) -> tuple[str, Optional[bytes]]:
         show = album or artist
         if not show:
-            return None
+            return (_MISS, None)
         url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
             {"media": "podcast", "entity": "podcast", "term": show}
         )
-        results = _json_field(self._fetch(url), "results")
+        results = _search_list(self._fetch(url), "results")
+        if results is None:
+            return (_ERROR, None)
         for result in results:
             if not isinstance(result, dict):
                 continue
             if _names_match(result.get("collectionName"), show):
                 artwork = result.get("artworkUrl600")
                 if isinstance(artwork, str):
-                    return self._fetch(artwork)
-        return None
+                    image = self._fetch(artwork)
+                    return (_FOUND, image) if image is not None else (_ERROR, None)
+        return (_MISS, None)
 
     def _open_library(
         self, artist: Optional[str], album: Optional[str]
-    ) -> Optional[bytes]:
+    ) -> tuple[str, Optional[bytes]]:
         # The book title is the album; the author is the artist.
         if not album:
-            return None
+            return (_MISS, None)
         params = {"title": album}
         if artist:
             params["author"] = artist
         url = _OPEN_LIBRARY_SEARCH + "?" + urllib.parse.urlencode(params)
-        docs = _json_field(self._fetch(url), "docs")
+        docs = _search_list(self._fetch(url), "docs")
+        if docs is None:
+            return (_ERROR, None)
         for doc in docs:
             if not isinstance(doc, dict):
                 continue
             if _names_match(doc.get("title"), album):
                 cover_id = doc.get("cover_i")
                 if isinstance(cover_id, int):
-                    return self._fetch(_OPEN_LIBRARY_COVER.format(cover_id=cover_id))
-        return None
+                    image = self._fetch(_OPEN_LIBRARY_COVER.format(cover_id=cover_id))
+                    return (_FOUND, image) if image is not None else (_ERROR, None)
+        return (_MISS, None)
 
-    def _music(self, artist: Optional[str], album: Optional[str]) -> Optional[bytes]:
+    def _music(
+        self, artist: Optional[str], album: Optional[str]
+    ) -> tuple[str, Optional[bytes]]:
         if not album:
-            return None
+            return (_MISS, None)
         self._await_musicbrainz_gate()
-        query = f'artist:"{artist}" AND release:"{album}"' if artist else f'release:"{album}"'
+        if artist:
+            query = (
+                f'artist:"{_lucene_phrase(artist)}" AND release:"{_lucene_phrase(album)}"'
+            )
+        else:
+            query = f'release:"{_lucene_phrase(album)}"'
         url = _MUSICBRAINZ_SEARCH + "?" + urllib.parse.urlencode(
             {"query": query, "fmt": "json", "limit": 5}
         )
         try:
-            releases = _json_field(self._fetch(url), "releases")
+            releases = _search_list(self._fetch(url), "releases")
         finally:
             self._last_musicbrainz = self._clock()
+        if releases is None:
+            return (_ERROR, None)
         for release in releases:
             if not isinstance(release, dict):
                 continue
@@ -387,8 +431,9 @@ class ArtLookup:
                 continue
             mbid = release.get("id")
             if isinstance(mbid, str):
-                return self._fetch(_COVER_ART_ARCHIVE.format(mbid=mbid))
-        return None
+                image = self._fetch(_COVER_ART_ARCHIVE.format(mbid=mbid))
+                return (_FOUND, image) if image is not None else (_ERROR, None)
+        return (_MISS, None)
 
     def _await_musicbrainz_gate(self) -> None:
         """Wait, if needed, so MusicBrainz is called at most once per second."""
@@ -460,15 +505,34 @@ def _lookup_url(key: str) -> str:
     return f"/cover/lookup/{key}.jpg"
 
 
-def _json_field(data: Optional[bytes], field: str) -> list:
-    """The named array from a JSON body, or an empty list on any problem."""
-    if not data:
-        return []
+def _lucene_phrase(value: str) -> str:
+    """Escape a value for use inside a quoted Lucene phrase.
+
+    Inside double quotes Lucene treats only the backslash and the double quote
+    specially, so both are backslash-escaped (the backslash first, or it would
+    double-escape the quote's escape). This keeps a name with a quote from
+    breaking out of the phrase or corrupting the MusicBrainz query.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _search_list(data: Optional[bytes], field: str) -> Optional[list]:
+    """The named array from a search body, or ``None`` when the body is unusable.
+
+    ``None`` means the fetch failed (no body) or the body did not parse as a JSON
+    object: a transient condition the caller treats as an error, never a cached
+    miss. A present-but-empty list, or a body that parsed without the field, is a
+    search that ran and matched nothing, returned as an empty list (a real miss).
+    """
+    if data is None:
+        return None
     try:
         parsed = json.loads(data)
     except (ValueError, TypeError):
-        return []
-    value = parsed.get(field) if isinstance(parsed, dict) else None
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    value = parsed.get(field)
     return value if isinstance(value, list) else []
 
 

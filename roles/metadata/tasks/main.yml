@@ -34,6 +34,43 @@
     group: root
     mode: "0755"
 
+# The now-playing service (snaphouse-nowplaying) follows the House stream and
+# publishes now-playing.json and play-history.json, with background cover
+# lookups. It runs as the snapserver user so it can write the cover directory the
+# AirPlay bridge owns (cover/lookup, cover/history). The two JSON files go in this
+# dedicated subdirectory of the public root, owned by snapserver like the cover
+# dir, rather than the public root itself: the web role owns the public root as
+# root and re-asserts that every apply, so re-owning it here would fight the web
+# role and never settle. nginx serves the files same-origin from this subdir
+# (room_picker role). The snapserver user is created by hub_input, which runs
+# first; the public root is created by the web role.
+- name: Ensure the now-playing state directory exists
+  ansible.builtin.file:
+    path: /var/lib/snaphouse/public/nowplaying
+    state: directory
+    owner: snapserver
+    group: snapserver
+    mode: "0755"
+
+- name: Install the now-playing service unit
+  ansible.builtin.template:
+    src: snaphouse-nowplaying.service.j2
+    dest: /etc/systemd/system/snaphouse-nowplaying.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for metadata
+    - Restart the now-playing service
+
+- name: Install the now-playing verify check
+  ansible.builtin.copy:
+    src: verify.d/nowplaying.sh
+    dest: /etc/snaphouse/verify.d/nowplaying.sh
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Ensure the control scripts are executable
   ansible.builtin.file:
     path: "/opt/snaphouse/lib/snaphouse/{{ item }}"
@@ -56,3 +93,33 @@
     - airplay_meta.py
   when: common_systemd_init
   notify: Restart snapserver
+
+# The now-playing service runs the code in place from /opt/snaphouse, so restart
+# it when its modules change on a self-update rather than waiting for a reboot.
+# nowplaying.py is the service; artlookup.py is the cover lookup it imports.
+- name: Record the now-playing module digests so the service restarts when they change
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/' ~ item) | hash('sha1') }}\n"
+    dest: "/etc/snaphouse/{{ item | replace('.py', '') }}.sha1"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - nowplaying.py
+    - artlookup.py
+  when: common_systemd_init
+  notify: Restart the now-playing service
+
+# Make the unit and digests known before enabling on a first install. The
+# handlers are gated on systemd, so this is a no-op in the CI container.
+- name: Reload systemd now if the now-playing unit changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the now-playing service
+  ansible.builtin.systemd_service:
+    name: snaphouse-nowplaying.service
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service

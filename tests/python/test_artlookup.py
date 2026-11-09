@@ -228,6 +228,61 @@ def test_miss_is_cached_for_seven_days(tmp_path):
     assert len(fetch.calls) > first
 
 
+def test_fetch_failure_is_not_cached_as_miss(tmp_path):
+    # A search fetch that fails (returns None, a Wi-Fi blip) must not be cached as
+    # a 7-day miss. The next lookup tries the network again.
+    fetch = FakeFetch([])  # every URL is unmatched, so the fetch returns None
+    lookup = ArtLookup(tmp_path, fetch)
+
+    assert lookup.find("Song", "An Artist", "An Album", "music", None) is None
+    first = len(fetch.calls)
+    assert first >= 1
+
+    lookup_dir = _lookup_dir(tmp_path)
+    assert not (lookup_dir.exists() and list(lookup_dir.glob("*.none")))
+
+    # Not suppressed: the second lookup reaches the network again.
+    assert lookup.find("Song", "An Artist", "An Album", "music", None) is None
+    assert len(fetch.calls) > first
+
+
+def test_cover_fetch_failure_is_not_cached_as_miss(tmp_path):
+    # The search finds an exact match, but fetching the cover image itself fails.
+    # That is transient too, so no miss marker is written.
+    fetch = FakeFetch([("musicbrainz.org", _fixture_bytes("musicbrainz.json"))])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    assert lookup.find("Airbag", "Radiohead", "OK Computer", "music", None) is None
+    assert any("coverartarchive.org" in call for call in fetch.calls)
+
+    lookup_dir = _lookup_dir(tmp_path)
+    assert not (lookup_dir.exists() and list(lookup_dir.glob("*.none")))
+
+
+def test_parsed_search_with_no_match_is_cached_as_miss(tmp_path):
+    # A search that returned and parsed but found no exact match is a real miss
+    # and is cached, so a findable-nowhere track is not searched for every play.
+    fetch = FakeFetch([("musicbrainz.org", _empty_musicbrainz())])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    assert lookup.find("Song", "Nobody", "No Such Album", "music", None) is None
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_musicbrainz_query_escapes_lucene_specials(tmp_path):
+    # A quote or backslash in a name must be escaped inside the quoted Lucene
+    # phrase, or it breaks out of the phrase (or corrupts the query).
+    fetch = FakeFetch([("musicbrainz.org", _empty_musicbrainz())])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    lookup.find("Song", 'A"B', "C\\D", "music", None)
+
+    mb_calls = [c for c in fetch.calls if "musicbrainz.org" in c]
+    assert mb_calls
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(mb_calls[0]).query)["query"][0]
+    assert query == 'artist:"A\\"B" AND release:"C\\\\D"'
+
+
 def test_musicbrainz_gate_sleeps(tmp_path):
     now = [1000.0]
     slept = []

@@ -294,6 +294,49 @@ def test_stale_position_resend_does_not_reanchor_backward():
     assert track["position_at"] == dt(50).isoformat()
 
 
+def test_get_status_does_not_reanchor_an_existing_position():
+    # Snapserver returns the House properties exactly as last emitted; its
+    # position is not re-extrapolated to now. A GetStatus refresh (fired by a
+    # volume or mute change) must not re-anchor that stale value, or the bar jumps
+    # backward (Review Focus 1).
+    tracker = Tracker("House", [])
+    tracker.on_properties("House", props(position=100.0, duration=300.0), dt(0))
+    track = tracker.now_playing_doc(dt(0))["track"]
+    assert track["position"] == 100.0
+    assert track["position_at"] == dt(0).isoformat()
+
+    # 300 s later a snapshot carries the same, now-stale, position 100.
+    tracker.on_server(server(props(position=100.0, duration=300.0)), dt(300))
+    track = tracker.now_playing_doc(dt(300))["track"]
+    # The anchor is untouched, so a consumer still computes 100 + 300 = 400.
+    assert track["position"] == 100.0
+    assert track["position_at"] == dt(0).isoformat()
+
+
+def test_get_status_seeds_the_first_anchor():
+    # When the service's first information is a GetStatus snapshot (start or just
+    # after a reconnect), there is no anchor yet, so the snapshot's position seeds
+    # one.
+    tracker = Tracker("House", [])
+    tracker.on_server(server(props(position=50.0, duration=300.0)), dt(0))
+    track = tracker.now_playing_doc(dt(0))["track"]
+    assert track["position"] == 50.0
+    assert track["position_at"] == dt(0).isoformat()
+
+
+def test_get_status_anchors_position_for_a_new_key():
+    # A snapshot that brings a different track than the one anchored carries that
+    # new track's own position, and there is no anchor for it yet, so it is
+    # anchored.
+    tracker = Tracker("House", [])
+    tracker.on_properties("House", props(title="A", position=100.0), dt(0))
+    tracker.on_server(server(props(title="B", position=10.0)), dt(300))
+    track = tracker.now_playing_doc(dt(300))["track"]
+    assert track["title"] == "B"
+    assert track["position"] == 10.0
+    assert track["position_at"] == dt(300).isoformat()
+
+
 def test_wants_art_once_per_key():
     tracker = Tracker("House", [])
     tracker.on_server(
@@ -306,6 +349,36 @@ def test_wants_art_once_per_key():
     tracker.set_art(("A", "Ar", "Al"), "/cover/lookup/x.jpg")
     assert tracker.wants_art() is None
     assert tracker.now_playing_doc(dt(0))["track"]["art_url"] == "/cover/lookup/x.jpg"
+
+
+def test_rewrite_art_url_rejects_protocol_relative():
+    # A protocol-relative "//host/..." URL starts with "/", but a browser
+    # resolves it to another origin, so it must not pass through as a same-origin
+    # path. It is rejected like any other foreign host.
+    assert rewrite_art_url("//evil.example/cover/x.jpg") is None
+    assert rewrite_art_url("//evil.example/cover/lookup/x.jpg") is None
+    assert rewrite_art_url("//evil.example/other.jpg") is None
+    # A genuine same-origin path is still kept.
+    assert rewrite_art_url("/cover/x.jpg") == "/cover/x.jpg"
+
+
+def test_wants_art_again_after_key_change():
+    # A no-art track that replays must ask for art again: the per-key suppression
+    # clears when the current key changes, so ArtLookup (answering from its disk
+    # cache) is consulted again rather than the cover staying missing forever.
+    tracker = Tracker("House", [])
+    tracker.on_server(server(props(title="A", artist="Ar", album="Al")), dt(0))
+    assert tracker.wants_art() == (("A", "Ar", "Al"), "music", None)
+    # Suppressed while the same track stays current.
+    assert tracker.wants_art() is None
+
+    tracker.on_properties("House", props(title="B", artist="Br", album="Bl"), dt(5))
+    assert tracker.wants_art() == (("B", "Br", "Bl"), "music", None)
+
+    # The same no-art track comes back; it is asked for again.
+    tracker.on_properties("House", props(title="A", artist="Ar", album="Al"), dt(10))
+    assert tracker.wants_art() == (("A", "Ar", "Al"), "music", None)
+    assert tracker.wants_art() is None
 
 
 def test_wants_art_none_when_art_present():

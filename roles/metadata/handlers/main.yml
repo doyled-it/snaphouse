@@ -1,0 +1,17 @@
+---
+# Handlers for the metadata role. Both are gated on a real systemd host: a
+# notified handler ignores --skip-tags, so the `when` (not the tag) is what keeps
+# them out of the CI container apply, where systemd is not PID 1. The "Restart
+# snapserver" handler the role's control-script tasks notify is defined in
+# roles/hub_input.
+
+- name: Reload systemd for metadata
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: common_systemd_init
+
+- name: Restart the now-playing service
+  ansible.builtin.systemd_service:
+    name: snaphouse-nowplaying.service
+    state: restarted
+  when: common_systemd_init

@@ -1,0 +1,29 @@
+# snaphouse now-playing service, managed by Ansible (roles/metadata). Do not edit
+# on the host; change the template and let self-update roll it out.
+#
+# It follows the House stream over snapserver's control port and publishes
+# now-playing.json and play-history.json into the hub's public web root, with
+# background cover lookups for tracks that arrive without art. Installed on the
+# hub only (the one host whose roles include metadata).
+#
+# It runs from the on-device uv venv, which carries Pillow (the hub-only extra)
+# for the cover downscale, and as the snapserver user, so it can write the cover
+# directory the AirPlay bridge owns (cover/lookup, cover/history) without
+# widening its permissions. The House stream name comes from the vars, so this is
+# a template rather than a static unit.
+[Unit]
+Description=snaphouse now-playing service (publishes now-playing.json)
+After=snapserver.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=snapserver
+Group=snapserver
+Environment=PYTHONPATH=/opt/snaphouse/lib
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.nowplaying --house-stream {{ house_stream_name }}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -38,6 +38,26 @@ location = /art-history.json {
     default_type application/json;
 }
 
+# The hub's now-playing data, written by the snaphouse-nowplaying service (the
+# metadata role) into its own snapserver-owned subdir of the public root. The
+# root points at that subdir, and nginx appends the single-segment URI, so the
+# file served is nowplaying/now-playing.json. Exact-match so it outranks the
+# room-picker `location /` prefix, served same-origin to the page and read by the
+# nightstand frame. The service writes it atomically at startup, so it exists
+# even when nothing is playing.
+location = /now-playing.json {
+    root /var/lib/snaphouse/public/nowplaying;
+    default_type application/json;
+}
+
+# The last 50 plays, written by the same service, same subdir and exact-match
+# reasons. It too exists from service start (an empty plays list before anything
+# is counted).
+location = /play-history.json {
+    root /var/lib/snaphouse/public/nowplaying;
+    default_type application/json;
+}
+
 # snapserver's JSON-RPC, proxied with the WebSocket upgrade so the page can hold
 # a notification socket open and also POST plain JSON-RPC calls. Port 1780 stays
 # reachable on the LAN directly for Snapweb and the nightstand frame (the

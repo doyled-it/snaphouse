@@ -115,6 +115,13 @@ cancels it. Tuning those offsets is what makes three rooms sound like one.
     OS package mirrors, NTP. The PyPI and uv-release access follows from the owner's
     uv-everywhere instruction (2026-11-06): on-device Python is managed with uv, so every
     machine fetches uv from GitHub releases and its Python dependencies from PyPI.
+    The hub (`house`) additionally reaches the now-playing cover-lookup catalogues for
+    tracks that arrive without art: `itunes.apple.com` and the `*.mzstatic.com` artwork
+    CDN (podcasts), `musicbrainz.org` and `coverartarchive.org` (music, plus the
+    `archive.org` hosts the Cover Art Archive redirects to), and `openlibrary.org` and
+    `covers.openlibrary.org` (audiobooks, whose covers redirect to `archive.org`).
+    Requests carry only track, show, book, or artist names and a User-Agent naming the
+    public repo; nothing identifying goes out.
   - `nightstand`: the same, plus what `nightstand` lists in its design (MLB Stats API,
     MLB's logo CDN, Open-Meteo, MusicBrainz and the Cover Art Archive).
 - Bluetooth that stays open to pairing. Pairing happens only inside a short window the
