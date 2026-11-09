@@ -95,7 +95,11 @@ git clone git@github.com:doyled-it/nightstand.git
 ```
 
 `verify` is `"pass"` or `"fail"`. `last_good` may be `""` before a machine's first
-successful verify; consumers treat an empty value as "no last-good commit yet". A machine
+successful verify; consumers treat an empty value as "no last-good commit yet". On a
+brand-new machine the first apply briefly publishes a provisional document with
+`verify: "fail"` and `last_good: ""` before its first real verify result replaces it,
+so a freshly bootstrapping host shows as troubled for a few seconds; this is expected
+and clears on the first passing verify. A machine
 is healthy when `verify == "pass"` and `commit == main_commit`. snaphouse writes `/var/lib/snaphouse/public/status.json`;
 nightstand writes `/var/lib/nightstand/public/status.json`, and snaphouse's nginx on
 the `nightstand` host serves that directory at `/nightstand/`.

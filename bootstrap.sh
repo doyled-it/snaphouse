@@ -136,6 +136,41 @@ set_hostname() {
     rm -f "$tmp"
 }
 
+# Run the first apply, then enable the self-update timer. The timer must come on
+# even when the first apply does not pass verify: a brand-new machine can fail its
+# very first verify for a transient, self-correcting reason, and we want it to
+# keep retrying on its own schedule rather than sit dark until someone reruns
+# bootstrap by hand.
+#
+# Both the apply and the timer-enable have their exit status captured explicitly.
+# This function is called on the left of `||` in main, which disables set -e for
+# its whole body, so a failed `systemctl enable --now` would otherwise be
+# swallowed and bootstrap would report success with no timer. The apply result is
+# the primary signal, so a failed apply's status wins; when the apply passed, a
+# failed timer-enable is returned instead. Either failure makes bootstrap exit
+# non-zero.
+start_self_update() {
+    local apply_rc=0
+    local timer_rc=0
+
+    echo "==> Running the first apply"
+    "${repo_dir}/bin/snaphouse" update --force || apply_rc=$?
+
+    echo "==> Enabling the self-update timer"
+    systemctl enable --now snaphouse-update.timer || timer_rc=$?
+
+    if [ "${timer_rc}" -ne 0 ]; then
+        echo "bootstrap.sh: enabling the self-update timer failed (exit ${timer_rc}); this machine will not keep itself current until the timer is enabled by hand" >&2
+    elif [ "${apply_rc}" -ne 0 ]; then
+        echo "bootstrap.sh: the first apply did not pass verify (exit ${apply_rc}); the self-update timer is enabled and will retry" >&2
+    fi
+
+    if [ "${apply_rc}" -ne 0 ]; then
+        return "${apply_rc}"
+    fi
+    return "${timer_rc}"
+}
+
 main() {
     parse_args "$@"
 
@@ -176,11 +211,13 @@ main() {
         chmod 0600 "${local_file}"
     fi
 
-    echo "==> Running the first apply"
-    "${repo_dir}/bin/snaphouse" update --force
+    local rc=0
+    start_self_update || rc=$?
 
-    echo "==> Enabling the self-update timer"
-    systemctl enable --now snaphouse-update.timer
+    if [ "${rc}" -ne 0 ]; then
+        echo "==> Bootstrap finished with errors; see the messages above" >&2
+        exit "${rc}"
+    fi
 
     echo "==> Bootstrap complete"
 }
