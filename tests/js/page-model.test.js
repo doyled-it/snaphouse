@@ -175,8 +175,8 @@ test("mirrorCaption defaults to art framing when the screen is missing or malfor
 test("mirrorCaption captions a now-playing frame plainly and reframes the piece", () => {
   assert.deepEqual(mirrorCaption({ screen: "now_playing" }), {
     isArt: false,
-    caption: "Showing now playing. Art resumes when the audio stops.",
-    nextLabel: "Next in rotation",
+    caption: "Showing what is playing. Art resumes when the audio stops.",
+    nextLabel: "Up next",
   });
 });
 
@@ -195,8 +195,23 @@ test("mirrorCaption falls back to a generic line for any other screen", () => {
   assert.deepEqual(mirrorCaption({ screen: "calendar" }), {
     isArt: false,
     caption: "Showing another screen. Art resumes shortly.",
-    nextLabel: "Next in rotation",
+    nextLabel: "Up next",
   });
+});
+
+test("mirrorCaption gives a prototype-named screen the generic caption, not a function", () => {
+  // `screen` is only validated to a non-empty string, so a key that lives on
+  // Object.prototype ("constructor", "toString", "__proto__", ...) must not leak
+  // an inherited value as the caption. Each falls back to the generic line.
+  for (const screen of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+    const result = mirrorCaption({ screen });
+    assert.equal(typeof result.caption, "string");
+    assert.deepEqual(result, {
+      isArt: false,
+      caption: "Showing another screen. Art resumes shortly.",
+      nextLabel: "Up next",
+    });
+  }
 });
 
 // --------------------------------------------------------------------------- #

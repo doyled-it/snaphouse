@@ -834,9 +834,9 @@ export function mirrorState(frameJson, nowMs) {
 //   - isArt is true when art is on the panel, or when `screen` is missing or
 //     unusable (default to today's framing rather than invent a caption);
 //   - caption is "" when art shows, otherwise a plain sentence naming the screen;
-//   - nextLabel is null when art shows, otherwise "Next in rotation", the label
-//     the page puts on the art piece so its controls read as changing what comes
-//     next, not what is up now.
+//   - nextLabel is null when art shows, otherwise "Up next", the label the page
+//     puts on the art piece so its controls read as changing what comes next,
+//     not what is up now.
 export function mirrorCaption(frameJson) {
   const art = { isArt: true, caption: "", nextLabel: null };
   if (!frameJson || typeof frameJson !== "object" || Array.isArray(frameJson)) {
@@ -846,21 +846,25 @@ export function mirrorCaption(frameJson) {
   if (typeof screen !== "string" || screen.length === 0 || screen === "art") {
     return art;
   }
+  // `screen` comes off the network and is only validated to a non-empty string,
+  // so look it up on a Map, never a plain object: a key like "constructor" or
+  // "toString" would otherwise return an inherited function as the caption.
   return {
     isArt: false,
-    caption: SCREEN_CAPTIONS[screen] ?? SCREEN_CAPTIONS.default,
-    nextLabel: "Next in rotation",
+    caption: SCREEN_CAPTIONS.get(screen) ?? DEFAULT_SCREEN_CAPTION,
+    nextLabel: "Up next",
   };
 }
 
 // The plain caption for each non-art screen the frame can hold, with a generic
 // fallback for a screen name the page does not have specific wording for.
-const SCREEN_CAPTIONS = {
-  now_playing: "Showing now playing. Art resumes when the audio stops.",
-  weather: "Showing the weather. Art resumes shortly.",
-  game: "Showing a game. Art resumes shortly.",
-  default: "Showing another screen. Art resumes shortly.",
-};
+const SCREEN_CAPTIONS = new Map([
+  ["now_playing", "Showing what is playing. Art resumes when the audio stops."],
+  ["weather", "Showing the weather. Art resumes shortly."],
+  ["game", "Showing a game. Art resumes shortly."],
+]);
+
+const DEFAULT_SCREEN_CAPTION = "Showing another screen. Art resumes shortly.";
 
 function updatedLabelFor(updatedAt, nowMs) {
   if (typeof updatedAt !== "string") {
