@@ -240,6 +240,38 @@ def test_force_reapplies_head_when_nothing_changed(world):
     assert read_json(world.state)["last_good"] == v1
 
 
+def test_first_apply_passes_a_check_that_needs_the_status_file(world):
+    """A verify check that needs the published status file (the web check reads
+    nginx's /status.json) must pass on the very first apply, when no status file
+    has been written yet. update writes a provisional status before verify runs,
+    so the check has a real file to read; the run's real publish then overwrites
+    it with the true result.
+    """
+    # A check that mirrors the web check: it fails unless a status file with a
+    # host field already exists. On a fresh machine nothing has published one.
+    check = world.tmp / "verify.d" / "needs_status.sh"
+    check.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'test -f "$SNAPHOUSE_STATUS"\n'
+        'grep -q \'"host"\' "$SNAPHOUSE_STATUS"\n'
+    )
+    check.chmod(0o755)
+
+    v1 = push_commit(world, msg="v1")
+    assert not world.status.exists()  # truly fresh: no status file yet
+
+    assert update.main(["--force"]) == 0
+
+    state = read_json(world.state)
+    assert state["last_good"] == v1
+    assert state["failed"] is None
+
+    status = read_json(world.status)
+    assert status["commit"] == v1
+    assert status["verify"] == "pass"
+
+
 def test_failure_with_no_last_good_exits_nonzero(world):
     v1 = push_commit(world, msg="v1", verify="fail")
     assert update.main([]) != 0

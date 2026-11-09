@@ -103,8 +103,45 @@ def _apply(repo: Path) -> bool:
     return completed.returncode == 0
 
 
-def _verify_passes() -> bool:
-    """Run the on-device checks, print each result, and return whether all pass."""
+def _ensure_status_exists(repo: Path, *, main_commit: str, last_good: str | None) -> None:
+    """Publish a provisional status file before verify when none exists yet.
+
+    On a brand-new machine the first update applies site.yml and then runs verify
+    before any status file has been published. The web check confirms nginx serves
+    a valid /status.json, so on that first run it would fail for the file's absence
+    rather than for a real fault, the run would be recorded as failed, and
+    bootstrap would stop before enabling the self-update timer (issue #35).
+
+    Writing a provisional document here breaks that chicken-and-egg: the file is
+    marked verify="fail" (honest: this machine has not passed verify yet) and
+    carries the running commit and the pinned schema, so the web check has a real
+    file to serve. The run's own _publish overwrites it with the true result a
+    moment later. An established machine already has a status file, so this is a
+    no-op there and does not fight the real write.
+    """
+    path = status_path()
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_status(
+        path,
+        host=socket.gethostname(),
+        commit=_rev(repo, "HEAD"),
+        main_commit=main_commit,
+        last_good=last_good or "",
+        verify="fail",
+        now=datetime.now().astimezone(),
+    )
+
+
+def _verify_passes(repo: Path, *, main_commit: str, last_good: str | None) -> bool:
+    """Run the on-device checks, print each result, and return whether all pass.
+
+    A provisional status file is published first when none exists, so a check
+    that reads the published status (the web check) does not fail merely because
+    this is the machine's first apply.
+    """
+    _ensure_status_exists(repo, main_commit=main_commit, last_good=last_good)
     results = verify.run_checks(verify.verify_dir())
     for name, ok, detail in results:
         print(verify.format_line(name, ok, detail))
@@ -146,11 +183,14 @@ def main(argv: list[str] | None = None) -> int:
     # the commit that is already running, using the last origin/main we saw.
     if not _git_ok(repo, "fetch", "origin", "main"):
         head = _rev(repo, "HEAD")
+        main_commit = _rev_or(repo, "origin/main", head)
         _publish(
             repo,
-            main_commit=_rev_or(repo, "origin/main", head),
+            main_commit=main_commit,
             last_good=last_good,
-            result="pass" if _verify_passes() else "fail",
+            result="pass"
+            if _verify_passes(repo, main_commit=main_commit, last_good=last_good)
+            else "fail",
         )
         return 0
 
@@ -164,13 +204,15 @@ def main(argv: list[str] | None = None) -> int:
             repo,
             main_commit=target,
             last_good=last_good,
-            result="pass" if _verify_passes() else "fail",
+            result="pass"
+            if _verify_passes(repo, main_commit=target, last_good=last_good)
+            else "fail",
         )
         return 0
 
     # Try the target: check it out, apply it, and verify it.
     _git(repo, "checkout", "--quiet", target)
-    if _apply(repo) and _verify_passes():
+    if _apply(repo) and _verify_passes(repo, main_commit=target, last_good=last_good):
         _write_state(_state_path(), last_good=target, failed=None)
         _publish(repo, main_commit=target, last_good=target, result="pass")
         return 0
@@ -186,7 +228,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # Fall back to the last good commit and apply it.
     _git(repo, "checkout", "--quiet", last_good)
-    recovered = _apply(repo) and _verify_passes()
+    recovered = _apply(repo) and _verify_passes(
+        repo, main_commit=target, last_good=last_good
+    )
     _publish(
         repo,
         main_commit=target,

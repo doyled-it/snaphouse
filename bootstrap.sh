@@ -136,6 +136,28 @@ set_hostname() {
     rm -f "$tmp"
 }
 
+# Run the first apply, then enable the self-update timer. The timer must come on
+# even when the first apply does not pass verify: a brand-new machine can fail its
+# very first verify for a transient, self-correcting reason, and we want it to
+# keep retrying on its own schedule rather than sit dark until someone reruns
+# bootstrap by hand. The apply's exit status is remembered and returned, so
+# bootstrap still ends non-zero on a failed first apply, but only after the timer
+# is on. Returns the apply's exit status.
+start_self_update() {
+    local rc=0
+
+    echo "==> Running the first apply"
+    "${repo_dir}/bin/snaphouse" update --force || rc=$?
+
+    echo "==> Enabling the self-update timer"
+    systemctl enable --now snaphouse-update.timer
+
+    if [ "${rc}" -ne 0 ]; then
+        echo "bootstrap.sh: the first apply did not pass verify (exit ${rc}); the self-update timer is enabled and will retry" >&2
+    fi
+    return "${rc}"
+}
+
 main() {
     parse_args "$@"
 
@@ -176,11 +198,13 @@ main() {
         chmod 0600 "${local_file}"
     fi
 
-    echo "==> Running the first apply"
-    "${repo_dir}/bin/snaphouse" update --force
+    local rc=0
+    start_self_update || rc=$?
 
-    echo "==> Enabling the self-update timer"
-    systemctl enable --now snaphouse-update.timer
+    if [ "${rc}" -ne 0 ]; then
+        echo "==> Bootstrap finished with errors: the first apply did not pass verify. The self-update timer is enabled and will keep trying." >&2
+        exit "${rc}"
+    fi
 
     echo "==> Bootstrap complete"
 }
