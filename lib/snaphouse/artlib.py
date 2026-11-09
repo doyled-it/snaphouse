@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -58,8 +59,10 @@ THUMBNAIL_BATCH = 16
 #: Trash entries older than this are purged on scan.
 TRASH_RETENTION_SECONDS = 30 * 86400
 
-#: A piece rotates on the frame only when its aspect reaches this (landscape).
-MIN_ASPECT = 1.3
+#: Default rotation cutoff: a piece rotates on the frame only when its aspect
+#: reaches this (landscape). Stored in the control file as ``settings.min_aspect``
+#: so the hub is the single source of truth and the frame follows it.
+MIN_ASPECT = 1.1
 
 #: Upload size limit per file; nginx enforces the same limit at the edge.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -152,6 +155,7 @@ class Library:
         self._purge_trash()
         control = self._load_state()
         enabled = set(control["settings"]["folders_enabled"])
+        min_aspect = control["settings"]["min_aspect"]
 
         pieces: list[dict] = []
         folder_counts: dict[str, int] = {BUILTIN_FOLDER: 0}
@@ -171,14 +175,14 @@ class Library:
                 for child in self._iter_dir(entry):
                     if child.is_file():
                         piece = self._build_piece(
-                            child, entry.name, referenced, ensure_thumbnails
+                            child, entry.name, referenced, ensure_thumbnails, min_aspect
                         )
                         if piece is not None:
                             pieces.append(piece)
                             folder_counts[entry.name] += 1
             elif entry.is_file():
                 piece = self._build_piece(
-                    entry, BUILTIN_FOLDER, referenced, ensure_thumbnails
+                    entry, BUILTIN_FOLDER, referenced, ensure_thumbnails, min_aspect
                 )
                 if piece is not None:
                     pieces.append(piece)
@@ -217,7 +221,12 @@ class Library:
         return folders
 
     def _build_piece(
-        self, path: Path, folder: str, referenced: set[str], ensure_thumbnails: bool
+        self,
+        path: Path,
+        folder: str,
+        referenced: set[str],
+        ensure_thumbnails: bool,
+        min_aspect: float,
     ) -> Optional[dict]:
         if path.suffix.lower() not in IMAGE_EXTENSIONS:
             return None
@@ -250,7 +259,7 @@ class Library:
             "source_url": source_url,
             "width": width,
             "height": height,
-            "landscape": self._is_landscape(width, height),
+            "landscape": self._is_landscape(width, height, min_aspect),
             "size": stat.st_size,
             "mtime": int(stat.st_mtime),
             "thumb": self._thumb_url_if_present(thumb_name),
@@ -606,17 +615,17 @@ class Library:
         """
         if action not in ("next", "previous", "show"):
             raise ArtError(400, "That is not a valid rotation command.")
+        control = self._load_state()
         if action == "show":
             if not piece:
                 raise ArtError(400, "No piece was given to show.")
             path = self._resolve_piece(piece)
             width, height = self._dimensions(path)
-            if not self._is_landscape(width, height):
+            if not self._is_landscape(width, height, control["settings"]["min_aspect"]):
                 raise ArtError(409, "That piece is too tall for the frame.")
         else:
             piece = None
 
-        control = self._load_state()
         last = control.get("command")
         seq = (last["seq"] if last else 0) + 1
         command = {
@@ -841,6 +850,7 @@ class Library:
             "settings": {
                 "rotate_minutes": DEFAULT_INTERVAL,
                 "folders_enabled": [BUILTIN_FOLDER],
+                "min_aspect": MIN_ASPECT,
             },
             "command": None,
         }
@@ -865,6 +875,14 @@ class Library:
             folders = settings.get("folders_enabled")
             if isinstance(folders, list):
                 state["settings"]["folders_enabled"] = [f for f in folders if isinstance(f, str)]
+            min_aspect = settings.get("min_aspect")
+            if (
+                isinstance(min_aspect, (int, float))
+                and not isinstance(min_aspect, bool)
+                and math.isfinite(min_aspect)
+                and min_aspect > 0
+            ):
+                state["settings"]["min_aspect"] = min_aspect
         command = data.get("command")
         if isinstance(command, dict) and isinstance(command.get("seq"), int):
             state["command"] = command
@@ -900,8 +918,8 @@ class Library:
         return None
 
     @staticmethod
-    def _is_landscape(width: int, height: int) -> bool:
-        return height > 0 and (width / height) >= MIN_ASPECT
+    def _is_landscape(width: int, height: int, min_aspect: float) -> bool:
+        return height > 0 and (width / height) >= min_aspect
 
     @staticmethod
     def _dimensions(path: Path) -> tuple[int, int]:
