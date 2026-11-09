@@ -308,6 +308,36 @@ def test_wants_art_once_per_key():
     assert tracker.now_playing_doc(dt(0))["track"]["art_url"] == "/cover/lookup/x.jpg"
 
 
+def test_rewrite_art_url_rejects_protocol_relative():
+    # A protocol-relative "//host/..." URL starts with "/", but a browser
+    # resolves it to another origin, so it must not pass through as a same-origin
+    # path. It is rejected like any other foreign host.
+    assert rewrite_art_url("//evil.example/cover/x.jpg") is None
+    assert rewrite_art_url("//evil.example/cover/lookup/x.jpg") is None
+    assert rewrite_art_url("//evil.example/other.jpg") is None
+    # A genuine same-origin path is still kept.
+    assert rewrite_art_url("/cover/x.jpg") == "/cover/x.jpg"
+
+
+def test_wants_art_again_after_key_change():
+    # A no-art track that replays must ask for art again: the per-key suppression
+    # clears when the current key changes, so ArtLookup (answering from its disk
+    # cache) is consulted again rather than the cover staying missing forever.
+    tracker = Tracker("House", [])
+    tracker.on_server(server(props(title="A", artist="Ar", album="Al")), dt(0))
+    assert tracker.wants_art() == (("A", "Ar", "Al"), "music", None)
+    # Suppressed while the same track stays current.
+    assert tracker.wants_art() is None
+
+    tracker.on_properties("House", props(title="B", artist="Br", album="Bl"), dt(5))
+    assert tracker.wants_art() == (("B", "Br", "Bl"), "music", None)
+
+    # The same no-art track comes back; it is asked for again.
+    tracker.on_properties("House", props(title="A", artist="Ar", album="Al"), dt(10))
+    assert tracker.wants_art() == (("A", "Ar", "Al"), "music", None)
+    assert tracker.wants_art() is None
+
+
 def test_wants_art_none_when_art_present():
     tracker = Tracker("House", [])
     tracker.on_server(

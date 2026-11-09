@@ -43,7 +43,17 @@ git clone git@github.com:doyled-it/nightstand.git
   the active AirPlay cover to a small JPEG (<=600 px, under 150 KB) and serves it at
   `http://house.local/cover/<hash>.jpg`; the `artUrl` in the now-playing metadata above is
   that URL. This is distinct from the art share below: `/cover/` is the current track's
-  cover from snapserver's stream, `/art/` is the images people drop in for the frame.
+  cover from snapserver's stream, `/art/` is the images people drop in for the frame. For
+  a track that arrives without a cover (Bluetooth, some apps), the hub's now-playing
+  service resolves one from public catalogues and serves it under `/cover/lookup/`, with
+  history thumbnails kept under `/cover/history/`; see the hub outbound list in the design.
+- **Now-playing file (snaphouse produces, nightstand and the room-picker page consume).**
+  The hub's `snaphouse-nowplaying` service is the single source of now-playing data: it
+  follows the House stream over snapserver's control port and writes `now-playing.json` and
+  `play-history.json` into the public web root, served same-origin by nginx. Consumers read
+  those files rather than snapserver directly, because the files carry a position anchor
+  (snapserver's properties have no timestamp) and a resolved cover for coverless tracks.
+  The "Now-playing file" and "Play-history file" contracts below pin their shapes.
 - **Art share (snaphouse produces, nightstand consumes).** One folder on the hub,
   `/srv/snaphouse/art`, exposed two ways on the LAN. People drop images in over a writable
   Samba share (`[art]`, one account whose password lives only in the hub's local settings).
@@ -124,6 +134,69 @@ listing" contract (line 1 title, line 2 artist, optional line 3 an https source 
 is ignored unless it parses as https). The hub republishes a validated copy same-origin at
 `http://house.local/art-history.json`, keeping only these fields, capping history at 50,
 and keeping the last good copy when a fetch fails.
+
+**Now-playing file.** snaphouse produces, nightstand and the room-picker page consume. The
+hub's `snaphouse-nowplaying` service writes `/var/lib/snaphouse/public/now-playing.json`
+atomically (0644); nginx serves it same-origin at `http://house.local/now-playing.json`. It
+is whatever is on the House stream right now, from either input. Shape:
+
+```json
+{
+  "updated_at": "2026-11-08T21:14:03-08:00",
+  "track": {
+    "title": "Episode 412: ...",
+    "artist": "The Long Version",
+    "album": "The Long Version",
+    "kind": "long_form",
+    "source": "bluetooth",
+    "status": "playing",
+    "duration": 3120.0,
+    "position": 1390.0,
+    "position_at": "2026-11-08T21:13:58-08:00",
+    "started_at": "2026-11-08T20:50:48-08:00",
+    "art_url": "/cover/3f2a....jpg"
+  },
+  "rooms": ["Bedroom", "Office"]
+}
+```
+
+`track` is `null` when nothing with a title is on House, and also once a track has been
+paused (or the House stream idle) for 10 minutes; before that it stays with
+`status: "paused"`. `status` is `"playing"` or `"paused"`; `source` is `"airplay"` or
+`"bluetooth"`; `kind` is `"music"` or `"long_form"`. `artist`, `album`, `duration`,
+`position`, `position_at`, and `art_url` may each be `null`. `art_url` is always a
+same-origin `/cover/...` path on the hub (or `null`), never an absolute or off-origin URL.
+`position` is the position at the moment the properties were emitted and `position_at` is
+when the service received it, so a consumer ticks `position + (now - position_at)` while
+playing and freezes it while paused. `rooms` is the connected, unmuted clients on the House
+stream by display name; an empty list is allowed (the frame treats it as nothing playing,
+the web page still shows the track). A missing, empty, or malformed file means nothing
+playing: a consumer hides the card and never shows stale data.
+
+**Play-history file.** snaphouse produces, the room-picker page consumes. The same service
+writes `/var/lib/snaphouse/public/play-history.json` atomically (0644); nginx serves it at
+`http://house.local/play-history.json`. Shape:
+
+```json
+{
+  "plays": [
+    {
+      "title": "...", "artist": "...", "album": "...",
+      "kind": "music", "source": "airplay",
+      "duration": 322.0, "started_at": "2026-11-08T21:01:10-08:00",
+      "art_url": "/cover/history/....jpg"
+    }
+  ]
+}
+```
+
+Newest first, at most 50. A play is added once a track has been current for 30 seconds; a
+track's identity is `(title, artist, album)`, so pausing and resuming the same track is one
+play (not two), as is a mid-track service restart within the track's duration plus 10
+minutes. `art_url` is a same-origin `/cover/history/...` path (a durable copy the service
+keeps so it survives cover pruning) or `null`, and is filled in later if the cover lookup
+finishes after the play was recorded. `artist`, `album`, `duration`, and `art_url` may be
+`null`.
 
 **snapserver API.** `http://house.local/jsonrpc` is proxied by nginx on the hub to
 snapserver's JSON-RPC (port 1780). Port 1780 itself stays reachable on the LAN for

@@ -19,7 +19,7 @@ room-picker page consume:
   carrying fresh playback status, metadata, and position.
 
 ``tick`` advances time so a paused track can time out and a play can cross the
-history threshold without a snapserver event. The module does no I/O: the
+history threshold without a snapserver event. ``Tracker`` does no I/O: the
 runtime writes the files and clears the ``now_playing_changed`` and
 ``history_changed`` flags after each write.
 
@@ -27,14 +27,34 @@ Position carries Task 1 semantics. Every properties update that carries
 ``position`` already holds the value extrapolated to the moment of emit (frozen
 while paused), so the tracker anchors ``(position, arrival time)`` on each one
 with no stale-value filtering. Consumers extrapolate from that anchor.
+
+``Service`` is the runtime wrapped around the tracker (run as
+``python -m snaphouse.nowplaying`` by the ``snaphouse-nowplaying`` systemd unit
+on the hub). It follows the House stream over snapserver's newline-delimited
+JSON-RPC control port, resolves missing covers on one background worker thread,
+and writes the two files atomically whenever the tracker is dirty. It reconnects
+with backoff on any socket error and reloads history from disk at start.
 """
 
 from __future__ import annotations
 
+import argparse
+import json
+import logging
+import os
+import queue
+import socket
+import sys
+import tempfile
+import threading
+import time
 from collections import namedtuple
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlsplit
+
+from .artlookup import ArtLookup, keep_for_history, prune_history_covers, urllib_fetch
 
 # A track's identity: title, artist, album. Artist and album may be absent
 # (internet radio, some apps); the title is always present when there is a track.
@@ -74,14 +94,17 @@ def rewrite_art_url(url: str | None) -> str | None:
 
     The AirPlay bridge publishes an absolute ``http://<host>/cover/...`` URL; the
     now-playing data must carry only a same-origin path on the hub. An absolute
-    URL under ``/cover/`` becomes its path, a path that is already same-origin
-    passes through, and anything else (a foreign host, a non-cover path) becomes
-    ``None`` so no off-origin or unexpected reference ever ships.
+    URL under ``/cover/`` becomes its path, a rooted same-origin path passes
+    through, and anything else becomes ``None`` so no off-origin or unexpected
+    reference ever ships. A protocol-relative ``//host/...`` URL is rejected too:
+    it begins with ``/`` but a browser resolves it to another origin.
     """
     if url is None:
         return None
     url = url.strip()
     if not url:
+        return None
+    if url.startswith("//"):
         return None
     if url.startswith("/"):
         return url
@@ -374,6 +397,13 @@ class Tracker:
         self._anchor_pos = None
         self._anchor_at = None
 
+        # A new identity clears the per-key art-wanted suppression, so a track
+        # that replays (its key becomes current again) asks for art once more.
+        # ArtLookup answers a repeat request from its own disk cache, so this
+        # costs no network call for a track whose cover was already resolved, and
+        # recovers one for a no-art track that had nothing to show before.
+        self._art_wanted.clear()
+
         newest = self._history[0] if self._history else None
         if newest is not None and _key_of(newest) == new_key:
             started = _parse_dt(newest.get("started_at"))
@@ -472,3 +502,353 @@ def _key_of(play: dict) -> TrackKey:
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+# -- runtime --------------------------------------------------------------- #
+
+# Notifications that mean the server state the tracker reads (streams, groups,
+# clients, House properties) may have changed, so the service re-requests
+# Server.GetStatus. Client.* and Group.* are matched by prefix as well.
+_RESTATUS_METHODS = frozenset({"Stream.OnUpdate", "Server.OnUpdate"})
+
+
+def load_history(path: Path, log: logging.Logger) -> list[dict]:
+    """Load the plays list from ``play-history.json`` at start, or an empty list.
+
+    A missing file is a fresh start and is silent. A present but corrupt file
+    (bad JSON, or no plays list) logs a warning and starts empty, so a half
+    written file from a crash never stops the service from coming up.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    try:
+        data = json.loads(text)
+    except ValueError:
+        log.warning("%s is corrupt; starting with an empty history", path)
+        return []
+    plays = data.get("plays") if isinstance(data, dict) else None
+    if not isinstance(plays, list):
+        log.warning("%s has no plays list; starting with an empty history", path)
+        return []
+    return [play for play in plays if isinstance(play, dict)]
+
+
+def _write_json_atomic(path: Path, document: dict) -> None:
+    """Write a document to a public web-root path atomically and world-readable.
+
+    The same pattern as housestatus.py: a temp file in the same directory, fsync,
+    widen to 0644 so nginx (www-data) can serve it, then ``os.replace`` over the
+    destination, so a polling reader never sees a partial file.
+    """
+    path = Path(path)
+    payload = json.dumps(document, indent=2) + "\n"
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+            os.fchmod(handle.fileno(), 0o644)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+class Service:
+    """The now-playing runtime: snapserver control socket plus file writes.
+
+    One socket follows the House stream. ``Server.GetStatus`` is sent on connect
+    and re-requested (coalesced to at most one per cycle) whenever a notification
+    says the server state may have changed. ``Stream.OnProperties`` for House is
+    applied straight to the tracker; for an input stream it also triggers a
+    status refresh, so House's forwarded properties are picked up either way.
+    Art lookups run on one background worker so the socket loop never blocks on
+    the network, and both files are written atomically when the tracker is dirty.
+    """
+
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        public_root: Path,
+        house_stream: str,
+        tracker: Tracker,
+        art_lookup,
+        now: Callable[[], datetime] | None = None,
+        log: logging.Logger | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+        tick_interval: float = 1.0,
+        socket_timeout: float = 1.0,
+        connect_timeout: float = 5.0,
+        backoff_start: float = 1.0,
+        backoff_cap: float = 30.0,
+        worker_poll: float = 0.2,
+    ) -> None:
+        self._host = host
+        self._port = port
+        self._public_root = Path(public_root)
+        self._house_stream = house_stream
+        self._tracker = tracker
+        self._art_lookup = art_lookup
+        self._now = now if now is not None else (lambda: datetime.now().astimezone())
+        self._log = log if log is not None else logging.getLogger("snaphouse.nowplaying")
+        self._monotonic = monotonic
+        self._sleep = sleep
+        self._tick_interval = tick_interval
+        self._socket_timeout = socket_timeout
+        self._connect_timeout = connect_timeout
+        self._backoff_start = backoff_start
+        self._backoff_cap = backoff_cap
+        self._worker_poll = worker_poll
+
+        self._now_playing_path = self._public_root / "now-playing.json"
+        self._history_path = self._public_root / "play-history.json"
+
+        self._sock: socket.socket | None = None
+        self._req_id = 0
+        self._need_status = False
+        self._backoff = backoff_start
+        self._last_tick = monotonic()
+
+        self._stop = threading.Event()
+        self._art_queue: "queue.Queue[tuple[TrackKey, str, list[str] | None]]" = queue.Queue()
+        self._art_results: "queue.Queue[tuple[TrackKey, str | None]]" = queue.Queue()
+        self._worker_thread: threading.Thread | None = None
+
+    # -- lifecycle --------------------------------------------------------
+
+    def run(self) -> None:
+        """Write the files once, then follow snapserver until stopped."""
+        self._write_all(self._now())
+        self._start_worker()
+        try:
+            while not self._stop.is_set():
+                try:
+                    self._connect()
+                    self._run_connected()
+                except OSError as exc:
+                    if self._stop.is_set():
+                        break
+                    self._log.warning(
+                        "snapserver connection lost (%s); reconnecting in %.0fs",
+                        exc,
+                        self._backoff,
+                    )
+                    self._sleep(self._backoff)
+                    self._backoff = min(self._backoff * 2, self._backoff_cap)
+                finally:
+                    self._close_sock()
+        finally:
+            self._stop_worker()
+            self._close_sock()
+
+    def stop(self) -> None:
+        """Ask the service to finish the current cycle and return from ``run``."""
+        self._stop.set()
+
+    # -- socket loop ------------------------------------------------------
+
+    def _connect(self) -> None:
+        self._sock = socket.create_connection(
+            (self._host, self._port), timeout=self._connect_timeout
+        )
+        self._sock.settimeout(self._socket_timeout)
+
+    def _run_connected(self) -> None:
+        self._backoff = self._backoff_start
+        self._need_status = False
+        self._last_tick = self._monotonic()
+        self._send_get_status()
+        buffer = b""
+        while not self._stop.is_set():
+            try:
+                chunk = self._sock.recv(65536)
+            except (socket.timeout, TimeoutError):
+                chunk = None
+            if chunk == b"":
+                raise ConnectionError("snapserver closed the connection")
+            if chunk:
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    line = line.strip()
+                    if line:
+                        self._handle_message(line)
+            self._periodic()
+
+    def _periodic(self) -> None:
+        if self._need_status:
+            self._need_status = False
+            self._send_get_status()
+        now_mono = self._monotonic()
+        if now_mono - self._last_tick >= self._tick_interval:
+            self._tracker.tick(self._now())
+            self._last_tick = now_mono
+        self._drain_art_results()
+        self._pump_art_requests()
+        self._write_if_dirty(self._now())
+
+    def _handle_message(self, line: bytes) -> None:
+        try:
+            message = json.loads(line)
+        except ValueError:
+            self._log.warning("ignoring a malformed snapserver message")
+            return
+        if not isinstance(message, dict):
+            return
+        if "result" in message:
+            result = message["result"]
+            if isinstance(result, dict) and isinstance(result.get("server"), dict):
+                self._tracker.on_server(result["server"], self._now())
+            return
+        method = message.get("method")
+        if not isinstance(method, str):
+            return
+        params = message.get("params") or {}
+        if method == "Stream.OnProperties":
+            stream_id = params.get("id")
+            properties = params.get("properties") or {}
+            if isinstance(stream_id, str) and isinstance(properties, dict):
+                self._tracker.on_properties(stream_id, properties, self._now())
+                if stream_id != self._house_stream:
+                    # An input stream's properties changed; the House meta stream
+                    # forwards from it, so re-read the full status to be sure.
+                    self._need_status = True
+            return
+        if method in _RESTATUS_METHODS or method.startswith(("Client.", "Group.")):
+            self._need_status = True
+
+    def _send_get_status(self) -> None:
+        self._req_id += 1
+        self._send({"id": self._req_id, "jsonrpc": "2.0", "method": "Server.GetStatus"})
+
+    def _send(self, obj: dict) -> None:
+        assert self._sock is not None
+        self._sock.sendall((json.dumps(obj) + "\n").encode("utf-8"))
+
+    def _close_sock(self) -> None:
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+
+    # -- art worker -------------------------------------------------------
+
+    def _start_worker(self) -> None:
+        self._worker_thread = threading.Thread(
+            target=self._worker, name="art-lookup", daemon=True
+        )
+        self._worker_thread.start()
+
+    def _stop_worker(self) -> None:
+        if self._worker_thread is not None:
+            self._worker_thread.join(timeout=2.0)
+            self._worker_thread = None
+
+    def _worker(self) -> None:
+        while not self._stop.is_set():
+            try:
+                key, kind, genre = self._art_queue.get(timeout=self._worker_poll)
+            except queue.Empty:
+                continue
+            title, artist, album = key
+            try:
+                url = self._art_lookup.find(title, artist, album, kind, genre)
+            except Exception:
+                self._log.exception("art lookup raised for %r", key)
+                url = None
+            self._art_results.put((key, url))
+
+    def _pump_art_requests(self) -> None:
+        request = self._tracker.wants_art()
+        if request is not None:
+            key, kind, genre = request
+            self._art_queue.put((key, kind, genre))
+
+    def _drain_art_results(self) -> None:
+        while True:
+            try:
+                key, url = self._art_results.get_nowait()
+            except queue.Empty:
+                return
+            if url:
+                self._tracker.set_art(key, url)
+
+    # -- writing ----------------------------------------------------------
+
+    def _write_all(self, now: datetime) -> None:
+        self._write_now_playing(now)
+        self._write_history()
+        self._tracker.now_playing_changed = False
+        self._tracker.history_changed = False
+
+    def _write_if_dirty(self, now: datetime) -> None:
+        if self._tracker.now_playing_changed:
+            self._write_now_playing(now)
+            self._tracker.now_playing_changed = False
+        if self._tracker.history_changed:
+            self._write_history()
+            self._tracker.history_changed = False
+
+    def _write_now_playing(self, now: datetime) -> None:
+        _write_json_atomic(self._now_playing_path, self._tracker.now_playing_doc(now))
+
+    def _write_history(self) -> None:
+        document = self._tracker.history_doc()
+        _write_json_atomic(self._history_path, document)
+        keep = {
+            play["art_url"]
+            for play in document["plays"]
+            if play.get("art_url")
+        }
+        prune_history_covers(self._public_root, keep)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    parser = argparse.ArgumentParser(
+        prog="snaphouse.nowplaying",
+        description="Follow the House stream and publish now-playing.json (hub).",
+    )
+    parser.add_argument("--snapserver-host", default="localhost")
+    parser.add_argument("--port", type=int, default=1705)
+    parser.add_argument("--public-root", default="/var/lib/snaphouse/public")
+    parser.add_argument("--house-stream", default="House")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    log = logging.getLogger("snaphouse.nowplaying")
+
+    public_root = Path(args.public_root)
+    history = load_history(public_root / "play-history.json", log)
+    tracker = Tracker(
+        args.house_stream,
+        history,
+        keep_art=lambda url: keep_for_history(url, public_root),
+    )
+    art_lookup = ArtLookup(public_root / "cover", urllib_fetch)
+    service = Service(
+        host=args.snapserver_host,
+        port=args.port,
+        public_root=public_root,
+        house_stream=args.house_stream,
+        tracker=tracker,
+        art_lookup=art_lookup,
+        log=log,
+    )
+    service.run()
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())
