@@ -135,6 +135,7 @@ def test_doc_for_playing_track():
         "artist": "Artist",
         "album": "Album",
         "kind": "music",
+        "genre": ["Pop"],
         "source": "airplay",
         "status": "playing",
         "duration": 300.0,
@@ -144,6 +145,58 @@ def test_doc_for_playing_track():
         "art_url": "/cover/x.jpg",
     }
     assert tracker.now_playing_changed is True
+
+
+def test_genre_published_and_persisted_in_history():
+    # The genre the tracker already parses is published on the now-playing track
+    # and persisted on the history play, so a consumer can route by it.
+    tracker = Tracker("House", [], count_after_s=30)
+    tracker.on_server(
+        server(
+            props(
+                title="Chapter 1",
+                artist="A Narrator",
+                album="A Book",
+                genre=["Audiobook"],
+                position=0.0,
+            )
+        ),
+        dt(0),
+    )
+    track = tracker.now_playing_doc(dt(0))["track"]
+    assert track["genre"] == ["Audiobook"]
+    assert track["kind"] == "long_form"
+    tracker.tick(dt(30))
+    play = tracker.history_doc()["plays"][0]
+    assert play["genre"] == ["Audiobook"]
+    assert play["title"] == "Chapter 1"
+
+
+def test_track_without_genre_publishes_null():
+    tracker = Tracker("House", [])
+    tracker.on_server(server(props(title="No Genre", genre=None)), dt(0))
+    assert tracker.now_playing_doc(dt(0))["track"]["genre"] is None
+
+
+def test_older_history_without_genre_stays_valid():
+    # An entry written before the genre field has no genre key; it is additive,
+    # so loading and re-emitting such history leaves the entry untouched.
+    seed = [
+        {
+            "title": "Old",
+            "artist": None,
+            "album": None,
+            "kind": "music",
+            "source": "airplay",
+            "duration": None,
+            "started_at": dt(-1000).isoformat(),
+            "art_url": None,
+        }
+    ]
+    tracker = Tracker("House", seed)
+    play = tracker.history_doc()["plays"][0]
+    assert "genre" not in play
+    assert play["title"] == "Old"
 
 
 def test_source_follows_playing_input():

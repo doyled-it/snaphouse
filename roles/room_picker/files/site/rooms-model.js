@@ -374,9 +374,13 @@ function validatePlay(raw) {
     title: raw.title,
     artist: nonEmptyStringOrNull(raw.artist),
     album: nonEmptyStringOrNull(raw.album),
-    // `kind` ("music" or "long_form") routes the "Open in" sheet to the right
-    // apps (openInLinks); it is optional and null when the producer omits it.
+    // `kind` ("music" or "long_form") and `genre` (a list of strings) route the
+    // "Open in" sheet to the right apps (openInLinks); both are optional. `genre`
+    // is the hub's additive field (docs/cross-repo-features.md): older history
+    // entries have none, so it is null when absent and keeps only non-empty
+    // strings when present.
     kind: nonEmptyStringOrNull(raw.kind),
+    genre: stringListOrNull(raw.genre),
     duration: positiveNumberOrNull(raw.duration),
     startedAt: nonEmptyStringOrNull(raw.started_at),
     artUrl: coverPathOrNull(raw.art_url),
@@ -385,6 +389,17 @@ function validatePlay(raw) {
 
 function nonEmptyStringOrNull(value) {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+// A list of non-empty strings, or null when the value is absent, not an array,
+// or has no usable strings. The hub's `genre` field is a list of strings;
+// anything else is treated as "no genre" so routing falls back safely.
+function stringListOrNull(value) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const list = value.filter((item) => typeof item === "string" && item.length > 0);
+  return list.length > 0 ? list : null;
 }
 
 function positiveNumberOrNull(value) {
@@ -891,16 +906,21 @@ function updatedLabelFor(updatedAt, nowMs) {
 // The "Open in" sheet for a play-history row: a short list of { label, url },
 // each a search for the track in an app Android can open (the hub serves plain
 // http on the LAN, so the real share sheet is out of reach; the spec's
-// fallback). The apps are chosen by the play's `kind`:
+// fallback). The apps are chosen by the play's `kind` and `genre`:
 //   - "music": Apple Music, Spotify, YouTube Music, and a web search.
-//   - "long_form" (podcasts): Apple Podcasts, Spotify, and a web search.
+//   - an audiobook or spoken-word genre (case-insensitive "audiobook",
+//     "audio book", or "spoken"): libro.fm and a web search.
+//   - a podcast genre: Apple Podcasts, Spotify, and a web search.
+//   - any other "long_form" play (no telling genre): both the podcast apps and
+//     libro.fm, plus a web search, since the kind alone cannot tell a podcast
+//     from a book.
 //   - anything else, or a missing kind: a web search alone.
-// The query is the title plus the artist (for music) or the show, i.e. the album
-// (for a podcast), URL-encoded. A play with no title to search yields no links.
-// Pocket Casts and libro.fm from the design are dropped: neither exposes a
-// stable public search-by-query URL (the spec says to drop such services), and
-// the pinned play-history contract carries no audiobook signal to route a book
-// to a bookstore in the first place.
+// The query is the title plus the artist (for music) or the show or book, i.e.
+// the album (for long-form), URL-encoded. A play with no title to search yields
+// no links. libro.fm's public search is `https://libro.fm/search?q=<query>`
+// (verified: the endpoint stays on that path with no redirect). Pocket Casts is
+// still dropped: it exposes no stable public search-by-query or share-by-query
+// URL (verified), so there is nothing to link.
 export function openInLinks(play) {
   if (!play || typeof play !== "object") {
     return [];
@@ -917,7 +937,14 @@ export function openInLinks(play) {
   }
   const q = encodeURIComponent(query);
   const web = { label: "Web search", url: `https://duckduckgo.com/?q=${q}` };
+  const libro = { label: "libro.fm", url: `https://libro.fm/search?q=${q}` };
+  const podcastApps = [
+    { label: "Apple Podcasts", url: `https://podcasts.apple.com/search?term=${q}` },
+    { label: "Spotify", url: `https://open.spotify.com/search/${q}` },
+  ];
 
+  // Music keeps its apps whatever the genre says (classify never marks talk
+  // content as music, so this branch is reached only for actual music).
   if (kind === "music") {
     return [
       { label: "Apple Music", url: `https://music.apple.com/search?term=${q}` },
@@ -926,12 +953,25 @@ export function openInLinks(play) {
       web,
     ];
   }
+
+  const genre = (play.genre && Array.isArray(play.genre) ? play.genre : [])
+    .filter((item) => typeof item === "string")
+    .join(" ")
+    .toLowerCase();
+  const isAudiobook =
+    genre.includes("audiobook") || genre.includes("audio book") || genre.includes("spoken");
+  const isPodcast = genre.includes("podcast");
+
+  if (isAudiobook) {
+    return [libro, web];
+  }
+  if (isPodcast) {
+    return [...podcastApps, web];
+  }
   if (kind === "long_form") {
-    return [
-      { label: "Apple Podcasts", url: `https://podcasts.apple.com/search?term=${q}` },
-      { label: "Spotify", url: `https://open.spotify.com/search/${q}` },
-      web,
-    ];
+    // A long-form play whose genre names neither a podcast nor a book: it could
+    // be either, so offer both routes.
+    return [...podcastApps, libro, web];
   }
   return [web];
 }
