@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse hub-input check: snapserver is up and serving the three streams the
 # house expects (AirPlay, Bluetooth, and the House meta stream), with the
 # Bluetooth source on the shared 44100:16:2 sample format. Run by

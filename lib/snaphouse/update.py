@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -37,6 +38,13 @@ from snaphouse.status import status_path, write_status
 
 DEFAULT_REPO = Path("/opt/snaphouse")
 DEFAULT_STATE = Path("/var/lib/snaphouse/state.json")
+
+# A role declares a check by copying or templating it to this destination. The
+# basename is the check's file name in /etc/snaphouse/verify.d. Both the copy and
+# the template tasks spell the dest the same way, so one pattern finds either.
+_VERIFY_DEST_RE = re.compile(
+    r"^\s*dest:\s*/etc/snaphouse/verify\.d/([^\s/]+)\s*$"
+)
 
 
 def _repo() -> Path:
@@ -94,6 +102,97 @@ def _write_state(path: Path, last_good: str | None, failed: str | None) -> None:
     os.replace(tmp, path)
 
 
+def _role_checks(repo: Path, role: str) -> set[str]:
+    """The verify.d check names a role declares installing, read from its tasks.
+
+    The source of truth is the role's own `dest: /etc/snaphouse/verify.d/<name>`
+    task lines, so this sees checks a role copies and checks it templates
+    (bt_speaker, snapclient) alike. A role without a tasks dir contributes none.
+    """
+    tasks = repo / "roles" / role / "tasks"
+    names: set[str] = set()
+    if not tasks.is_dir():
+        return names
+    for task_file in sorted(tasks.rglob("*.yml")):
+        for line in task_file.read_text().splitlines():
+            match = _VERIFY_DEST_RE.match(line)
+            if match:
+                names.add(match.group(1))
+    return names
+
+
+def _host_roles(repo: Path, host: str) -> list[str] | None:
+    """The roles this host applies, from vars/hosts.yml in the given checkout.
+
+    Returns None, not an empty list, when the inventory is missing or does not
+    list this host, so a caller can tell "this host installs no checks" apart
+    from "I cannot tell what this host installs" and never prune on a guess.
+    """
+    hosts_file = repo / "vars" / "hosts.yml"
+    if not hosts_file.is_file():
+        return None
+    from ruamel.yaml import YAML
+
+    data = YAML(typ="safe").load(hosts_file.read_text())
+    hosts = (data or {}).get("snaphouse_hosts", {}) or {}
+    if host not in hosts:
+        return None
+    return list((hosts.get(host) or {}).get("roles", []))
+
+
+def expected_checks(repo: Path, host: str) -> set[str]:
+    """The verify.d checks this host's roles install in the given checkout."""
+    names: set[str] = set()
+    for role in _host_roles(repo, host) or []:
+        names |= _role_checks(repo, role)
+    return names
+
+
+def prune_verify_dir(repo: Path, host: str) -> list[str]:
+    """Remove managed checks the applied checkout does not install for this host.
+
+    After an apply the verify dir holds whatever every commit ever copied there,
+    because the Ansible copy that installs a check never removes one. A fallback
+    therefore leaves behind checks only the failed commit shipped, and the good
+    commit then fails verify on a check it does not own (issue #72).
+
+    This keeps the verify dir in step with the applied checkout: every file that
+    carries snaphouse's managed marker but is not one this host's roles install is
+    a leftover and is removed. Files without the marker (hand-placed or unrelated)
+    are never touched. The list of removed names is returned, newest apply wins.
+
+    Pruning is best effort. If the checkout does not let us name this host's
+    checks (no vars/hosts.yml, an unlisted host, an unreadable inventory), nothing
+    is removed: leaving a possibly-stale check in place is safe, deleting the
+    wrong one is not. Pruning never raises into the update algorithm.
+    """
+    directory = verify.verify_dir()
+    if not directory.is_dir():
+        return []
+    try:
+        roles = _host_roles(repo, host)
+        if roles is None:
+            return []
+        expected: set[str] = set()
+        for role in roles:
+            expected |= _role_checks(repo, role)
+    except Exception as exc:  # noqa: BLE001 - never let pruning break the update
+        print(f"snaphouse update: skipped verify.d pruning: {exc}", file=sys.stderr)
+        return []
+    removed: list[str] = []
+    for entry in sorted(directory.iterdir()):
+        if not entry.is_file() or entry.name in expected:
+            continue
+        try:
+            marked = verify.MANAGED_MARKER in entry.read_text(errors="ignore")
+        except OSError:
+            marked = False
+        if marked:
+            entry.unlink()
+            removed.append(entry.name)
+    return removed
+
+
 def _apply(repo: Path) -> bool:
     """Apply site.yml to this machine the way the device does, in repo."""
     completed = subprocess.run(
@@ -101,6 +200,19 @@ def _apply(repo: Path) -> bool:
         cwd=str(repo),
     )
     return completed.returncode == 0
+
+
+def _apply_pruned(repo: Path, host: str) -> bool:
+    """Apply the checkout, then drop checks it no longer installs for this host.
+
+    Pruning runs after a successful apply and before verify, so verify sees
+    exactly the checks the applied checkout ships. On an apply failure nothing is
+    pruned: the checkout did not finish, and verify will fail the run regardless.
+    """
+    if not _apply(repo):
+        return False
+    prune_verify_dir(repo, host)
+    return True
 
 
 def _ensure_status_exists(repo: Path, *, main_commit: str, last_good: str | None) -> None:
@@ -175,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     repo = _repo()
+    host = socket.gethostname()
     state = _read_state(_state_path())
     last_good = state["last_good"]
     failed = state["failed"]
@@ -212,7 +325,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # Try the target: check it out, apply it, and verify it.
     _git(repo, "checkout", "--quiet", target)
-    if _apply(repo) and _verify_passes(repo, main_commit=target, last_good=last_good):
+    if _apply_pruned(repo, host) and _verify_passes(
+        repo, main_commit=target, last_good=last_good
+    ):
         _write_state(_state_path(), last_good=target, failed=None)
         _publish(repo, main_commit=target, last_good=target, result="pass")
         return 0
@@ -228,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Fall back to the last good commit and apply it.
     _git(repo, "checkout", "--quiet", last_good)
-    recovered = _apply(repo) and _verify_passes(
+    recovered = _apply_pruned(repo, host) and _verify_passes(
         repo, main_commit=target, last_good=last_good
     )
     _publish(

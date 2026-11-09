@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse nightstand check, managed by Ansible (roles/nightstand_bootstrap).
 # snaphouse only bootstraps the frame once; everything display-specific, and the
 # frame's own health, is owned and reported by nightstand through its status

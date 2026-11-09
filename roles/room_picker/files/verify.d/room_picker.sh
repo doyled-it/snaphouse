@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse room picker check (hub only): nginx serves the page and its room
 # list locally, and snapserver answers through the /jsonrpc proxy the page uses.
 # Run by `snaphouse verify` from /etc/snaphouse/verify.d.
