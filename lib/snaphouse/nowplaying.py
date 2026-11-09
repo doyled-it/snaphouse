@@ -81,6 +81,18 @@ _ART_RETRY_BACKOFF_S = (120.0, 600.0)
 _MAX_ART_ATTEMPTS = 1 + len(_ART_RETRY_BACKOFF_S)
 
 
+def _route_signature(
+    key: TrackKey, kind: str, genre: list[str] | None
+) -> tuple:
+    """The identity of an art lookup: the track key plus what picks its route.
+
+    Two lookups share an identity when their key, kind, and genre match, so a
+    position or status resend does not change it but later metadata (a filled-in
+    kind or genre) does.
+    """
+    return (key, kind, tuple(genre) if genre else ())
+
+
 def classify(duration: float | None, genre: list[str] | None) -> str:
     """Return ``"long_form"`` or ``"music"`` for a track's duration and genre.
 
@@ -308,6 +320,9 @@ class Tracker:
         before = self._core()
         if self._track_present and self._current_key == key:
             self._art_url = art_url
+            # The lookup for this track resolved; clear the in-flight flag so the
+            # retry bookkeeping does not treat a later empty result as pending.
+            self._art_pending = False
         for play in self._history:
             if _key_of(play) == key and not play.get("art_url"):
                 play["art_url"] = self._keep_art(art_url)
@@ -332,9 +347,7 @@ class Tracker:
         if self._art_url:
             return None
 
-        kind = self._kind or "music"
-        genre_key = tuple(self._genre) if self._genre else ()
-        signature = (self._current_key, kind, genre_key)
+        signature = _route_signature(self._current_key, self._kind or "music", self._genre)
         if signature != self._art_signature:
             # A new track, or the route changed because later metadata arrived:
             # start a fresh attempt sequence for this signature.
@@ -359,15 +372,20 @@ class Tracker:
         assert self._current_key is not None
         return (self._current_key, self._kind or "music", self._genre)
 
-    def art_missing(self, key: TrackKey) -> None:
+    def art_missing(self, key: TrackKey, signature: tuple | None = None) -> None:
         """Record that the lookup for ``key`` returned no cover.
 
         Clears the in-flight flag and, while attempts remain for the current
-        signature, schedules the next retry after the back-off. A result for a
-        signature the track has since moved past is dropped: the newer signature
+        signature, schedules the next retry after the back-off. When the caller
+        passes the ``signature`` the result belongs to (the runtime does) and the
+        current track has since moved to a different signature, the stale result
+        is ignored: it neither clears the live request's in-flight flag nor
+        starts a back-off against the wrong signature. The newer signature then
         starts fresh on the next ``wants_art``.
         """
         if not self._art_pending:
+            return
+        if signature is not None and signature != self._art_signature:
             return
         self._art_pending = False
         if self._art_signature is None or self._art_signature[0] != key:
@@ -437,14 +455,22 @@ class Tracker:
 
         info = _parse_track(properties)
         if info is not None:
-            if info.key != self._current_key:
+            new_track = info.key != self._current_key
+            if new_track:
                 self._on_new_key(info.key, now)
             self._current_key = info.key
             self._track_present = True
             self._kind = classify(info.duration, info.genre)
             self._duration = info.duration
             self._genre = info.genre
-            self._art_url = info.art
+            # The cover from the source (AirPlay carries one; Bluetooth does
+            # not) replaces the current cover only on a new track or when the
+            # update actually carries an artUrl. A looked-up cover from set_art
+            # then survives the source's position, status, and metadata resends
+            # for the same track, which otherwise carry art None and would wipe
+            # it within seconds.
+            if new_track or info.art is not None:
+                self._art_url = info.art
 
         if "position" in properties:
             # A Stream.OnProperties notification carries the position
@@ -704,7 +730,9 @@ class Service:
 
         self._stop = threading.Event()
         self._art_queue: "queue.Queue[tuple[TrackKey, str, list[str] | None]]" = queue.Queue()
-        self._art_results: "queue.Queue[tuple[TrackKey, str | None]]" = queue.Queue()
+        self._art_results: (
+            "queue.Queue[tuple[TrackKey, str, list[str] | None, str | None]]"
+        ) = queue.Queue()
         self._worker_thread: threading.Thread | None = None
 
     # -- lifecycle --------------------------------------------------------
@@ -854,7 +882,7 @@ class Service:
             except Exception:
                 self._log.exception("art lookup raised for %r", key)
                 url = None
-            self._art_results.put((key, url))
+            self._art_results.put((key, kind, genre, url))
 
     def _pump_art_requests(self) -> None:
         request = self._tracker.wants_art()
@@ -865,13 +893,13 @@ class Service:
     def _drain_art_results(self) -> None:
         while True:
             try:
-                key, url = self._art_results.get_nowait()
+                key, kind, genre, url = self._art_results.get_nowait()
             except queue.Empty:
                 return
             if url:
                 self._tracker.set_art(key, url)
             else:
-                self._tracker.art_missing(key)
+                self._tracker.art_missing(key, _route_signature(key, kind, genre))
 
     # -- writing ----------------------------------------------------------
 

@@ -308,6 +308,45 @@ def test_background_art_lookup_fills_cover(tmp_path):
         server.close()
 
 
+def test_drain_art_results_wires_miss_and_found(tmp_path):
+    # The runtime hop the retry depends on: _drain_art_results must route a
+    # worker result with no cover to art_missing (scheduling a retry) and a
+    # found cover to set_art (stopping retries). Deleting the else branch that
+    # calls art_missing would leave this test red.
+    clock = {"t": 0.0}
+    tracker = Tracker("House", [], clock=lambda: clock["t"])
+    service = Service(
+        host="localhost",
+        port=0,
+        public_root=tmp_path,
+        house_stream="House",
+        tracker=tracker,
+        art_lookup=FakeArtLookup(),
+        now=_now_factory(),
+        log=LOG,
+    )
+    key = ("A", "Ar", "Al")
+    tracker.on_properties("House", _house_props(title="A", artist="Ar", album="Al"), _EPOCH)
+    # A request is in flight (handed out once; suppressed while pending).
+    assert tracker.wants_art() == (key, "music", None)
+    assert tracker.wants_art() is None
+
+    # A worker result with no cover: the retry is scheduled and fires only after
+    # the back-off.
+    service._art_results.put((key, "music", None, None))
+    service._drain_art_results()
+    assert tracker.wants_art() is None  # inside the 2-minute back-off
+    clock["t"] = 120.0
+    assert tracker.wants_art() == (key, "music", None)  # retried after the back-off
+
+    # A worker result with a cover: it lands and retries stop.
+    service._art_results.put((key, "music", None, "/cover/lookup/x.jpg"))
+    service._drain_art_results()
+    assert tracker.now_playing_doc(_EPOCH)["track"]["art_url"] == "/cover/lookup/x.jpg"
+    clock["t"] = 1_000_000.0
+    assert tracker.wants_art() is None  # a cover landed; no further lookups
+
+
 def test_files_exist_even_before_any_snapserver_data(tmp_path):
     # The service writes both files at startup so verify never finds them
     # missing, even if snapserver has not answered yet.

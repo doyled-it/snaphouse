@@ -468,6 +468,43 @@ def test_wants_art_again_when_metadata_fills_in():
     assert tracker.wants_art() is None
 
 
+def test_looked_up_cover_survives_same_track_updates():
+    # A looked-up cover set by set_art must stay on screen. The source's later
+    # updates for the same track (a position resend, a metadata resend) carry no
+    # artUrl for a Bluetooth track, and must not wipe the resolved cover. A
+    # genuinely new track clears it, and an update that does carry an artUrl
+    # still replaces it.
+    key = ("A", "Ar", "Al")
+    tracker = Tracker("House", [])
+    tracker.on_properties("House", props(title="A", artist="Ar", album="Al"), dt(0))
+    tracker.set_art(key, "/cover/lookup/x.jpg")
+    assert tracker.now_playing_doc(dt(0))["track"]["art_url"] == "/cover/lookup/x.jpg"
+
+    # A position update for the same track (no artUrl) keeps the cover.
+    tracker.on_properties(
+        "House", props(title="A", artist="Ar", album="Al", position=12.0), dt(1)
+    )
+    assert tracker.now_playing_doc(dt(1))["track"]["art_url"] == "/cover/lookup/x.jpg"
+
+    # A same-track metadata resend (a duration fills in, still no artUrl) keeps it.
+    tracker.on_properties(
+        "House", props(title="A", artist="Ar", album="Al", duration=200), dt(2)
+    )
+    assert tracker.now_playing_doc(dt(2))["track"]["art_url"] == "/cover/lookup/x.jpg"
+
+    # A genuinely new track clears the cover.
+    tracker.on_properties("House", props(title="B", artist="Br", album="Bl"), dt(3))
+    assert tracker.now_playing_doc(dt(3))["track"]["art_url"] is None
+
+    # An update that carries an artUrl still replaces the cover.
+    tracker.on_properties(
+        "House",
+        props(title="B", artist="Br", album="Bl", art="http://house.local/cover/y.jpg"),
+        dt(4),
+    )
+    assert tracker.now_playing_doc(dt(4))["track"]["art_url"] == "/cover/y.jpg"
+
+
 def test_wants_art_retries_empty_lookup_after_backoff():
     # A lookup that returns None (a transient failure) is retried for the same
     # track after a back-off: 2 minutes, then 10 minutes, at most 3 attempts per
