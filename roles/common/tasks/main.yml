@@ -63,6 +63,13 @@
         owner: root
         group: root
         mode: "0644"
+        # GitHub release assets can be slow to start, so raise the 10 s default
+        # timeout and retry a slow start rather than fail the whole apply.
+        timeout: 60
+      register: common_uv_download
+      retries: 5
+      delay: 10
+      until: common_uv_download is succeeded
 
     - name: Extract uv and uvx into /usr/local/bin
       ansible.builtin.unarchive:
