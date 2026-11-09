@@ -18,11 +18,31 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from snaphouse import airplay_meta
+
+
+# A metadata/cover-free scratch dir for the position/duration/genre tests, none
+# of which write a cover (the only item here that would, PICT, is fed empty).
+TMP = Path(tempfile.mkdtemp())
+
+
+class FakeClock:
+    """A monotonic clock the tests advance by hand, to pin position at emit time."""
+
+    def __init__(self, now: float = 0.0) -> None:
+        self.t = float(now)
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, seconds: float) -> None:
+        self.t += seconds
 
 
 # --------------------------------------------------------------------------- #
@@ -443,3 +463,80 @@ def test_stop_sets_playback_status_stopped():
     assert player.playback_status == "playing"
     airplay_meta.apply_item(player, "ssnc", "pend", b"", cover_dir=Path("/x"), host="h")
     assert player.playback_status == "stopped"
+
+
+# --------------------------------------------------------------------------- #
+# Duration, position, and genre (prgr / astm / asgn)
+# --------------------------------------------------------------------------- #
+
+
+def test_prgr_sets_duration_and_position():
+    # ssnc/prgr is ASCII start/current/end RTP frame numbers at 44100 Hz:
+    # duration is (end - start) / 44100, position is (current - start) / 44100.
+    clock = FakeClock(100.0)
+    p = airplay_meta.Player(clock=clock)
+    airplay_meta.apply_item(p, "ssnc", "prgr", b"1000/45100/1324000", cover_dir=TMP, host="h")
+    props = p.properties()
+    assert props["metadata"]["duration"] == pytest.approx((1324000 - 1000) / 44100)
+    assert props["position"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_position_extrapolates_at_emit_time_while_playing():
+    # An unrelated resend (art arriving) after a long play must report the
+    # position at emit time, not the stale anchor (Review Focus 1).
+    clock = FakeClock(100.0)
+    p = airplay_meta.Player(clock=clock)
+    airplay_meta.apply_item(p, "ssnc", "pbeg", b"", cover_dir=TMP, host="h")
+    # 0/0/44100000 is a 1000 s track, long enough that 300 s stays within it.
+    airplay_meta.apply_item(p, "ssnc", "prgr", b"0/0/44100000", cover_dir=TMP, host="h")
+    clock.advance(300)
+    airplay_meta.apply_item(p, "ssnc", "PICT", b"", cover_dir=TMP, host="h")  # unrelated resend
+    assert p.properties()["position"] == pytest.approx(300.0)
+
+
+def test_position_frozen_while_paused():
+    clock = FakeClock(100.0)
+    p = airplay_meta.Player(clock=clock)
+    airplay_meta.apply_item(p, "ssnc", "pbeg", b"", cover_dir=TMP, host="h")
+    airplay_meta.apply_item(p, "ssnc", "prgr", b"0/0/44100000", cover_dir=TMP, host="h")
+    clock.advance(60)
+    airplay_meta.apply_item(p, "ssnc", "pfls", b"", cover_dir=TMP, host="h")  # pause
+    clock.advance(600)
+    # Paused freezes the position at the moment of the pause.
+    assert p.properties()["position"] == pytest.approx(60.0)
+
+
+def test_position_clamps_to_duration():
+    # Playing past the end (no new prgr) must not report beyond the duration.
+    clock = FakeClock(0.0)
+    p = airplay_meta.Player(clock=clock)
+    airplay_meta.apply_item(p, "ssnc", "pbeg", b"", cover_dir=TMP, host="h")
+    airplay_meta.apply_item(p, "ssnc", "prgr", b"0/0/4410000", cover_dir=TMP, host="h")  # 100 s
+    clock.advance(500)
+    assert p.properties()["position"] == pytest.approx(100.0)
+
+
+def test_astm_is_fallback_duration_only():
+    # core/astm (4-byte big-endian ms) is a duration fallback when prgr is absent.
+    p = airplay_meta.Player()
+    airplay_meta.apply_item(p, "core", "astm", (322000).to_bytes(4, "big"), cover_dir=TMP, host="h")
+    assert p.properties()["metadata"]["duration"] == pytest.approx(322.0)
+    # With a prgr duration already known, astm must not override it.
+    p2 = airplay_meta.Player()
+    airplay_meta.apply_item(p2, "ssnc", "prgr", b"0/0/44100000", cover_dir=TMP, host="h")  # 1000 s
+    airplay_meta.apply_item(p2, "core", "astm", (322000).to_bytes(4, "big"), cover_dir=TMP, host="h")
+    assert p2.properties()["metadata"]["duration"] == pytest.approx(1000.0)
+
+
+def test_asgn_sets_genre_and_mdst_clears_it():
+    p = airplay_meta.Player()
+    airplay_meta.apply_item(p, "ssnc", "mdst", b"", cover_dir=TMP, host="h")
+    airplay_meta.apply_item(p, "core", "mper", b"AAAAAAAA", cover_dir=TMP, host="h")
+    airplay_meta.apply_item(p, "core", "asgn", b"Podcast", cover_dir=TMP, host="h")
+    airplay_meta.apply_item(p, "ssnc", "mden", b"", cover_dir=TMP, host="h")
+    assert p.properties()["metadata"]["genre"] == ["Podcast"]
+    # A new track with no genre: mdst clears it, so no genre key survives.
+    airplay_meta.apply_item(p, "ssnc", "mdst", b"", cover_dir=TMP, host="h")
+    airplay_meta.apply_item(p, "core", "mper", b"BBBBBBBB", cover_dir=TMP, host="h")
+    airplay_meta.apply_item(p, "ssnc", "mden", b"", cover_dir=TMP, host="h")
+    assert "genre" not in p.properties().get("metadata", {})
