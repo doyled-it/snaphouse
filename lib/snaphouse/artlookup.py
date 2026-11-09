@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import logging
 import os
 import re
 import tempfile
@@ -288,6 +289,7 @@ class ArtLookup:
         sleep: Callable[[float], None] = time.sleep,
         max_files: int = _DEFAULT_MAX_FILES,
         miss_ttl_s: float = _DEFAULT_MISS_TTL,
+        log: Optional[logging.Logger] = None,
     ) -> None:
         self._cover_root = Path(cover_root)
         self._fetch = fetch
@@ -295,6 +297,7 @@ class ArtLookup:
         self._sleep = sleep
         self._max_files = max_files
         self._miss_ttl_s = miss_ttl_s
+        self._log = log if log is not None else logging.getLogger("snaphouse.artlookup")
         self._last_musicbrainz: float | None = None
 
     def find(
@@ -310,44 +313,60 @@ class ArtLookup:
         Answers from the disk cache with no network call when the image, or a
         fresh miss marker, already exists for this lookup, so a replayed track is
         not searched for again. A miss writes a ``.none`` marker and returns None.
+        One INFO line names the lookup and its outcome (cover found, miss, or
+        failure), carrying only the show or album name.
         """
         chosen = route(kind, genre)
+        url, outcome = self._find(chosen, kind, title, artist, album)
+        name = album or artist or title
+        self._log.info("art lookup for %r (%s): %s", name, chosen, outcome)
+        return url
+
+    def _find(
+        self,
+        chosen: str,
+        kind: str,
+        title: str,
+        artist: Optional[str],
+        album: Optional[str],
+    ) -> tuple[Optional[str], str]:
+        """Resolve the cover URL and a one-word outcome label for logging."""
         if chosen == "music" and not artist and not album:
             # Music needs at least an album or an artist to search on; with
             # neither there is nothing to look up.
-            return None
+            return (None, "miss")
 
         key = _lookup_key(chosen, title, artist, album)
         image_path = self._lookup_dir() / f"{key}.jpg"
         miss_path = self._lookup_dir() / f"{key}{_NONE_SUFFIX}"
 
         if image_path.is_file():
-            return _lookup_url(key)
+            return (_lookup_url(key), "cover found")
         if self._miss_fresh(miss_path):
-            return None
+            return (None, "miss")
 
         outcome, raw = self._resolve(chosen, kind, title, artist, album)
         if outcome == _ERROR:
             # A fetch failed; transient, so leave no marker and retry next play.
-            return None
+            return (None, "failure")
         if raw is None:
             # A real miss: the search ran and matched nothing.
             self._write_miss(miss_path)
-            return None
+            return (None, "miss")
 
         try:
             jpeg = downscale_cover(raw)
         except Exception:
             self._write_miss(miss_path)
-            return None
+            return (None, "miss")
 
         try:
             self._lookup_dir().mkdir(parents=True, exist_ok=True)
             _atomic_write(image_path, jpeg)
         except OSError:
-            return None
+            return (None, "failure")
         self._prune()
-        return _lookup_url(key)
+        return (_lookup_url(key), "cover found")
 
     # -- lookups ----------------------------------------------------------
 
