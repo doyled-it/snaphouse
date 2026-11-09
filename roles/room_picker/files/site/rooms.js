@@ -971,13 +971,7 @@ function libraryTile(piece, index) {
 
   const figure = document.createElement("div");
   figure.className = "art-tile-thumb-wrap";
-  const thumb = document.createElement("img");
-  thumb.className = "art-thumb art-tile-thumb";
-  thumb.src = piece.thumb;
-  thumb.alt = piece.title;
-  thumb.loading = "lazy";
-  thumb.decoding = "async";
-  figure.append(thumb);
+  figure.append(thumbNode(piece.thumb, piece.title, "art-thumb art-tile-thumb"));
   if (!piece.landscape) {
     const badge = document.createElement("span");
     badge.className = "art-badge";
@@ -1101,13 +1095,7 @@ function renderTrash(index) {
     const li = document.createElement("li");
     li.className = "art-item art-trash-item";
 
-    const thumb = document.createElement("img");
-    thumb.className = "art-thumb";
-    thumb.src = entry.thumb;
-    thumb.alt = entry.original;
-    thumb.loading = "lazy";
-    thumb.decoding = "async";
-    li.append(thumb);
+    li.append(thumbNode(entry.thumb, entry.original, "art-thumb"));
 
     const meta = document.createElement("div");
     meta.className = "art-meta";
@@ -1232,6 +1220,35 @@ function fillSelect(select, options, selected) {
   if (options.some((o) => o.value === selected)) {
     select.value = selected;
   }
+}
+
+// A thumbnail image, or a placeholder when there is no thumb yet. The hub can
+// publish the index before thumbnails are generated, so a fresh piece arrives
+// with a null thumb; it still belongs in the grid. When a thumb path is present
+// but 404s (a thumbnail still being written), onerror swaps in the same
+// placeholder rather than leaving a broken-image icon. `className` carries the
+// sizing classes the placeholder reuses so the tile keeps its shape.
+function thumbNode(src, label, className) {
+  if (!src) {
+    return thumbPlaceholder(className);
+  }
+  const img = document.createElement("img");
+  img.className = className;
+  img.src = src;
+  img.alt = label;
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.addEventListener("error", () => {
+    img.replaceWith(thumbPlaceholder(className));
+  });
+  return img;
+}
+
+function thumbPlaceholder(className) {
+  const ph = document.createElement("div");
+  ph.className = `${className} art-thumb-ph`;
+  ph.setAttribute("aria-hidden", "true");
+  return ph;
 }
 
 function menuButton(label, onClick, extraClass) {

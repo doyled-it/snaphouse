@@ -698,6 +698,25 @@ a.art-item-title:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* The thumbnail placeholder, shown while the hub has not written a thumb yet (a
+   fresh upload) or when a thumb path fails to load. It carries the same sizing
+   classes as the image it stands in for, with a quiet picture glyph. */
+.art-thumb-ph {
+  position: relative;
+}
+
+.art-thumb-ph::before {
+  content: "\1F5BC";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
 /* The per-piece menu, a disclosure so the grid stays compact. */
 .art-menu-summary {
   cursor: pointer;

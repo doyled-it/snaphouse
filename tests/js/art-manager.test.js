@@ -158,6 +158,52 @@ test("parseArtIndex rejects a piece whose url or thumb is not a same-origin art 
   assert.equal(index.pieces[0].id, "Collection/good.jpg");
 });
 
+test("parseArtIndex keeps a piece whose thumb is null or missing", () => {
+  // The hub can publish the index before thumbnails are generated, so a
+  // just-uploaded piece arrives with thumb null (or absent). It must stay in the
+  // library, not vanish, so the user keeps a handle on it and it still rotates.
+  const doc = indexDoc({
+    pieces: [
+      { id: "Photos/fresh.jpg", folder: "Photos", file: "fresh.jpg", title: "Fresh upload", landscape: true, thumb: null, url: "/art/Photos/fresh.jpg" },
+      { id: "Photos/fresh2.jpg", folder: "Photos", file: "fresh2.jpg", title: "No thumb key", landscape: true, url: "/art/Photos/fresh2.jpg" },
+    ],
+  });
+  const index = parseArtIndex(doc);
+  assert.equal(index.pieces.length, 2);
+  assert.equal(index.pieces[0].thumb, null);
+  assert.equal(index.pieces[1].thumb, null);
+  // Still found by the folder filter, so it renders in the grid.
+  assert.equal(piecesInFolder(index, "Photos").length, 2);
+});
+
+test("rotationSummary counts a landscape piece whose thumb is not ready yet", () => {
+  // The only landscape piece in the enabled folder was just uploaded and its
+  // thumb is still null. The frame rotates it, so the manager must not say
+  // "Nothing is in rotation."
+  const index = parseArtIndex(indexDoc({
+    folders: [{ name: "Photos", count: 1, enabled: true, builtin: false }],
+    pieces: [
+      { id: "Photos/fresh.jpg", folder: "Photos", file: "fresh.jpg", title: "Fresh upload", landscape: true, thumb: null, url: "/art/Photos/fresh.jpg" },
+    ],
+    trash: [],
+  }));
+  const control = parseArtControl(controlDoc({ settings: { rotate_minutes: 60, folders_enabled: ["Photos"] } }));
+  const summary = rotationSummary(index, control);
+  assert.equal(summary.count, 1);
+  assert.equal(summary.empty, false);
+});
+
+test("parseArtIndex keeps a trash entry whose thumb is not ready yet", () => {
+  const doc = indexDoc({
+    trash: [
+      { id: ".trash/t/fresh.jpg", original: "fresh.jpg", deleted_at: "2026-11-09T06:58:00-08:00", thumb: null },
+    ],
+  });
+  const index = parseArtIndex(doc);
+  assert.equal(index.trash.length, 1);
+  assert.equal(index.trash[0].thumb, null);
+});
+
 test("parseArtIndex keeps the landscape flag and nulls a blank artist or source", () => {
   const index = parseArtIndex(indexDoc());
   const tower = index.pieces[1];

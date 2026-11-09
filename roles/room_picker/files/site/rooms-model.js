@@ -507,8 +507,17 @@ function validateArtPiece(raw) {
     return null;
   }
   const url = artPathOrNull(raw.url, "/art/");
-  const thumb = artPathOrNull(raw.thumb, "/art-thumbs/");
-  if (url === null || thumb === null) {
+  if (url === null) {
+    return null;
+  }
+  // thumb is display-only and may be null while the hub publishes the index
+  // before thumbnails are generated (the contract allows it): keep the piece and
+  // let the view show a placeholder, so a just-uploaded piece never vanishes and
+  // rotationSummary never undercounts. A thumb that is present but not a
+  // same-origin art path is still rejected (drop the piece rather than aim an
+  // <img> off-origin or at a traversal).
+  const thumb = optionalArtPath(raw.thumb, "/art-thumbs/");
+  if (thumb === DROP) {
     return null;
   }
   return {
@@ -535,8 +544,11 @@ function validateTrashEntry(raw) {
   if (!isNonEmptyString(raw.id) || !isNonEmptyString(raw.original)) {
     return null;
   }
-  const thumb = artPathOrNull(raw.thumb, "/art-thumbs/");
-  if (thumb === null) {
+  // Like a piece, a trash entry's thumb is display-only and may not be ready
+  // yet: keep the entry and show a placeholder when it is null, reject only a
+  // present off-origin or traversing path.
+  const thumb = optionalArtPath(raw.thumb, "/art-thumbs/");
+  if (thumb === DROP) {
     return null;
   }
   return {
@@ -658,6 +670,24 @@ const GUARD_VALUE = "1";
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.length > 0;
+}
+
+// A unique sentinel optionalArtPath returns when a present value is not a valid
+// same-origin path, telling the caller to drop the whole record. It is distinct
+// from null (an absent, tolerated value) so the two cases never collide.
+const DROP = Symbol("drop");
+
+// An optional same-origin art path: null when the value is absent (null or
+// undefined), the validated path when it is a good same-origin path, or the DROP
+// sentinel when it is present but not a same-origin art path. A thumb is allowed
+// to be absent while the hub publishes before thumbnails exist; a present but
+// off-origin or traversing path is still rejected.
+function optionalArtPath(value, prefix) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const path = artPathOrNull(value, prefix);
+  return path === null ? DROP : path;
 }
 
 // A same-origin art path under `prefix` (either /art/ or /art-thumbs/), or null.
