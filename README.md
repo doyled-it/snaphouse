@@ -67,6 +67,19 @@ search, Open Library, MusicBrainz and the Cover Art Archive) in the background, 
 only the track, show, book, or artist names. Both files are served same-origin on the LAN,
 so the page and the frame never resolve another machine's name to show what is playing.
 
+## Managing the art
+
+The bedside frame rotates through an art library the hub keeps at `/srv/snaphouse/art`,
+shared over SMB so you can drop images in from a computer. A second hub service,
+`snaphouse-artadmin`, lets you manage that library and the rotation from the room-picker page
+instead: upload photos or artwork, sort them into folders and choose which folders rotate,
+delete a piece (recoverable from a trash folder for 30 days), set how often the frame changes,
+and skip to the next piece, go back, or show a chosen one now. It runs on loopback behind
+nginx, every change needs a request only the page can make, and uploads are stripped of all
+metadata (so a photo's location never leaves your phone). The service publishes a library
+index and a small control file the page and the frame both read, kept current within a minute
+even when you add files over the share directly.
+
 ## Part of a multi-repo system
 
 `snaphouse` is one of several repos. A feature usually spans repos; before calling

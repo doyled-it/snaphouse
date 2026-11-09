@@ -1,0 +1,42 @@
+# snaphouse art admin service, managed by Ansible (roles/art_share). Do not edit
+# on the host; change the template and let self-update roll it out.
+#
+# It is the one hub service that writes the art library: a loopback HTTP API
+# (127.0.0.1:8781) the room-picker page calls through nginx (/api/art/) to
+# upload, delete, move, and reorganise pieces, change the rotation interval, and
+# issue next/previous/show commands. It also publishes art-index.json and
+# art-control.json and the thumbnails every page and the frame read, rewriting
+# them after each change and on a 60 s rescan so SMB edits show up too.
+#
+# It runs from the on-device uv venv, which carries Pillow (the hub-only extra)
+# for decode, strip, and thumbnailing, and as the art account that owns the
+# library, so SMB access keeps working without widening any permission. It writes
+# only four places (the library, the two public subdirs, and its own state dir),
+# pinned by ReadWritePaths under ProtectSystem=strict. Installed on the hub only
+# (the one host whose roles include art_share).
+[Unit]
+Description=snaphouse art admin service (library API and index publisher)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=art
+Group=art
+Environment=PYTHONPATH=/opt/snaphouse/lib
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.artadmin --root /srv/snaphouse/art --public-root /var/lib/snaphouse/public --state /var/lib/snaphouse/artadmin/art-control.json --port 8781 --host 127.0.0.1
+Restart=always
+RestartSec=5
+
+# Hardening. The service reaches nothing it does not write: the rest of the
+# filesystem is read-only (ProtectSystem=strict), a private /tmp, no privilege
+# escalation, and write access limited to the library, the two public subdirs it
+# owns, and its own state directory.
+ProtectSystem=strict
+NoNewPrivileges=yes
+PrivateTmp=yes
+ReadWritePaths=/srv/snaphouse/art /var/lib/snaphouse/public/art /var/lib/snaphouse/public/art-thumbs /var/lib/snaphouse/artadmin
+
+[Install]
+WantedBy=multi-user.target

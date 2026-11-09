@@ -60,6 +60,18 @@ git clone git@github.com:doyled-it/nightstand.git
   the `nightstand` host reads it over HTTP: nginx serves the same folder read-only at `/art/` with
   `autoindex on; autoindex_format json;`, the "Art listing" contract below. nightstand
   syncs that listing to a local cache on a timer.
+- **Art rotation control (snaphouse produces, the room-picker page and nightstand consume).**
+  The hub runs the `snaphouse-artadmin` service: a loopback HTTP API nginx proxies at
+  `/api/art/` that the room-picker page calls to manage the library (upload, delete to a
+  restorable trash, move, folders) and the rotation (interval, which folders rotate, and
+  next/previous/show commands). Every write carries the `X-Snaphouse: 1` header a cross-site
+  page cannot send, and uploads are capped at 25 MB per file and stripped of all metadata. The
+  service publishes two same-origin documents the page and the frame read, `art-index.json`
+  (the whole library: folders, pieces, trash, with thumbnails) and `art-control.json` (the
+  rotation settings and the last command), rewriting both after every change and on a 60 s
+  rescan so edits made over SMB show up too. The "Art index file" and "Art control file"
+  contracts below pin their shapes. For the frame's sync this supersedes the flat `/art/`
+  listing (nightstand Task 4); the listing stays until then.
 - **Art history (nightstand produces, snaphouse consumes).** nightstand writes an
   art-history file each time it pushes the ART screen to the panel, served by snaphouse's
   nginx on the `nightstand` host at `http://nightstand.local/nightstand/art-history.json`
@@ -202,9 +214,67 @@ keeps so it survives cover pruning) or `null`, and is filled in later if the cov
 finishes after the play was recorded. `artist`, `album`, `duration`, and `art_url` may be
 `null`.
 
+**Art index file.** snaphouse produces, the room-picker page and nightstand consume. The
+`snaphouse-artadmin` service writes `/var/lib/snaphouse/public/art/art-index.json` atomically
+(0644); nginx serves it same-origin at `http://house.local/art-index.json`. It is the whole
+library, rebuilt after every change and on a 60 s rescan. Shape:
+
+```json
+{
+  "generated_at": "2026-11-09T07:00:00-08:00",
+  "folders": [
+    {"name": "Collection", "count": 172, "enabled": true, "builtin": true},
+    {"name": "Photos", "count": 12, "enabled": false, "builtin": false}
+  ],
+  "pieces": [
+    {
+      "id": "Photos/beach.jpg", "folder": "Photos", "file": "beach.jpg",
+      "title": "Beach", "artist": null, "source_url": null,
+      "width": 4032, "height": 3024, "landscape": true,
+      "size": 2481234, "mtime": 1794125000,
+      "thumb": "/art-thumbs/3f2a....jpg", "url": "/art/Photos/beach.jpg"
+    }
+  ],
+  "trash": [
+    {"id": ".trash/2026-11-09T06-58-00/old.jpg", "original": "old.jpg",
+     "deleted_at": "2026-11-09T06:58:00-08:00", "thumb": "/art-thumbs/....jpg"}
+  ]
+}
+```
+
+`folders[].builtin` is true only for the reserved top-level `Collection`; a folder named
+`Collection` cannot be created in any case. A piece `id` is its path relative to the library
+root, at most one folder deep; `url` and `thumb` are percent-encoded per path segment, while
+`id` is raw. `landscape` is true when the aspect is at least 1.3 (the frame's landscape rule);
+portrait pieces stay listed but do not rotate. `trash` entries are restorable for 30 days.
+Thumbnails are served by the same nginx at `/art-thumbs/...`, 320 px on the long side.
+
+**Art control file.** snaphouse produces, nightstand consumes (the room-picker page reads it
+too, to show the current settings). The same service writes
+`/var/lib/snaphouse/public/art/art-control.json` atomically (0644); nginx serves it at
+`http://house.local/art-control.json`. The private copy it is rebuilt from persists at
+`/var/lib/snaphouse/artadmin/art-control.json` (not served). Shape:
+
+```json
+{
+  "settings": {"rotate_minutes": 60, "folders_enabled": ["Collection"]},
+  "command": {"seq": 7, "action": "next", "piece": null,
+              "issued_at": "2026-11-09T06:59:10-08:00"}
+}
+```
+
+`settings.rotate_minutes` is one of 15, 30, 60, 120, 180, 360, 720, or 1440 (default 60).
+`settings.folders_enabled` lists the folders in rotation by name; renaming a folder carries its
+enabled state. `command` is `null` until the first command; `action` is `next`, `previous`, or
+`show` (`piece` is the id for `show`, otherwise `null`). `seq` only increases, so a frame acts on
+a `seq` greater than the last one it applied; a frame that starts up and sees an existing command
+records its `seq` without replaying it.
+
 **snapserver API.** `http://house.local/jsonrpc` is proxied by nginx on the hub to
 snapserver's JSON-RPC (port 1780). Port 1780 itself stays reachable on the LAN for
-Snapweb. nightstand calls port 1780 directly.
+Snapweb. The nightstand frame no longer calls snapserver directly for playback data: since the
+now-playing work it reads the hub's `/now-playing.json` (and covers via each track's `art_url`),
+the "Now-playing file" contract above.
 
 ## Feature type to surface
 
