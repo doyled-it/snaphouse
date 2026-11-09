@@ -57,6 +57,26 @@ def _lookup_dir(cover_root: Path) -> Path:
     return cover_root / "lookup"
 
 
+def _frozen_clock():
+    """A clock stuck at one instant, so a MusicBrainz gate never waits real time."""
+    return lambda: 1000.0
+
+
+def _gate_recorder():
+    """A (clock, sleep, slept) trio: sleep advances the clock and records waits."""
+    now = [1000.0]
+    slept = []
+
+    def clock():
+        return now[0]
+
+    def sleep(seconds):
+        slept.append(seconds)
+        now[0] += seconds
+
+    return clock, sleep, slept
+
+
 # --------------------------------------------------------------------------- #
 # route
 # --------------------------------------------------------------------------- #
@@ -163,6 +183,271 @@ def test_audiobook_genre_uses_open_library(tmp_path):
     assert url is not None
     # It never asks iTunes for an audiobook.
     assert not any("itunes.apple.com" in call for call in fetch.calls)
+
+
+# --------------------------------------------------------------------------- #
+# base name before a suffix
+# --------------------------------------------------------------------------- #
+
+
+def _itunes_result(collection_name: str) -> bytes:
+    # A one-result iTunes podcast search body with a given collectionName and an
+    # artwork URL on the mzstatic CDN, so a matched result fetches a cover.
+    return json.dumps(
+        {
+            "resultCount": 1,
+            "results": [
+                {
+                    "collectionName": collection_name,
+                    "artistName": collection_name,
+                    "artworkUrl600": "https://is1-ssl.mzstatic.com/image/x/600x600bb.jpg",
+                }
+            ],
+        }
+    ).encode("utf-8")
+
+
+def test_base_name_cuts_at_earliest_separator():
+    # The earliest-occurring separator wins, and the base is trimmed.
+    assert artlookup._base_name("Harbor Notes - Patreon Feed") == "Harbor Notes"
+    assert artlookup._base_name("Night Harbor: A Novel") == "Night Harbor"
+    assert artlookup._base_name("Night Harbor (Deluxe Edition)") == "Night Harbor"
+    assert artlookup._base_name("Radio One | Morning") == "Radio One"
+    # The colon before the dash is earliest, so "Lane" wins over "Lane: Alpha".
+    assert artlookup._base_name("Lane: Alpha - Beta") == "Lane"
+
+
+def test_base_name_rejects_short_or_separatorless():
+    # No separator: nothing to retry on.
+    assert artlookup._base_name("Seaside Review") is None
+    # A base shorter than three characters is rejected.
+    assert artlookup._base_name("AB - The Rest") is None
+    # A leading separator leaves an empty base.
+    assert artlookup._base_name(" - Patreon Feed") is None
+
+
+def test_podcast_suffix_finds_base_show(tmp_path):
+    # A podcast app sends "<Show> - Patreon Feed"; the public show is "<Show>".
+    # The full name finds no exact match, so the base before the separator does.
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _itunes_result("Harbor Notes")),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find(
+        "Episode 7",
+        "Harbor Notes - Patreon Feed",
+        "Harbor Notes - Patreon Feed",
+        "long_form",
+        ["Podcast"],
+    )
+
+    assert url is not None
+    assert url.startswith("/cover/lookup/")
+    # Two searches ran: the full name, then the base name. Both carry only names.
+    itunes_calls = [c for c in fetch.calls if "itunes.apple.com" in c]
+    assert len(itunes_calls) == 2
+    terms = [
+        urllib.parse.parse_qs(urllib.parse.urlsplit(c).query).get("term")[0]
+        for c in itunes_calls
+    ]
+    assert terms == ["Harbor Notes - Patreon Feed", "Harbor Notes"]
+    for call in itunes_calls:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(call).query)
+        assert set(query) == {"media", "entity", "term"}
+    # No miss marker: the second attempt found a cover.
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_podcast_no_separator_single_search(tmp_path):
+    # A show with no separator behaves as today: one search, and a parsed miss.
+    fetch = FakeFetch([("itunes.apple.com", _itunes_result("Harbor Notes"))])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    # Music kind with a Podcast genre routes to the podcast lookup without the
+    # long-form Open Library fallback, so this exercises only the one search.
+    url = lookup.find(
+        "Episode 7", "Seaside Review", "Seaside Review", "music", ["Podcast"]
+    )
+
+    assert url is None
+    itunes_calls = [c for c in fetch.calls if "itunes.apple.com" in c]
+    assert len(itunes_calls) == 1
+    # A single parsed miss is cached.
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_podcast_base_must_match_exactly(tmp_path):
+    # The base name search returns a near name, not an exact match, so it is still
+    # a miss and the marker is written.
+    fetch = FakeFetch([("itunes.apple.com", _itunes_result("Harbor Notes Daily"))])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    # Music kind with a Podcast genre keeps the podcast route without the
+    # long-form fallback, so both attempts parse and a single marker is written.
+    url = lookup.find(
+        "Episode 7",
+        "Harbor Notes - Patreon Feed",
+        "Harbor Notes - Patreon Feed",
+        "music",
+        ["Podcast"],
+    )
+
+    assert url is None
+    itunes_calls = [c for c in fetch.calls if "itunes.apple.com" in c]
+    assert len(itunes_calls) == 2
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_music_suffix_finds_base_release(tmp_path):
+    # The release title carries a suffix; the base matches, artist still enforced.
+    body = json.dumps(
+        {
+            "releases": [
+                {
+                    "id": "11111111-2222-3333-4444-555555555555",
+                    "title": "Night Harbor",
+                    "artist-credit": [{"name": "The Lantern Keepers"}],
+                }
+            ]
+        }
+    ).encode("utf-8")
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", body),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    clock, sleep, slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find(
+        "Track 2",
+        "The Lantern Keepers",
+        "Night Harbor (Deluxe Edition)",
+        "music",
+        None,
+    )
+
+    assert url is not None
+    mb_calls = [c for c in fetch.calls if "musicbrainz.org" in c]
+    assert len(mb_calls) == 2
+    queries = [
+        urllib.parse.parse_qs(urllib.parse.urlsplit(c).query)["query"][0]
+        for c in mb_calls
+    ]
+    assert queries == [
+        'artist:"The Lantern Keepers" AND release:"Night Harbor (Deluxe Edition)"',
+        'artist:"The Lantern Keepers" AND release:"Night Harbor"',
+    ]
+    # Each MusicBrainz request keeps only the query, format, and limit fields.
+    for call in mb_calls:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(call).query)
+        assert set(query) == {"query", "fmt", "limit"}
+    # The base attempt waited out the one-per-second gate after the full name.
+    assert slept == pytest.approx([1.0], abs=0.01)
+
+
+def test_music_base_miss_writes_marker_once(tmp_path):
+    # Both attempts parse and miss, so a single miss marker is cached.
+    fetch = FakeFetch([("musicbrainz.org", _empty_musicbrainz())])
+    clock, sleep, slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find(
+        "Track 2", "The Lantern Keepers", "Night Harbor: Live", "music", None
+    )
+
+    assert url is None
+    assert len(list(_lookup_dir(tmp_path).glob("*.none"))) == 1
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 2
+    # The base attempt waited out the gate after the full-name attempt.
+    assert slept == pytest.approx([1.0], abs=0.01)
+
+
+def test_base_attempt_error_is_not_cached(tmp_path):
+    # The full-name search parses and misses, but the base-name search fetch fails
+    # (returns None). That is transient, so no miss marker is written. The music
+    # route has no fallback leg, so this exercises the base-attempt error in
+    # isolation: a mutation that caches a base-attempt error cannot pass.
+    first = {"done": False}
+
+    def musicbrainz(url):
+        if not first["done"]:
+            first["done"] = True
+            return _empty_musicbrainz()  # full name parses and misses
+        return None  # base name fetch fails (transient)
+
+    fetch = FakeFetch([("musicbrainz.org", musicbrainz)])
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+
+    url = lookup.find(
+        "Track 2", "The Lantern Keepers", "Night Harbor: Live", "music", None
+    )
+
+    assert url is None
+    # Two MusicBrainz requests: the full name, then the base name that failed.
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 2
+    lookup_dir = _lookup_dir(tmp_path)
+    assert not (lookup_dir.exists() and list(lookup_dir.glob("*.none")))
+
+
+def test_full_name_error_skips_base_attempt(tmp_path):
+    # A full-name search that fails (returns None) is transient. The base attempt
+    # must not run, and no miss marker is written.
+    fetch = FakeFetch([])  # every URL is unmatched, so the fetch returns None
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+
+    url = lookup.find(
+        "Track 2", "The Lantern Keepers", "Night Harbor: Live", "music", None
+    )
+
+    assert url is None
+    # Only the full-name request ran; the base attempt was skipped.
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 1
+    lookup_dir = _lookup_dir(tmp_path)
+    assert not (lookup_dir.exists() and list(lookup_dir.glob("*.none")))
+
+
+def test_audiobook_suffix_finds_base_title(tmp_path):
+    # The Open Library route retries on the base title too, and its base request
+    # carries only the title and author names.
+    body = json.dumps(
+        {"docs": [{"title": "Night Harbor", "cover_i": 4242}]}
+    ).encode("utf-8")
+    fetch = FakeFetch(
+        [
+            ("openlibrary.org/search", body),
+            ("covers.openlibrary.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find(
+        "Chapter 1",
+        "Marisol Vane",
+        "Night Harbor: A Novel",
+        "long_form",
+        ["Audiobook"],
+    )
+
+    assert url is not None
+    search_calls = [c for c in fetch.calls if "openlibrary.org/search" in c]
+    assert len(search_calls) == 2
+    titles = [
+        urllib.parse.parse_qs(urllib.parse.urlsplit(c).query)["title"][0]
+        for c in search_calls
+    ]
+    assert titles == ["Night Harbor: A Novel", "Night Harbor"]
+    for call in search_calls:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(call).query)
+        # Only the title and author names go out.
+        assert set(query) == {"title", "author"}
+        assert query["author"] == ["Marisol Vane"]
 
 
 # --------------------------------------------------------------------------- #
