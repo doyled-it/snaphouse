@@ -24,6 +24,13 @@ from pathlib import Path
 # SNAPHOUSE_VERIFY_DIR so the tests can point at a temporary directory.
 DEFAULT_VERIFY_DIR = Path("/etc/snaphouse/verify.d")
 
+# Every check snaphouse installs carries this marker line near the top. It is how
+# the self-update wrapper tells its own checks apart from any file a human placed
+# in the verify dir by hand: on a fallback it prunes marked checks the applied
+# checkout does not install (snaphouse.update), and leaves unmarked files alone.
+# tests/python/test_update.py pins that every shipped check carries it.
+MANAGED_MARKER = "snaphouse-managed-check"
+
 # Each check gets this many seconds before it is treated as a failure. A wedged
 # check must not hang the whole update.
 DEFAULT_TIMEOUT = 60.0

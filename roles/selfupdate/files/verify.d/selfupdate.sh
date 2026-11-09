@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse selfupdate check: the self-update timer is active, so this machine
 # keeps pulling main and applying it. Run by `snaphouse verify` (see verify.py)
 # from /etc/snaphouse/verify.d.

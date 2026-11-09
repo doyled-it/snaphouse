@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse art-admin check, managed by Ansible (roles/art_share). The hub runs
 # the art admin service: a loopback HTTP API the room-picker page drives through
 # nginx, which also publishes art-index.json and art-control.json. This check

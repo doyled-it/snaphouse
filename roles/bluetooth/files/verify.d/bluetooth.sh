@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse bluetooth check: every adapter this host is configured to use is
 # present and none of them is left open to pairing.
 #

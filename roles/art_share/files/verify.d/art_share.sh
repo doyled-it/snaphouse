@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse art-share check, managed by Ansible (roles/art_share). The hub serves
 # the art folder two ways on the LAN: a read-only JSON listing over nginx that
 # nightstand pulls from, and a writable SMB share people drop images into. This

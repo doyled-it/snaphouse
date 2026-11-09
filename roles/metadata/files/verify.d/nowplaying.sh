@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse now-playing check: the service is active, and now-playing.json exists
 # and parses as JSON with a track key. The service writes that file at startup
 # (before snapserver answers), so it is present even when nothing is playing. Run

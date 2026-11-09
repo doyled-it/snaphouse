@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse metadata check: the two control scripts are executable and run under
 # the on-device venv, which must carry their dependencies (jeepney for Bluetooth
 # AVRCP over D-Bus; Pillow, the hub-only extra, for the AirPlay cover downscale).
