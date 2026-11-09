@@ -620,8 +620,13 @@ class Service:
         self._backoff_cap = backoff_cap
         self._worker_poll = worker_poll
 
-        self._now_playing_path = self._public_root / "now-playing.json"
-        self._history_path = self._public_root / "play-history.json"
+        # The two JSON files live in a dedicated subdirectory of the public root
+        # (owned by snapserver on the hub), so the service never needs to own the
+        # shared public web root. nginx serves them same-origin from here. Covers
+        # stay under public_root/cover, which snapserver already owns.
+        self._state_dir = self._public_root / "nowplaying"
+        self._now_playing_path = self._state_dir / "now-playing.json"
+        self._history_path = self._state_dir / "play-history.json"
 
         self._sock: socket.socket | None = None
         self._req_id = 0
@@ -638,6 +643,9 @@ class Service:
 
     def run(self) -> None:
         """Write the files once, then follow snapserver until stopped."""
+        # On the hub this directory already exists (ansible creates it owned by
+        # snapserver), so this is a no-op; off-hub and in tests it is created.
+        self._state_dir.mkdir(parents=True, exist_ok=True)
         self._write_all(self._now())
         self._start_worker()
         try:
@@ -841,7 +849,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     log = logging.getLogger("snaphouse.nowplaying")
 
     public_root = Path(args.public_root)
-    history = load_history(public_root / "play-history.json", log)
+    history = load_history(public_root / "nowplaying" / "play-history.json", log)
     tracker = Tracker(
         args.house_stream,
         history,

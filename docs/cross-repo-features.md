@@ -136,7 +136,7 @@ is ignored unless it parses as https). The hub republishes a validated copy same
 and keeping the last good copy when a fetch fails.
 
 **Now-playing file.** snaphouse produces, nightstand and the room-picker page consume. The
-hub's `snaphouse-nowplaying` service writes `/var/lib/snaphouse/public/now-playing.json`
+hub's `snaphouse-nowplaying` service writes `/var/lib/snaphouse/public/nowplaying/now-playing.json`
 atomically (0644); nginx serves it same-origin at `http://house.local/now-playing.json`. It
 is whatever is on the House stream right now, from either input. Shape:
 
@@ -174,8 +174,8 @@ the web page still shows the track). A missing, empty, or malformed file means n
 playing: a consumer hides the card and never shows stale data.
 
 **Play-history file.** snaphouse produces, the room-picker page consumes. The same service
-writes `/var/lib/snaphouse/public/play-history.json` atomically (0644); nginx serves it at
-`http://house.local/play-history.json`. Shape:
+writes `/var/lib/snaphouse/public/nowplaying/play-history.json` atomically (0644); nginx serves
+it at `http://house.local/play-history.json`. Shape:
 
 ```json
 {

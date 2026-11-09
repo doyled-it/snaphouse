@@ -28,6 +28,11 @@ _EPOCH = datetime(2026, 11, 8, 20, 0, 0, tzinfo=TZ)
 
 LOG = logging.getLogger("test.nowplaying")
 
+# The service writes the two JSON files into this subdirectory of the public
+# root (owned by snapserver on the hub), so it never needs to own the shared
+# public web root.
+STATE = "nowplaying"
+
 
 def _now_factory():
     """A monotonically advancing timezone-aware clock for the service."""
@@ -186,7 +191,7 @@ def test_on_properties_writes_now_playing(tmp_path):
     server = FakeSnapserver()
     service = _service(server, tmp_path)
     thread = _run(service)
-    out = tmp_path / "now-playing.json"
+    out = tmp_path / STATE / "now-playing.json"
     try:
         conn = server.accept()
         conn.read_message()  # the connect-time Server.GetStatus
@@ -272,7 +277,7 @@ def test_background_art_lookup_fills_cover(tmp_path):
     art = FakeArtLookup(url="/cover/lookup/abc.jpg")
     service = _service(server, tmp_path, art_lookup=art)
     thread = _run(service)
-    out = tmp_path / "now-playing.json"
+    out = tmp_path / STATE / "now-playing.json"
     try:
         conn = server.accept()
         conn.read_message()
@@ -310,15 +315,15 @@ def test_files_exist_even_before_any_snapserver_data(tmp_path):
     service = _service(server, tmp_path)
     thread = _run(service)
     try:
-        assert _wait_for(lambda: (tmp_path / "now-playing.json").is_file())
-        assert _wait_for(lambda: (tmp_path / "play-history.json").is_file())
-        now_playing = json.loads((tmp_path / "now-playing.json").read_text())
+        assert _wait_for(lambda: (tmp_path / STATE / "now-playing.json").is_file())
+        assert _wait_for(lambda: (tmp_path / STATE / "play-history.json").is_file())
+        now_playing = json.loads((tmp_path / STATE / "now-playing.json").read_text())
         assert "track" in now_playing
-        history = json.loads((tmp_path / "play-history.json").read_text())
+        history = json.loads((tmp_path / STATE / "play-history.json").read_text())
         assert history == {"plays": []}
         # No partial temp files are left behind by the atomic writes.
-        assert not list(tmp_path.glob("*.tmp"))
-        assert not list(tmp_path.glob(".*.tmp"))
+        assert not list((tmp_path / STATE).glob("*.tmp"))
+        assert not list((tmp_path / STATE).glob(".*.tmp"))
     finally:
         service.stop()
         thread.join(timeout=5)

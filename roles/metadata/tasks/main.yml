@@ -35,16 +35,18 @@
     mode: "0755"
 
 # The now-playing service (snaphouse-nowplaying) follows the House stream and
-# publishes now-playing.json and play-history.json into the public web root, with
-# background cover lookups. It runs as the snapserver user so it can write the
-# cover directory the AirPlay bridge owns (cover/lookup, cover/history). The two
-# JSON files sit in the public root itself, so the service needs to write there;
-# owning the directory grants exactly that without widening the mode for group or
-# other. root (the status timers) still writes regardless of ownership. The
-# snapserver user and the cover dir are created by hub_input, which runs first.
-- name: Let the now-playing service write the public web root
+# publishes now-playing.json and play-history.json, with background cover
+# lookups. It runs as the snapserver user so it can write the cover directory the
+# AirPlay bridge owns (cover/lookup, cover/history). The two JSON files go in this
+# dedicated subdirectory of the public root, owned by snapserver like the cover
+# dir, rather than the public root itself: the web role owns the public root as
+# root and re-asserts that every apply, so re-owning it here would fight the web
+# role and never settle. nginx serves the files same-origin from this subdir
+# (room_picker role). The snapserver user is created by hub_input, which runs
+# first; the public root is created by the web role.
+- name: Ensure the now-playing state directory exists
   ansible.builtin.file:
-    path: /var/lib/snaphouse/public
+    path: /var/lib/snaphouse/public/nowplaying
     state: directory
     owner: snapserver
     group: snapserver

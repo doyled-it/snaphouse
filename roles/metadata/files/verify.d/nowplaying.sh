@@ -10,7 +10,7 @@ systemctl is-active --quiet snaphouse-nowplaying.service
 python3 - <<'PY'
 import json
 
-with open("/var/lib/snaphouse/public/now-playing.json", encoding="utf-8") as handle:
+with open("/var/lib/snaphouse/public/nowplaying/now-playing.json", encoding="utf-8") as handle:
     doc = json.load(handle)
 assert isinstance(doc, dict), "now-playing.json is not a JSON object"
 assert "track" in doc, "now-playing.json has no track key"

@@ -103,18 +103,27 @@ def test_role_installs_the_unit_template():
     assert args.get("src") == "snaphouse-nowplaying.service.j2"
 
 
-def test_role_makes_the_public_root_writable_by_the_service():
-    owned = []
-    for task in _tasks():
-        module, args = _module(task)
-        if module.endswith("file") and str(args.get("path")) == "/var/lib/snaphouse/public":
-            owned.append(args)
-    assert owned, "no task gives the now-playing service write access to public/"
-    args = owned[0]
-    # The service runs as snapserver; owning the dir lets it write the JSON files
-    # without widening the mode for group or other.
-    assert args.get("owner") == "snapserver"
-    assert args.get("mode") == "0755"
+def test_role_creates_a_snapserver_owned_state_dir():
+    # The two JSON files live in a dedicated snapserver-owned subdirectory, like
+    # the cover directory, not the shared public root (which the web role owns as
+    # root). Owning the subdir lets the service write the files, and because the
+    # web role never touches that subdir a re-apply does not fight over the public
+    # root's ownership (the idempotency the art-share CI gate pins).
+    dirs = [
+        args
+        for task in _tasks()
+        for module, args in [_module(task)]
+        if module.endswith("file") and args.get("state") == "directory"
+    ]
+    state = [a for a in dirs if str(a.get("path")) == "/var/lib/snaphouse/public/nowplaying"]
+    assert state, "no task creates the snapserver-owned now-playing state directory"
+    assert state[0].get("owner") == "snapserver"
+    assert state[0].get("mode") == "0755"
+    # The role must not re-own the shared public web root; that fights the web
+    # role, which sets it back to root every apply (changed=2 forever).
+    assert not any(
+        str(a.get("path")) == "/var/lib/snaphouse/public" for a in dirs
+    ), "the role must not re-own the shared public web root"
 
 
 def test_enable_and_start_is_gated_on_real_systemd():
@@ -183,5 +192,8 @@ def test_nginx_serves_the_two_files_as_exact_match_locations():
         marker = f"location = {name} {{"
         assert marker in conf, f"no exact-match location for {name}"
         block = conf.split(marker, 1)[1].split("}", 1)[0]
-        assert "root /var/lib/snaphouse/public;" in block
+        # Served from the snapserver-owned state subdir (nginx appends the
+        # single-segment URI to root), so the files leave the root-owned public
+        # root untouched.
+        assert "root /var/lib/snaphouse/public/nowplaying;" in block
         assert "application/json" in block
