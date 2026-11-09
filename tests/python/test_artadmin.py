@@ -515,3 +515,69 @@ def test_bad_content_length_header_is_400(client):
         sock.sendall(request.encode("ascii"))
         status_line = sock.recv(256).decode("latin-1").splitlines()[0]
     assert "400" in status_line
+
+
+# --------------------------------------------------------------------------- #
+# Hotfix: publish the index before thumbnails (metadata-only startup pass)
+# --------------------------------------------------------------------------- #
+
+
+def test_first_publish_lists_everything_before_thumbnails(tmp_path, monkeypatch):
+    # The live hub regressed because the first publish generated a thumbnail for
+    # every one of 172 pieces (about two minutes) before writing the index, so
+    # verify got a 404 and self-update rolled back. The startup publish must list
+    # the whole library at once with null thumbs and do no thumbnail work.
+    app = _make_app(tmp_path)
+    for i in range(200):
+        _write_image(app.library.root / f"met-{i:03d}.jpg", size=(40, 30))
+
+    # Inject a slow thumbnailer: if the startup publish touched it at all the
+    # test would see a call. It must not be called.
+    calls = []
+
+    def slow_thumbnail(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("the startup publish must not generate thumbnails")
+
+    monkeypatch.setattr(app.library, "_ensure_thumbnail", slow_thumbnail)
+
+    app.publish()
+
+    index = json.loads(app.index_path.read_text(encoding="utf-8"))
+    assert len(index["pieces"]) == 200
+    assert all(piece["thumb"] is None for piece in index["pieces"])
+    assert calls == []
+
+
+def test_background_pass_fills_thumbnails_and_republishes(tmp_path):
+    app = _make_app(tmp_path)
+    for i in range(12):
+        _write_image(app.library.root / f"met-{i:02d}.jpg", size=(40, 30))
+    app.publish()  # metadata-only: all thumbs null
+
+    # One background maintenance pass generates the thumbnails and republishes.
+    app.run_thumbnail_pass()
+
+    index = json.loads(app.index_path.read_text(encoding="utf-8"))
+    assert len(index["pieces"]) == 12
+    assert all(piece["thumb"] is not None for piece in index["pieces"])
+
+
+def test_make_server_publishes_without_thumbnail_work(tmp_path, monkeypatch):
+    # The publish inside make_server (before the server serves) must be the fast
+    # metadata-only pass too, so a frame polling at boot gets a real index.
+    app = _make_app(tmp_path)
+    for i in range(50):
+        _write_image(app.library.root / f"met-{i:02d}.jpg", size=(40, 30))
+
+    monkeypatch.setattr(
+        app.library,
+        "_ensure_thumbnail",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no thumbnails at startup")),
+    )
+    server = artadmin.make_server(app, "127.0.0.1", 0)
+    try:
+        index = json.loads(app.index_path.read_text(encoding="utf-8"))
+        assert len(index["pieces"]) == 50
+    finally:
+        server.server_close()

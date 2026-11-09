@@ -217,7 +217,9 @@ finishes after the play was recorded. `artist`, `album`, `duration`, and `art_ur
 **Art index file.** snaphouse produces, the room-picker page and nightstand consume. The
 `snaphouse-artadmin` service writes `/var/lib/snaphouse/public/art/art-index.json` atomically
 (0644); nginx serves it same-origin at `http://house.local/art-index.json`. It is the whole
-library, rebuilt after every change and on a 60 s rescan. Shape:
+library, published immediately (a metadata-only pass, so a large library is listed at once)
+and rebuilt after every change and on a 60 s rescan. Thumbnails are generated in the
+background and the index is republished as they land. Shape:
 
 ```json
 {
@@ -247,7 +249,10 @@ library, rebuilt after every change and on a 60 s rescan. Shape:
 root, at most one folder deep; `url` and `thumb` are percent-encoded per path segment, while
 `id` is raw. `landscape` is true when the aspect is at least 1.3 (the frame's landscape rule);
 portrait pieces stay listed but do not rotate. `trash` entries are restorable for 30 days.
-Thumbnails are served by the same nginx at `/art-thumbs/...`, 320 px on the long side.
+`thumb` (on a piece or a trash entry) is `null` until the background pass has generated that
+thumbnail, so the index can be published before the thumbnails exist; a consumer must tolerate
+a null `thumb` (show a placeholder and re-read later). Thumbnails are served by the same nginx
+at `/art-thumbs/...`, 320 px on the long side.
 
 **Art control file.** snaphouse produces, nightstand consumes (the room-picker page reads it
 too, to show the current settings). The same service writes

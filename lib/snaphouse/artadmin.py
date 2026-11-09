@@ -37,7 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
-from snaphouse.artlib import ArtError, Library
+from snaphouse.artlib import THUMBNAIL_BATCH, ArtError, Library
 
 
 # --------------------------------------------------------------------------- #
@@ -157,8 +157,14 @@ class ArtAdmin:
 
     ``index_path`` and ``control_path`` are the public ``art-index.json`` and
     ``art-control.json`` files; both are rewritten atomically after every change
-    and by the background rescan. One lock serialises every library write and
-    every publish, so the threaded server never races itself on the filesystem.
+    and by the background maintenance pass. One lock serialises every library
+    write and every publish, so the threaded server never races itself on the
+    filesystem.
+
+    Publishing is metadata-only (fast): it lists the whole library at once with a
+    null ``thumb`` for anything not thumbnailed yet, so even a large library
+    (the hub's 172 museum pieces) is served immediately and verify never 404s.
+    The background pass then generates the thumbnails and republishes in batches.
     """
 
     def __init__(
@@ -174,6 +180,10 @@ class ArtAdmin:
         self.control_path = Path(control_path)
         self.log = log or logging.getLogger("snaphouse.artadmin")
         self._lock = threading.Lock()
+        # Ends the background maintenance loop; `_wake` nudges it to run a pass
+        # now (after an upload) instead of waiting out the interval.
+        self._stop = threading.Event()
+        self._wake = threading.Event()
         # The routing table: path -> bound handler. Each handler does the library
         # call and returns the JSON result; publishing happens around it.
         self._routes = {
@@ -194,28 +204,62 @@ class ArtAdmin:
     def publish(self) -> None:
         """Rewrite both public documents from the library's current state.
 
-        ``scan`` reads the library fresh (so SMB edits are reflected), refreshes
-        thumbnails, and prunes stale ones; ``control`` returns the persisted
-        settings and last command. Both files are written atomically, so a reader
-        never sees a half-written document.
+        A metadata-only scan: it reads the library fresh (so SMB edits are
+        reflected) and prunes stale thumbnails, but generates none, so it is fast
+        even on a large library and a not-yet-thumbnailed piece gets ``thumb:
+        null``. ``control`` returns the persisted settings and last command. Both
+        files are written atomically, so a reader never sees a half-written one.
         """
-        index = self.library.scan()
+        index = self.library.scan(ensure_thumbnails=False)
         _atomic_write_json(self.index_path, index)
         control = self.library.control()
         _atomic_write_json(self.control_path, control)
 
-    def rescan_forever(self, stop: threading.Event, interval: float = RESCAN_SECONDS) -> None:
-        """Republish every ``interval`` seconds until ``stop`` is set.
+    def _locked_publish(self) -> None:
+        with self._lock:
+            self.publish()
 
-        A failed rescan is logged and the loop continues; a transient filesystem
-        error (an SMB edit mid-scan) must not kill the background thread.
+    def run_thumbnail_pass(self) -> int:
+        """Generate any missing thumbnails and republish as they land.
+
+        The slow decode runs without the lock (so API writes are not blocked);
+        each batch of thumbnails triggers a locked republish so the new thumbs
+        appear in the index promptly. Returns the number generated. Also serves
+        as the periodic rescan: it republishes once at the end to pick up SMB
+        edits even when no thumbnail needed generating.
         """
-        while not stop.wait(interval):
-            with self._lock:
-                try:
-                    self.publish()
-                except Exception:  # noqa: BLE001 - the loop must survive any error
-                    self.log.exception("art rescan failed")
+        generated = self.library.ensure_thumbnails(
+            batch_size=THUMBNAIL_BATCH,
+            on_batch=self._locked_publish,
+            should_stop=self._stop.is_set,
+        )
+        self._locked_publish()
+        return generated
+
+    def maintain_forever(self, interval: float = RESCAN_SECONDS) -> None:
+        """Background loop: fill missing thumbnails (batched republishes), then
+        wait for the interval or a wake signal and rescan again.
+
+        An upload wakes the loop so the new piece's thumbnail appears without
+        waiting out the interval. Any error is logged and the loop continues; a
+        transient filesystem error (an SMB edit mid-scan) must not kill it.
+        """
+        while not self._stop.is_set():
+            try:
+                self.run_thumbnail_pass()
+            except Exception:  # noqa: BLE001 - the loop must survive any error
+                self.log.exception("art maintenance pass failed")
+            self._wake.wait(interval)
+            self._wake.clear()
+
+    def wake(self) -> None:
+        """Nudge the background loop to run a pass now (after an upload)."""
+        self._wake.set()
+
+    def stop(self) -> None:
+        """End the background loop."""
+        self._stop.set()
+        self._wake.set()
 
     # -- request handling -------------------------------------------------- #
 
@@ -259,6 +303,10 @@ class ArtAdmin:
                     HTTPStatus.INTERNAL_SERVER_ERROR, "Something went wrong."
                 )
                 return
+        # A write may have added a piece with no thumbnail yet (upload, restore,
+        # move); wake the background pass so its thumbnail appears without waiting
+        # out the interval.
+        self.wake()
         handler.send_api_json(HTTPStatus.OK, result)
 
     # -- endpoint handlers ------------------------------------------------- #
@@ -515,14 +563,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         control_path=public_root / "art" / "art-control.json",
         log=log,
     )
-    # make_server publishes both documents before the server starts serving, so
-    # a frame polling at boot gets a real index before any request arrives.
+    # make_server publishes both documents (metadata-only, fast) before the
+    # server starts serving, so a frame polling at boot gets a real index before
+    # any request arrives, even while the thumbnails are still being generated.
     server = make_server(app, args.host, args.port)
-    stop = threading.Event()
-    rescan = threading.Thread(
-        target=app.rescan_forever, args=(stop,), name="art-rescan", daemon=True
+    maintainer = threading.Thread(
+        target=app.maintain_forever, name="art-maintain", daemon=True
     )
-    rescan.start()
+    maintainer.start()
 
     log.info("art admin listening on %s:%s", args.host, args.port)
     try:
@@ -530,7 +578,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     except KeyboardInterrupt:  # pragma: no cover - signal path
         pass
     finally:
-        stop.set()
+        app.stop()
         server.shutdown()
         server.server_close()
     return 0

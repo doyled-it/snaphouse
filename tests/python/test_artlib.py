@@ -835,3 +835,110 @@ def _trash_entry(index: dict, trash_id: str):
         if entry["id"] == trash_id:
             return entry
     return None
+
+
+# --------------------------------------------------------------------------- #
+# metadata-only scan and background thumbnailing (hotfix: publish before thumbs)
+# --------------------------------------------------------------------------- #
+
+
+def test_scan_without_thumbnails_lists_pieces_with_null_thumb(tmp_path):
+    # A metadata-only pass lists every piece immediately with a null thumb and
+    # generates nothing, so the first index is published without the slow decode.
+    library = _make_library(tmp_path)
+    for i in range(5):
+        _write_image(library_root(library) / f"met-{i}.jpg")
+
+    index = library.scan(ensure_thumbnails=False)
+
+    assert len(index["pieces"]) == 5
+    assert all(piece["thumb"] is None for piece in index["pieces"])
+    # Nothing was written to the thumbnail directory.
+    assert not library_thumbs(library).exists() or not any(library_thumbs(library).iterdir())
+
+
+def test_scan_without_thumbnails_reuses_an_existing_thumbnail(tmp_path):
+    # Once a thumbnail exists (a full scan, or a restart after the background
+    # pass), the metadata-only scan reports its URL instead of null.
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "met-1.jpg")
+    library.scan()  # full pass generates the thumbnail
+
+    piece = _piece(library.scan(ensure_thumbnails=False), "met-1.jpg")
+
+    assert piece["thumb"] is not None
+    assert piece["thumb"].startswith("/art-thumbs/")
+
+
+def test_scan_without_thumbnails_keeps_existing_thumbnail_unpruned(tmp_path):
+    # The metadata-only scan must not prune a thumbnail that belongs to a current
+    # piece just because it did not regenerate it.
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "met-1.jpg")
+    library.scan()
+    thumb_files = set(p.name for p in library_thumbs(library).iterdir())
+
+    library.scan(ensure_thumbnails=False)
+
+    assert set(p.name for p in library_thumbs(library).iterdir()) == thumb_files
+
+
+def test_ensure_thumbnails_generates_missing_in_batches(tmp_path):
+    library = _make_library(tmp_path)
+    for i in range(20):
+        _write_image(library_root(library) / f"met-{i:02d}.jpg")
+    library.scan(ensure_thumbnails=False)  # index exists, no thumbs yet
+
+    batches = []
+    generated = library.ensure_thumbnails(batch_size=5, on_batch=lambda: batches.append(1))
+
+    assert generated == 20
+    # Batched republish: a callback after each group of five, not one per thumb.
+    assert len(batches) == 4
+    # Every piece now has a thumbnail, visible to a later metadata scan.
+    index = library.scan(ensure_thumbnails=False)
+    assert all(piece["thumb"] is not None for piece in index["pieces"])
+
+
+def test_ensure_thumbnails_is_a_noop_when_all_present(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "met-1.jpg")
+    library.scan()  # generates the thumbnail
+
+    calls = []
+    generated = library.ensure_thumbnails(batch_size=1, on_batch=lambda: calls.append(1))
+
+    assert generated == 0
+    assert calls == []
+
+
+def test_ensure_thumbnails_stops_when_asked(tmp_path):
+    library = _make_library(tmp_path)
+    for i in range(10):
+        _write_image(library_root(library) / f"met-{i}.jpg")
+    library.scan(ensure_thumbnails=False)
+
+    # Stop after the first thumbnail: should_stop is checked before each one.
+    seen = {"n": 0}
+
+    def should_stop():
+        seen["n"] += 1
+        return seen["n"] > 1
+
+    generated = library.ensure_thumbnails(batch_size=100, should_stop=should_stop)
+
+    assert generated == 1
+
+
+def test_ensure_thumbnails_covers_trash(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "met-1.jpg")
+    library.scan(ensure_thumbnails=False)
+    trash_id = library.delete("met-1.jpg")
+    library.scan(ensure_thumbnails=False)
+
+    library.ensure_thumbnails(batch_size=100)
+
+    entry = _trash_entry(library.scan(ensure_thumbnails=False), trash_id)
+    assert entry is not None
+    assert entry["thumb"] is not None
