@@ -469,3 +469,420 @@ a.art-item-title:focus-visible {
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
 }
+
+/* The art manager: the frame rotation controls and the library, grown out of
+   the "On the frame" section. The same surface, border, and radius as the rest
+   of the page, with large tap targets for a phone. */
+
+.art-btn {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-off);
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.art-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.art-btn:focus-visible,
+.art-chip:focus-visible,
+.art-select:focus-visible,
+.art-text:focus-visible,
+.art-menu-summary:focus-visible,
+.art-menu-item:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.art-btn-small {
+  min-height: 38px;
+  font-size: 0.9rem;
+  padding: 0 14px;
+}
+
+.art-nowshowing {
+  margin-top: 12px;
+}
+
+.art-nav {
+  display: flex;
+  gap: 10px;
+}
+
+.art-nav .art-btn {
+  flex: 1;
+}
+
+.art-redraw-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.art-message {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.art-manager {
+  margin-top: 20px;
+  display: grid;
+  gap: 24px;
+}
+
+.art-subheading {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+
+.art-select,
+.art-text {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.art-text {
+  min-width: 0;
+}
+
+/* Rotation: the summary line, the interval selector, and the folder chips. */
+.art-rotation {
+  display: grid;
+  gap: 12px;
+}
+
+.art-rotation-summary {
+  margin: 0;
+  font-weight: 600;
+}
+
+.art-rotation-summary.empty {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.art-interval-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.art-chips-wrap {
+  display: grid;
+  gap: 8px;
+}
+
+.art-chips-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.art-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.art-chip {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-off);
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.art-chip.on {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+/* Library: a filterable thumbnail grid, each piece with a per-piece menu. */
+.art-library-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.art-library-head .art-subheading {
+  margin: 0;
+}
+
+.art-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.art-grid {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.art-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.art-tile-thumb-wrap {
+  position: relative;
+}
+
+.art-tile-thumb {
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--surface-off);
+  display: block;
+}
+
+.art-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.art-tile-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* The per-piece menu, a disclosure so the grid stays compact. */
+.art-menu-summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
+.art-menu-summary::-webkit-details-marker {
+  display: none;
+}
+
+.art-menu-body {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.art-menu-item {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-off);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.art-menu-move {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.art-menu-move .art-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.art-menu-danger {
+  color: #ff9a8a;
+  border-color: #5a2a22;
+}
+
+@media (prefers-color-scheme: light) {
+  .art-menu-danger {
+    color: #a12a16;
+    border-color: #e0b4ab;
+  }
+}
+
+.art-empty {
+  margin: 12px 0 0;
+  color: var(--muted);
+}
+
+/* Upload: a folder choice, a file button, and a per-file progress list. */
+.art-upload-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.art-upload-folder-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.art-upload-btn {
+  cursor: pointer;
+}
+
+.art-upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.art-upload-progress {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.art-upload-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+}
+
+.art-upload-name {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.art-upload-status {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.art-upload-item.ok .art-upload-status {
+  color: var(--accent);
+}
+
+.art-upload-item.err .art-upload-status {
+  color: var(--warn-text);
+}
+
+/* Folders and trash: compact disclosures. */
+.art-folders > summary,
+.art-trash > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.art-folders > summary::-webkit-details-marker,
+.art-trash > summary::-webkit-details-marker {
+  display: none;
+}
+
+.art-folder-create {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.art-folder-create .art-text {
+  flex: 1;
+}
+
+.art-folder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.art-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.art-folder-rename {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+}
+
+.art-folder-rename .art-text {
+  flex: 1;
+}
+
+.art-trash-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.art-trash-item {
+  grid-template-columns: 56px 1fr auto;
+}

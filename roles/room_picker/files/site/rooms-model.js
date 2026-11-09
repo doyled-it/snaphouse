@@ -425,3 +425,251 @@ export function nowPlayingFromBody(text) {
 export function historyFromBody(text) {
   return parsePlayHistory(safeJsonParse(text));
 }
+
+// The art manager model: reading the hub's art library documents and building
+// the write requests the manager sends. These back the room-picker's art
+// manager (the spec's "Room picker: the art manager"); the view glue lives in
+// rooms.js, exactly as the rest of the model is split.
+
+// The rotation intervals the service accepts, in minutes (global constraints and
+// the "Art control file" contract). The selector offers only these, and a
+// control file carrying anything else falls back to the default.
+export const ALLOWED_INTERVALS = [15, 30, 60, 120, 180, 360, 720, 1440];
+
+// The default interval when the control file is missing or carries a disallowed
+// value (global constraints: default 60).
+const DEFAULT_INTERVAL = 60;
+
+// The reserved top-level folder; every other folder is one level under the
+// library root.
+const BUILTIN_FOLDER = "Collection";
+
+// Parse art-index.json (the "Art index file" contract) into the shape the
+// manager renders, or an empty library when the body is missing or malformed.
+// The hub hardens the fetch and owns the validation, but the page validates
+// again before anything reaches the DOM: a hostile or truncated body degrades to
+// an empty library rather than rendering junk or pointing an <img> off-origin
+// (Review Focus 1 at the page boundary).
+//
+// Returns { generatedAt, folders, pieces, trash }. Every piece keeps only a
+// same-origin /art/ url and /art-thumbs/ thumb; a piece or trash entry that
+// fails validation is dropped, so the caller can render whatever survives.
+export function parseArtIndex(raw) {
+  const empty = { generatedAt: null, folders: [], pieces: [], trash: [] };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return empty;
+  }
+  const folders = Array.isArray(raw.folders)
+    ? raw.folders.map(validateFolder).filter((f) => f !== null)
+    : [];
+  const pieces = Array.isArray(raw.pieces)
+    ? raw.pieces.map(validateArtPiece).filter((p) => p !== null)
+    : [];
+  const trash = Array.isArray(raw.trash)
+    ? raw.trash.map(validateTrashEntry).filter((t) => t !== null)
+    : [];
+  return {
+    generatedAt: nonEmptyStringOrNull(raw.generated_at),
+    folders,
+    pieces,
+    trash,
+  };
+}
+
+function validateFolder(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  if (typeof raw.name !== "string" || raw.name.length === 0) {
+    return null;
+  }
+  return {
+    name: raw.name,
+    count: nonNegativeNumberOrNull(raw.count) ?? 0,
+    enabled: raw.enabled === true,
+    builtin: raw.builtin === true,
+  };
+}
+
+// One library piece, validated to the contract, or null if it is unusable. id,
+// folder, file, and a non-empty title are required; url and thumb must be the
+// service's own same-origin paths (so a tampered document can never set a
+// foreign or traversing <img src>); landscape is a boolean the rotation summary
+// reads; artist and source_url are optional, source kept only when https.
+function validateArtPiece(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  if (!isNonEmptyString(raw.id) || !isNonEmptyString(raw.folder) || !isNonEmptyString(raw.file)) {
+    return null;
+  }
+  if (!isNonEmptyString(raw.title)) {
+    return null;
+  }
+  const url = artPathOrNull(raw.url, "/art/");
+  const thumb = artPathOrNull(raw.thumb, "/art-thumbs/");
+  if (url === null || thumb === null) {
+    return null;
+  }
+  return {
+    id: raw.id,
+    folder: raw.folder,
+    file: raw.file,
+    title: raw.title,
+    artist: nonEmptyStringOrNull(raw.artist),
+    sourceUrl: httpsUrlOrNull(raw.source_url),
+    width: positiveNumberOrNull(raw.width),
+    height: positiveNumberOrNull(raw.height),
+    landscape: raw.landscape === true,
+    size: nonNegativeNumberOrNull(raw.size),
+    mtime: nonNegativeNumberOrNull(raw.mtime),
+    thumb,
+    url,
+  };
+}
+
+function validateTrashEntry(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  if (!isNonEmptyString(raw.id) || !isNonEmptyString(raw.original)) {
+    return null;
+  }
+  const thumb = artPathOrNull(raw.thumb, "/art-thumbs/");
+  if (thumb === null) {
+    return null;
+  }
+  return {
+    id: raw.id,
+    original: raw.original,
+    deletedAt: nonEmptyStringOrNull(raw.deleted_at),
+    thumb,
+  };
+}
+
+// Parse art-control.json (the "Art control file" contract) into the settings and
+// last command the manager shows, with safe defaults. A missing or malformed
+// body yields the default interval, no enabled folders, and no command, so the
+// manager still renders.
+//
+// Returns { rotateMinutes, foldersEnabled, command }. rotateMinutes is clamped
+// to the allowed set (default 60); foldersEnabled keeps only non-empty strings;
+// command is { seq, action, piece, issuedAt } for a known action, else null.
+export function parseArtControl(raw) {
+  const fallback = { rotateMinutes: DEFAULT_INTERVAL, foldersEnabled: [], command: null };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return fallback;
+  }
+  const settings = raw.settings && typeof raw.settings === "object" ? raw.settings : {};
+  const minutes = settings.rotate_minutes;
+  const rotateMinutes = ALLOWED_INTERVALS.includes(minutes) ? minutes : DEFAULT_INTERVAL;
+  const foldersEnabled = Array.isArray(settings.folders_enabled)
+    ? settings.folders_enabled.filter(isNonEmptyString)
+    : [];
+  return {
+    rotateMinutes,
+    foldersEnabled,
+    command: validateCommand(raw.command),
+  };
+}
+
+function validateCommand(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  if (raw.action !== "next" && raw.action !== "previous" && raw.action !== "show") {
+    return null;
+  }
+  return {
+    seq: nonNegativeNumberOrNull(raw.seq),
+    action: raw.action,
+    piece: raw.action === "show" ? nonEmptyStringOrNull(raw.piece) : null,
+    issuedAt: nonEmptyStringOrNull(raw.issued_at),
+  };
+}
+
+// The pieces in one folder, for the library grid. A null folder (or the "all"
+// sentinel the default filter uses) returns every piece; an unknown folder name
+// returns none. `index` is a parseArtIndex result.
+export function piecesInFolder(index, folder) {
+  const pieces = index?.pieces ?? [];
+  if (folder === null || folder === undefined || folder === "all") {
+    return pieces.slice();
+  }
+  return pieces.filter((piece) => piece.folder === folder);
+}
+
+// How many pieces are actually in rotation, and the line the manager shows.
+// Only pieces in an enabled folder that pass the landscape rule rotate (the
+// frame skips portraits); when none do, the manager says nothing is in rotation
+// (Review Focus 5: all enabled folders empty or all portrait). `index` is a
+// parseArtIndex result and `control` a parseArtControl result.
+//
+// Returns { count, empty, text }.
+export function rotationSummary(index, control) {
+  const enabled = new Set(control?.foldersEnabled ?? []);
+  const pieces = index?.pieces ?? [];
+  const count = pieces.filter((piece) => enabled.has(piece.folder) && piece.landscape).length;
+  if (count === 0) {
+    return { count: 0, empty: true, text: "Nothing is in rotation." };
+  }
+  const noun = count === 1 ? "piece" : "pieces";
+  return { count, empty: false, text: `${count} ${noun} in rotation.` };
+}
+
+// The interval selector's options: the allowed set with a human label each. The
+// page renders one option per entry and matches the current setting by minutes.
+export function intervalOptions() {
+  return ALLOWED_INTERVALS.map((minutes) => ({ minutes, label: intervalLabel(minutes) }));
+}
+
+function intervalLabel(minutes) {
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+  const hours = minutes / 60;
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+}
+
+// Build the request the manager sends to a write endpoint: the url and a fetch
+// init that always carries the X-Snaphouse guard header (a cross-site page
+// cannot set it, so the service answers 403; the contract and global
+// constraints). A plain object body goes as JSON; a FormData body (an upload)
+// goes as multipart, and the browser sets the multipart Content-Type with its
+// own boundary, so this never sets Content-Type for a form.
+//
+// Returns { url, init } so the caller does fetch(url, init).
+export function apiRequest(path, body) {
+  const headers = { [GUARD_HEADER]: GUARD_VALUE };
+  let payload = body;
+  const isForm = typeof FormData !== "undefined" && body instanceof FormData;
+  if (!isForm) {
+    headers["Content-Type"] = "application/json";
+    payload = JSON.stringify(body ?? {});
+  }
+  return { url: path, init: { method: "POST", headers, body: payload } };
+}
+
+// The custom header every write carries. A cross-site form cannot set it without
+// a CORS preflight the service never answers, so it blocks CSRF (matches the hub
+// service's GUARD_HEADER / GUARD_VALUE).
+const GUARD_HEADER = "X-Snaphouse";
+const GUARD_VALUE = "1";
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
+// A same-origin art path under `prefix` (either /art/ or /art-thumbs/), or null.
+// The service writes url and thumb as these rooted paths; anything else (an
+// off-origin URL, a protocol-relative one, a different root, or a traversal) is
+// rejected so a tampered document can never aim an <img> off-origin.
+function artPathOrNull(value, prefix) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  if (!value.startsWith(prefix) || value.includes("..")) {
+    return null;
+  }
+  return value;
+}
