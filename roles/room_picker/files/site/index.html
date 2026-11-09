@@ -17,13 +17,37 @@
   <body>
     <header class="top">
       <h1 class="house">House</h1>
-      <div id="now-playing" class="now-playing" aria-live="polite"></div>
     </header>
+
+    <section id="np-card" class="np-card" aria-label="Now playing" hidden>
+      <div class="np-art">
+        <img id="np-art-img" class="np-art-img" alt="" hidden />
+        <div id="np-art-ph" class="np-art-ph" aria-hidden="true"></div>
+      </div>
+      <div class="np-info">
+        <p id="np-title" class="np-title"></p>
+        <p id="np-artist" class="np-artist" hidden></p>
+        <p id="np-album" class="np-album" hidden></p>
+        <div id="np-progress" class="np-progress" hidden>
+          <div class="np-track"><div id="np-fill" class="np-fill"></div></div>
+          <div class="np-times">
+            <span id="np-elapsed" class="np-elapsed"></span>
+            <span id="np-ends" class="np-ends" hidden></span>
+          </div>
+        </div>
+        <p id="np-status" class="np-status" hidden>Paused</p>
+      </div>
+    </section>
 
     <p id="health" class="health" role="status" hidden></p>
     <p id="connection" class="connection" role="status" hidden></p>
 
     <main id="rooms" class="rooms"></main>
+
+    <section id="np-history" class="art" aria-labelledby="np-history-heading" hidden>
+      <h2 id="np-history-heading" class="art-heading">Recently played</h2>
+      <ul id="np-history-list" class="art-history"></ul>
+    </section>
 
     <section id="art" class="art" aria-labelledby="art-heading" hidden>
       <h2 id="art-heading" class="art-heading">On the frame</h2>

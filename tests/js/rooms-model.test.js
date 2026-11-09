@@ -10,7 +10,6 @@ import assert from "node:assert/strict";
 
 import {
   roomsFromStatus,
-  nowPlaying,
   toggleRequest,
   volumeRequest,
   groupUnmuteRequest,
@@ -60,16 +59,6 @@ function statusFixture() {
               config: { name: "Bedroom", volume: { muted: false, percent: 40 } },
             },
           ],
-        },
-      ],
-      streams: [
-        {
-          id: "House",
-          status: "playing",
-          properties: {
-            playbackStatus: "playing",
-            metadata: { title: "A Song", artist: ["Artist One", "Artist Two"] },
-          },
         },
       ],
     },
@@ -136,41 +125,6 @@ test("groupUnmuteRequest unmutes a group so a room in it can be turned on", () =
   assert.deepEqual(groupUnmuteRequest("g2"), {
     method: "Group.SetMute",
     params: { id: "g2", mute: false },
-  });
-});
-
-test("nowPlaying returns title and joined artist for the playing stream", () => {
-  assert.deepEqual(nowPlaying(statusFixture()), {
-    title: "A Song",
-    artist: "Artist One, Artist Two",
-  });
-});
-
-test("nowPlaying is null when nothing is playing", () => {
-  const status = statusFixture();
-  status.server.streams[0].status = "idle";
-  status.server.streams[0].properties.playbackStatus = "stopped";
-  assert.equal(nowPlaying(status), null);
-});
-
-test("nowPlaying is null when the playing stream carries no title", () => {
-  const status = statusFixture();
-  delete status.server.streams[0].properties.metadata;
-  assert.equal(nowPlaying(status), null);
-});
-
-test("nowPlaying prefers the stream the rooms' groups play, not the first playing one", () => {
-  const status = statusFixture();
-  // An inner source is playing ahead of House in the array, with no title. The
-  // groups are assigned to House, so House's metadata is what should show.
-  status.server.streams.unshift({
-    id: "Bluetooth",
-    status: "playing",
-    properties: { playbackStatus: "playing" },
-  });
-  assert.deepEqual(nowPlaying(status), {
-    title: "A Song",
-    artist: "Artist One, Artist Two",
   });
 });
 
