@@ -40,9 +40,35 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
 
 from .airplay_meta import downscale_cover
+
+
+class LookupResult(NamedTuple):
+    """What a lookup resolved: a cover URL, and a podcast id when it has one.
+
+    ``art_url`` is the same-origin ``/cover/lookup/<sha1>.jpg`` path for the
+    track, or ``None`` on a miss or failure. ``podcast_id`` is the matched show's
+    iTunes ``collectionId`` (a positive integer) when the podcast route matched a
+    show, else ``None``. The id rides along with a found podcast cover and is
+    cached beside it, so a cached hit returns it with no network call.
+    """
+
+    art_url: Optional[str]
+    podcast_id: Optional[int]
+
+
+class _Resolved(NamedTuple):
+    """An internal lookup result: outcome, cover bytes, and an optional id.
+
+    ``podcast_id`` is set only on the podcast route, and only when a matched show
+    carries a valid ``collectionId``; every other route leaves it ``None``.
+    """
+
+    outcome: str
+    image: Optional[bytes]
+    podcast_id: Optional[int] = None
 
 # A fetch gets a URL and returns the body, or None on any failure (a bad status,
 # a timeout, a transport error, or an oversized body). The caller never sees the
@@ -71,6 +97,9 @@ _BASE_SEPARATORS = (" - ", " | ", ": ", " (")
 _MIN_BASE_LENGTH = 3
 
 _NONE_SUFFIX = ".none"
+# A podcast cover's iTunes collectionId is cached in a sidecar next to the cover,
+# so a cached hit returns the id without a network call.
+_ID_SUFFIX = ".id"
 _DEFAULT_MISS_TTL = 7 * 86400
 _DEFAULT_MAX_FILES = 300
 
@@ -310,17 +339,35 @@ class ArtLookup:
     ) -> Optional[str]:
         """A same-origin ``/cover/lookup/<sha1>.jpg`` URL for the track, or None.
 
+        The cover-only convenience over :meth:`find_with_id`; callers that also
+        want the matched podcast id call that instead. Answers from the disk
+        cache with no network call when the image, or a fresh miss marker,
+        already exists for this lookup.
+        """
+        return self.find_with_id(title, artist, album, kind, genre).art_url
+
+    def find_with_id(
+        self,
+        title: str,
+        artist: Optional[str],
+        album: Optional[str],
+        kind: str,
+        genre: Optional[list[str]],
+    ) -> LookupResult:
+        """The cover URL and, for a matched podcast, its iTunes collectionId.
+
         Answers from the disk cache with no network call when the image, or a
         fresh miss marker, already exists for this lookup, so a replayed track is
-        not searched for again. A miss writes a ``.none`` marker and returns None.
+        not searched for again; a cached podcast cover returns its id from the
+        sidecar beside it. A miss writes a ``.none`` marker and returns no cover.
         One INFO line names the lookup and its outcome (cover found, miss, or
         failure), carrying only the show or album name.
         """
         chosen = route(kind, genre)
-        url, outcome = self._find(chosen, kind, title, artist, album)
+        url, outcome, podcast_id = self._find(chosen, kind, title, artist, album)
         name = album or artist or title
         self._log.info("art lookup for %r (%s): %s", name, chosen, outcome)
-        return url
+        return LookupResult(url, podcast_id)
 
     def _find(
         self,
@@ -329,44 +376,70 @@ class ArtLookup:
         title: str,
         artist: Optional[str],
         album: Optional[str],
-    ) -> tuple[Optional[str], str]:
-        """Resolve the cover URL and a one-word outcome label for logging."""
+    ) -> tuple[Optional[str], str, Optional[int]]:
+        """Resolve the cover URL, a one-word outcome label, and a podcast id."""
         if chosen == "music" and not artist and not album:
             # Music needs at least an album or an artist to search on; with
             # neither there is nothing to look up.
-            return (None, "miss")
+            return (None, "miss", None)
 
         key = _lookup_key(chosen, title, artist, album)
         image_path = self._lookup_dir() / f"{key}.jpg"
         miss_path = self._lookup_dir() / f"{key}{_NONE_SUFFIX}"
+        id_path = self._lookup_dir() / f"{key}{_ID_SUFFIX}"
 
         if image_path.is_file():
-            return (_lookup_url(key), "cover found")
+            return (_lookup_url(key), "cover found", self._read_podcast_id(id_path))
         if self._miss_fresh(miss_path):
-            return (None, "miss")
+            return (None, "miss", None)
 
-        outcome, raw = self._resolve(chosen, kind, title, artist, album)
-        if outcome == _ERROR:
+        resolved = self._resolve(chosen, kind, title, artist, album)
+        if resolved.outcome == _ERROR:
             # A fetch failed; transient, so leave no marker and retry next play.
-            return (None, "failure")
-        if raw is None:
+            return (None, "failure", None)
+        if resolved.image is None:
             # A real miss: the search ran and matched nothing.
             self._write_miss(miss_path)
-            return (None, "miss")
+            return (None, "miss", None)
 
         try:
-            jpeg = downscale_cover(raw)
+            jpeg = downscale_cover(resolved.image)
         except Exception:
             self._write_miss(miss_path)
-            return (None, "miss")
+            return (None, "miss", None)
 
         try:
             self._lookup_dir().mkdir(parents=True, exist_ok=True)
             _atomic_write(image_path, jpeg)
         except OSError:
-            return (None, "failure")
+            return (None, "failure", None)
+        podcast_id = _valid_podcast_id(resolved.podcast_id)
+        if podcast_id is not None:
+            # Best-effort: a sidecar we fail to write just means the next cached
+            # hit returns the cover without an id, so swallow a write error.
+            try:
+                _atomic_write(id_path, str(podcast_id).encode("ascii"))
+            except OSError:
+                pass
         self._prune()
-        return (_lookup_url(key), "cover found")
+        return (_lookup_url(key), "cover found", podcast_id)
+
+    def _read_podcast_id(self, id_path: Path) -> Optional[int]:
+        """The cached podcast id beside a cover, or None when there is none.
+
+        A missing sidecar, an unreadable one, or a body that is not a positive
+        integer all resolve to None, so a cover with no (or a corrupt) id simply
+        returns without one.
+        """
+        try:
+            text = id_path.read_text(encoding="ascii")
+        except OSError:
+            return None
+        try:
+            value = int(text.strip())
+        except ValueError:
+            return None
+        return _valid_podcast_id(value)
 
     # -- lookups ----------------------------------------------------------
 
@@ -377,28 +450,30 @@ class ArtLookup:
         title: str,
         artist: Optional[str],
         album: Optional[str],
-    ) -> tuple[str, Optional[bytes]]:
-        """Resolve a cover, returning ``(outcome, image)``.
+    ) -> _Resolved:
+        """Resolve a cover, returning an ``_Resolved``.
 
         ``outcome`` is ``_FOUND`` (``image`` holds the bytes), ``_MISS`` (a real
         miss the caller should cache), or ``_ERROR`` (a transient fetch failure
-        the caller must not cache).
+        the caller must not cache). ``podcast_id`` is set only when the podcast
+        route matched a show that carried one.
         """
         if chosen == "podcast":
-            outcome, image = self._podcast(artist, album)
-            if outcome == _FOUND:
-                return (_FOUND, image)
+            found = self._podcast(artist, album)
+            if found.outcome == _FOUND:
+                return found
             if kind == "long_form":
                 # A long-form track with no genre: the podcast search found
                 # nothing, so try it as an audiobook. A blip on either leg stays
-                # a transient error so the miss is not cached over an outage.
-                fallback, fb_image = self._open_library(artist, album)
-                if fallback == _FOUND:
-                    return (_FOUND, fb_image)
-                if _ERROR in (outcome, fallback):
-                    return (_ERROR, None)
-                return (_MISS, None)
-            return (outcome, None)
+                # a transient error so the miss is not cached over an outage. An
+                # audiobook cover carries no podcast id.
+                fallback = self._open_library(artist, album)
+                if fallback.outcome == _FOUND:
+                    return fallback
+                if _ERROR in (found.outcome, fallback.outcome):
+                    return _Resolved(_ERROR, None)
+                return _Resolved(_MISS, None)
+            return _Resolved(found.outcome, None)
         if chosen == "audiobook":
             return self._open_library(artist, album)
         return self._music(artist, album)
@@ -406,8 +481,8 @@ class ArtLookup:
     def _with_base(
         self,
         name: str,
-        search: Callable[[str], tuple[str, Optional[bytes]]],
-    ) -> tuple[str, Optional[bytes]]:
+        search: Callable[[str], _Resolved],
+    ) -> _Resolved:
         """Search the full name, then the base name before its first suffix.
 
         ``search`` runs one lookup for a given name and returns its outcome. The
@@ -416,29 +491,29 @@ class ArtLookup:
         attempt returns ``_ERROR`` at once, so the miss marker is written only
         when both attempts parse and miss.
         """
-        outcome, image = search(name)
-        if outcome != _MISS:
-            return (outcome, image)
+        result = search(name)
+        if result.outcome != _MISS:
+            return result
         base = _base_name(name)
         if base is None:
-            return (_MISS, None)
+            return _Resolved(_MISS, None)
         return search(base)
 
     def _podcast(
         self, artist: Optional[str], album: Optional[str]
-    ) -> tuple[str, Optional[bytes]]:
+    ) -> _Resolved:
         show = album or artist
         if not show:
-            return (_MISS, None)
+            return _Resolved(_MISS, None)
         return self._with_base(show, self._podcast_search)
 
-    def _podcast_search(self, show: str) -> tuple[str, Optional[bytes]]:
+    def _podcast_search(self, show: str) -> _Resolved:
         url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
             {"media": "podcast", "entity": "podcast", "term": show}
         )
         results = _search_list(self._fetch(url), "results")
         if results is None:
-            return (_ERROR, None)
+            return _Resolved(_ERROR, None)
         for result in results:
             if not isinstance(result, dict):
                 continue
@@ -446,29 +521,35 @@ class ArtLookup:
                 artwork = result.get("artworkUrl600")
                 if isinstance(artwork, str):
                     image = self._fetch(artwork)
-                    return (_FOUND, image) if image is not None else (_ERROR, None)
-        return (_MISS, None)
+                    if image is None:
+                        return _Resolved(_ERROR, None)
+                    # The id is validated here and again on the way out of
+                    # _find, so a non-integer or non-positive value never
+                    # reaches the cache or the published shape.
+                    podcast_id = _valid_podcast_id(result.get("collectionId"))
+                    return _Resolved(_FOUND, image, podcast_id)
+        return _Resolved(_MISS, None)
 
     def _open_library(
         self, artist: Optional[str], album: Optional[str]
-    ) -> tuple[str, Optional[bytes]]:
+    ) -> _Resolved:
         # The book title is the album; the author is the artist.
         if not album:
-            return (_MISS, None)
+            return _Resolved(_MISS, None)
         return self._with_base(
             album, lambda title: self._open_library_search(artist, title)
         )
 
     def _open_library_search(
         self, artist: Optional[str], album: str
-    ) -> tuple[str, Optional[bytes]]:
+    ) -> _Resolved:
         params = {"title": album}
         if artist:
             params["author"] = artist
         url = _OPEN_LIBRARY_SEARCH + "?" + urllib.parse.urlencode(params)
         docs = _search_list(self._fetch(url), "docs")
         if docs is None:
-            return (_ERROR, None)
+            return _Resolved(_ERROR, None)
         for doc in docs:
             if not isinstance(doc, dict):
                 continue
@@ -476,21 +557,23 @@ class ArtLookup:
                 cover_id = doc.get("cover_i")
                 if isinstance(cover_id, int):
                     image = self._fetch(_OPEN_LIBRARY_COVER.format(cover_id=cover_id))
-                    return (_FOUND, image) if image is not None else (_ERROR, None)
-        return (_MISS, None)
+                    if image is None:
+                        return _Resolved(_ERROR, None)
+                    return _Resolved(_FOUND, image)
+        return _Resolved(_MISS, None)
 
     def _music(
         self, artist: Optional[str], album: Optional[str]
-    ) -> tuple[str, Optional[bytes]]:
+    ) -> _Resolved:
         if not album:
-            return (_MISS, None)
+            return _Resolved(_MISS, None)
         return self._with_base(
             album, lambda release: self._music_search(artist, release)
         )
 
     def _music_search(
         self, artist: Optional[str], album: str
-    ) -> tuple[str, Optional[bytes]]:
+    ) -> _Resolved:
         self._await_musicbrainz_gate()
         if artist:
             query = (
@@ -506,7 +589,7 @@ class ArtLookup:
         finally:
             self._last_musicbrainz = self._clock()
         if releases is None:
-            return (_ERROR, None)
+            return _Resolved(_ERROR, None)
         for release in releases:
             if not isinstance(release, dict):
                 continue
@@ -517,8 +600,10 @@ class ArtLookup:
             mbid = release.get("id")
             if isinstance(mbid, str):
                 image = self._fetch(_COVER_ART_ARCHIVE.format(mbid=mbid))
-                return (_FOUND, image) if image is not None else (_ERROR, None)
-        return (_MISS, None)
+                if image is None:
+                    return _Resolved(_ERROR, None)
+                return _Resolved(_FOUND, image)
+        return _Resolved(_MISS, None)
 
     def _await_musicbrainz_gate(self) -> None:
         """Wait, if needed, so MusicBrainz is called at most once per second."""
@@ -550,21 +635,31 @@ class ArtLookup:
             self._prune()
 
     def _prune(self) -> None:
-        """Keep only the ``max_files`` most recent files in the lookup dir.
+        """Keep only the ``max_files`` most recent entries in the lookup dir.
 
         Covers and miss markers are content-addressed, so this is a slow-growth
         guard, not a hot path. It globs only ``lookup/``, so the AirPlay bridge's
-        covers in ``cover/`` are never touched. Best-effort.
+        covers in ``cover/`` are never touched. A podcast cover's ``.id`` sidecar
+        does not count toward the limit and is removed with its cover, so an id
+        never outlives, nor evicts, the cover it belongs to. Best-effort.
         """
         lookup_dir = self._lookup_dir()
         try:
-            entries = [entry for entry in lookup_dir.iterdir() if entry.is_file()]
+            entries = [
+                entry
+                for entry in lookup_dir.iterdir()
+                if entry.is_file() and entry.suffix != _ID_SUFFIX
+            ]
             entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         except OSError:
             return
         for stale in entries[self._max_files :]:
             try:
                 stale.unlink()
+            except OSError:
+                pass
+            try:
+                stale.with_suffix(_ID_SUFFIX).unlink()
             except OSError:
                 pass
 
@@ -588,6 +683,21 @@ def _lookup_key(chosen: str, title: str, artist: Optional[str], album: Optional[
 
 def _lookup_url(key: str) -> str:
     return f"/cover/lookup/{key}.jpg"
+
+
+def _valid_podcast_id(value: object) -> Optional[int]:
+    """A positive integer podcast id, or None for anything else.
+
+    ``bool`` is rejected even though it is an ``int`` subclass, so a stray
+    ``True`` never becomes the id ``1``. Everything that is not a positive,
+    non-boolean integer resolves to None, so no unvalidated id ever reaches the
+    cache or the published now-playing and play-history shapes.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    return None
 
 
 def _lucene_phrase(value: str) -> str:

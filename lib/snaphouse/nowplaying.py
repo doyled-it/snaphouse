@@ -284,6 +284,10 @@ class Tracker:
         self._duration: float | None = None
         self._genre: list[str] | None = None
         self._art_url: str | None = None
+        # The matched show's iTunes collectionId, filled in later like the cover
+        # when the podcast art lookup lands; None for anything but a matched
+        # podcast. Additive on both published shapes (the frame ignores it).
+        self._podcast_id: int | None = None
         self._started_at: datetime | None = None
 
         # Position anchor: the value last received and when it arrived.
@@ -342,23 +346,38 @@ class Tracker:
         if self._core() != before:
             self.now_playing_changed = True
 
-    def set_art(self, key: TrackKey, art_url: str) -> None:
-        """Record a resolved cover for a track key.
+    def set_art(
+        self, key: TrackKey, art_url: str, podcast_id: int | None = None
+    ) -> None:
+        """Record a resolved cover (and, for a podcast, its id) for a track key.
 
         Updates the now-playing cover when the key is current, and fills the
         cover into any history entry for that key that still lacks one. The
         history copy goes through ``keep_art`` (a durable history path); the
-        now-playing doc keeps the raw cover path.
+        now-playing doc keeps the raw cover path. ``podcast_id`` is the matched
+        show's iTunes collectionId; when present it is filled onto the current
+        track and back-filled into any history entry for that key that has none,
+        exactly like the cover.
         """
         before = self._core()
         if self._track_present and self._current_key == key:
             self._art_url = art_url
+            if podcast_id is not None:
+                self._podcast_id = podcast_id
             # The lookup for this track resolved; clear the in-flight flag so the
             # retry bookkeeping does not treat a later empty result as pending.
             self._art_pending = False
         for play in self._history:
-            if _key_of(play) == key and not play.get("art_url"):
+            if _key_of(play) != key:
+                continue
+            changed = False
+            if not play.get("art_url"):
                 play["art_url"] = self._keep_art(art_url)
+                changed = True
+            if podcast_id is not None and play.get("podcast_id") is None:
+                play["podcast_id"] = podcast_id
+                changed = True
+            if changed:
                 self.history_changed = True
         if self._core() != before:
             self.now_playing_changed = True
@@ -448,6 +467,7 @@ class Tracker:
                 "position_at": _iso(self._anchor_at),
                 "started_at": _iso(self._started_at),
                 "art_url": self._art_url,
+                "podcast_id": self._podcast_id,
             }
         return {
             "updated_at": now.isoformat(),
@@ -530,6 +550,8 @@ class Tracker:
         self._play_s = 0.0
         self._anchor_pos = None
         self._anchor_at = None
+        # A new track has no podcast id until its own lookup lands.
+        self._podcast_id = None
 
         # A new identity resets the art-lookup bookkeeping (signature, in-flight
         # flag, attempt budget, and retry clock), so a track that replays (its
@@ -590,6 +612,7 @@ class Tracker:
             "duration": self._duration,
             "started_at": _iso(self._started_at),
             "art_url": self._keep_art(self._art_url),
+            "podcast_id": self._podcast_id,
         }
         self._history.insert(0, play)
         del self._history[self._max_plays :]
@@ -606,6 +629,7 @@ class Tracker:
             self._duration = None
             self._genre = None
             self._art_url = None
+            self._podcast_id = None
             self._started_at = None
             self._anchor_pos = None
             self._anchor_at = None
@@ -633,6 +657,7 @@ class Tracker:
                 _iso(self._anchor_at),
                 _iso(self._started_at),
                 self._art_url,
+                self._podcast_id,
             )
         return (track, tuple(self._rooms))
 
@@ -767,7 +792,7 @@ class Service:
         self._stop = threading.Event()
         self._art_queue: "queue.Queue[tuple[TrackKey, str, list[str] | None]]" = queue.Queue()
         self._art_results: (
-            "queue.Queue[tuple[TrackKey, str, list[str] | None, str | None]]"
+            "queue.Queue[tuple[TrackKey, str, list[str] | None, str | None, int | None]]"
         ) = queue.Queue()
         self._worker_thread: threading.Thread | None = None
 
@@ -914,11 +939,12 @@ class Service:
                 continue
             title, artist, album = key
             try:
-                url = self._art_lookup.find(title, artist, album, kind, genre)
+                result = self._art_lookup.find_with_id(title, artist, album, kind, genre)
+                url, podcast_id = result.art_url, result.podcast_id
             except Exception:
                 self._log.exception("art lookup raised for %r", key)
-                url = None
-            self._art_results.put((key, kind, genre, url))
+                url, podcast_id = None, None
+            self._art_results.put((key, kind, genre, url, podcast_id))
 
     def _pump_art_requests(self) -> None:
         request = self._tracker.wants_art()
@@ -929,11 +955,11 @@ class Service:
     def _drain_art_results(self) -> None:
         while True:
             try:
-                key, kind, genre, url = self._art_results.get_nowait()
+                key, kind, genre, url, podcast_id = self._art_results.get_nowait()
             except queue.Empty:
                 return
             if url:
-                self._tracker.set_art(key, url)
+                self._tracker.set_art(key, url, podcast_id)
             else:
                 self._tracker.art_missing(key, _route_signature(key, kind, genre))
 

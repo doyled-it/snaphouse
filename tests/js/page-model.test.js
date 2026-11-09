@@ -391,3 +391,104 @@ test("parsePlayHistory keeps each play's kind", () => {
   assert.equal(plays[1].kind, "long_form");
   assert.equal(plays[2].kind, null);
 });
+
+// --------------------------------------------------------------------------- #
+// openInLinks + podcastId: Pocket Casts and the Apple Podcasts show page
+// --------------------------------------------------------------------------- #
+
+test("openInLinks offers Pocket Casts first and the Apple show page when a podcast has an id", () => {
+  const links = openInLinks({
+    title: "Episode 412",
+    album: "The Long Version",
+    kind: "long_form",
+    genre: ["Podcast"],
+    podcastId: 1200361736,
+  });
+  assert.deepEqual(
+    links.map((l) => l.label),
+    ["Pocket Casts", "Apple Podcasts", "Spotify", "Web search"]
+  );
+  const q = "Episode%20412%20The%20Long%20Version";
+  assert.equal(links[0].url, "https://pca.st/itunes/1200361736");
+  assert.equal(links[1].url, "https://podcasts.apple.com/podcast/id1200361736");
+  assert.equal(links[2].url, `https://open.spotify.com/search/${q}`);
+  assert.equal(links[3].url, `https://duckduckgo.com/?q=${q}`);
+});
+
+test("openInLinks adds Pocket Casts and the show page for long_form-no-genre with an id", () => {
+  const links = openInLinks({
+    title: "Episode 1",
+    album: "Some Show",
+    kind: "long_form",
+    genre: null,
+    podcastId: 42,
+  });
+  assert.deepEqual(
+    links.map((l) => l.label),
+    ["Pocket Casts", "Apple Podcasts", "Spotify", "libro.fm", "Web search"]
+  );
+  assert.equal(links[0].url, "https://pca.st/itunes/42");
+  assert.equal(links[1].url, "https://podcasts.apple.com/podcast/id42");
+});
+
+test("openInLinks keeps today's podcast links when there is no id", () => {
+  const q = "Episode%20412%20The%20Long%20Version";
+  for (const podcastId of [undefined, null]) {
+    const links = openInLinks({
+      title: "Episode 412",
+      album: "The Long Version",
+      kind: "long_form",
+      genre: ["Podcast"],
+      podcastId,
+    });
+    assert.deepEqual(
+      links.map((l) => l.label),
+      ["Apple Podcasts", "Spotify", "Web search"],
+      JSON.stringify(podcastId)
+    );
+    assert.equal(links[0].url, `https://podcasts.apple.com/search?term=${q}`);
+  }
+});
+
+test("openInLinks never builds a URL from an unvalidated or malformed id", () => {
+  const q = "Episode%201%20Some%20Show";
+  for (const podcastId of ["1200361736", 0, -5, 1.5, true, { id: 1 }, [1], NaN, Infinity]) {
+    const links = openInLinks({
+      title: "Episode 1",
+      album: "Some Show",
+      kind: "long_form",
+      genre: ["Podcast"],
+      podcastId,
+    });
+    assert.deepEqual(
+      links.map((l) => l.label),
+      ["Apple Podcasts", "Spotify", "Web search"],
+      JSON.stringify(podcastId)
+    );
+    assert.equal(links[0].url, `https://podcasts.apple.com/search?term=${q}`);
+  }
+});
+
+test("openInLinks ignores a podcast id on a music play", () => {
+  const links = openInLinks({ title: "Song A", artist: "Artist B", kind: "music", podcastId: 99 });
+  assert.deepEqual(
+    links.map((l) => l.label),
+    ["Apple Music", "Spotify", "YouTube Music", "Web search"]
+  );
+  assert.ok(!links.some((l) => l.url.includes("pca.st")));
+});
+
+test("parsePlayHistory validates each play's podcast_id into podcastId", () => {
+  const plays = parsePlayHistory({
+    plays: [
+      { title: "Ep", kind: "long_form", podcast_id: 1200361736, started_at: "2026-11-08T21:00:00-08:00" },
+      { title: "Bad", kind: "long_form", podcast_id: "1200361736", started_at: "2026-11-08T20:00:00-08:00" },
+      { title: "Zero", kind: "long_form", podcast_id: 0, started_at: "2026-11-08T19:00:00-08:00" },
+      { title: "None", kind: "long_form", started_at: "2026-11-08T18:00:00-08:00" },
+    ],
+  });
+  assert.equal(plays[0].podcastId, 1200361736);
+  assert.equal(plays[1].podcastId, null);
+  assert.equal(plays[2].podcastId, null);
+  assert.equal(plays[3].podcastId, null);
+});

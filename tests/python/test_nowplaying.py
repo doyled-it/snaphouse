@@ -195,6 +195,7 @@ def test_doc_for_playing_track():
         "position_at": dt(0).isoformat(),
         "started_at": dt(0).isoformat(),
         "art_url": "/cover/x.jpg",
+        "podcast_id": None,
     }
     assert tracker.now_playing_changed is True
 
@@ -680,3 +681,68 @@ def test_art_attempt_budget_resets_on_a_new_play():
     b = ("B", "Br", "Bl")
     tracker.on_properties("House", props(title="B", artist="Br", album="Bl"), dt(1))
     assert tracker.wants_art() == (b, "music", None)
+
+
+def test_podcast_id_published_and_backfilled_in_history():
+    # A coverless podcast is recorded before its lookup lands; set_art then
+    # publishes the matched iTunes collectionId on the current track and
+    # back-fills it into the history entry, exactly like the cover.
+    def keep(url):
+        return f"/cover/history/{url.rsplit('/', 1)[-1]}" if url else url
+
+    tracker = Tracker("House", [], count_after_s=30, keep_art=keep)
+    tracker.on_server(
+        server(
+            props(
+                title="Episode 412",
+                artist="The Long Version",
+                album="The Long Version",
+                duration=1800.0,
+                genre=["Podcast"],
+                art=None,
+            )
+        ),
+        dt(0),
+    )
+    key = ("Episode 412", "The Long Version", "The Long Version")
+    assert tracker.wants_art() == (key, "long_form", ["Podcast"])
+
+    # The play crosses the 30 s threshold with no cover and no id yet.
+    tracker.tick(dt(30))
+    recorded = tracker.history_doc()["plays"][0]
+    assert recorded["art_url"] is None
+    assert recorded["podcast_id"] is None
+    assert tracker.now_playing_doc(dt(30))["track"]["podcast_id"] is None
+
+    # The lookup lands with a cover and an id.
+    tracker.set_art(key, "/cover/lookup/show.jpg", 201671138)
+
+    track = tracker.now_playing_doc(dt(31))["track"]
+    assert track["art_url"] == "/cover/lookup/show.jpg"
+    assert track["podcast_id"] == 201671138
+
+    backfilled = tracker.history_doc()["plays"][0]
+    assert backfilled["art_url"] == "/cover/history/show.jpg"
+    assert backfilled["podcast_id"] == 201671138
+
+
+def test_set_art_without_id_leaves_podcast_id_none():
+    # A cover with no id (every non-podcast route) never sets podcast_id, and a
+    # later id for the same key still fills it.
+    tracker = Tracker("House", [])
+    tracker.on_server(server(props(title="A", artist="Ar", album="Al", art=None)), dt(0))
+    key = ("A", "Ar", "Al")
+    tracker.set_art(key, "/cover/lookup/x.jpg")
+    assert tracker.now_playing_doc(dt(1))["track"]["podcast_id"] is None
+
+
+def test_podcast_id_clears_on_a_new_track():
+    # The id belongs to one track; a new identity resets it so the next track
+    # does not inherit the previous show's id.
+    tracker = Tracker("House", [])
+    tracker.on_server(server(props(title="Ep1", artist="Show", album="Show", art=None)), dt(0))
+    tracker.set_art(("Ep1", "Show", "Show"), "/cover/lookup/s.jpg", 201671138)
+    assert tracker.now_playing_doc(dt(1))["track"]["podcast_id"] == 201671138
+
+    tracker.on_server(server(props(title="Song", artist="Band", album="Record", art=None)), dt(2))
+    assert tracker.now_playing_doc(dt(3))["track"]["podcast_id"] is None

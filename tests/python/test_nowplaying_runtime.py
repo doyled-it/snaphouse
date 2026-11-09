@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from snaphouse.artlookup import LookupResult
 from snaphouse.nowplaying import Service, Tracker, load_history
 
 TZ = timezone(timedelta(hours=-8))
@@ -46,15 +47,20 @@ def _now_factory():
 
 
 class FakeArtLookup:
-    """An ArtLookup stand-in: records calls, returns a preset URL (or None)."""
+    """An ArtLookup stand-in: records calls, returns a preset URL and id."""
 
-    def __init__(self, url=None):
+    def __init__(self, url=None, podcast_id=None):
         self.url = url
+        self.podcast_id = podcast_id
         self.calls = []
 
     def find(self, title, artist, album, kind, genre):
         self.calls.append((title, artist, album, kind, genre))
         return self.url
+
+    def find_with_id(self, title, artist, album, kind, genre):
+        self.calls.append((title, artist, album, kind, genre))
+        return LookupResult(self.url, self.podcast_id)
 
 
 class FakeSnapserver:
@@ -142,6 +148,8 @@ def _house_props(**kwargs):
         metadata["album"] = kwargs["album"]
     if "duration" in kwargs:
         metadata["duration"] = kwargs["duration"]
+    if "genre" in kwargs:
+        metadata["genre"] = kwargs["genre"]
     props = {"playbackStatus": kwargs.get("status", "playing"), "metadata": metadata}
     if "position" in kwargs:
         props["position"] = kwargs["position"]
@@ -308,6 +316,47 @@ def test_background_art_lookup_fills_cover(tmp_path):
         server.close()
 
 
+def test_background_podcast_lookup_publishes_id(tmp_path):
+    # A podcast lookup that returns a collectionId flows through the worker to
+    # now-playing.json as podcast_id, alongside the cover.
+    server = FakeSnapserver()
+    art = FakeArtLookup(url="/cover/lookup/show.jpg", podcast_id=1200361736)
+    service = _service(server, tmp_path, art_lookup=art)
+    thread = _run(service)
+    out = tmp_path / STATE / "now-playing.json"
+    try:
+        conn = server.accept()
+        conn.read_message()
+        conn.send({"id": 1, "jsonrpc": "2.0", "result": {"server": _server_object({})}})
+        conn.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "Stream.OnProperties",
+                "params": {
+                    "id": "House",
+                    "properties": _house_props(
+                        title="Episode 7",
+                        artist="A Show",
+                        album="A Show",
+                        genre=["Podcast"],
+                    ),
+                },
+            }
+        )
+
+        assert _wait_for(
+            lambda: out.is_file()
+            and (json.loads(out.read_text()).get("track") or {}).get("podcast_id")
+            == 1200361736
+        )
+        track = json.loads(out.read_text())["track"]
+        assert track["art_url"] == "/cover/lookup/show.jpg"
+    finally:
+        service.stop()
+        thread.join(timeout=5)
+        server.close()
+
+
 def test_drain_art_results_wires_miss_and_found(tmp_path):
     # The runtime hop the retry depends on: _drain_art_results must route a
     # worker result with no cover to art_missing (scheduling a retry) and a
@@ -333,14 +382,14 @@ def test_drain_art_results_wires_miss_and_found(tmp_path):
 
     # A worker result with no cover: the retry is scheduled and fires only after
     # the back-off.
-    service._art_results.put((key, "music", None, None))
+    service._art_results.put((key, "music", None, None, None))
     service._drain_art_results()
     assert tracker.wants_art() is None  # inside the 2-minute back-off
     clock["t"] = 120.0
     assert tracker.wants_art() == (key, "music", None)  # retried after the back-off
 
     # A worker result with a cover: it lands and retries stop.
-    service._art_results.put((key, "music", None, "/cover/lookup/x.jpg"))
+    service._art_results.put((key, "music", None, "/cover/lookup/x.jpg", None))
     service._drain_art_results()
     assert tracker.now_playing_doc(_EPOCH)["track"]["art_url"] == "/cover/lookup/x.jpg"
     clock["t"] = 1_000_000.0

@@ -750,3 +750,176 @@ def test_user_agent_names_the_public_repo():
     agent = artlookup._user_agent()
     assert agent.startswith("snaphouse/")
     assert "github.com/doyled-it/snaphouse" in agent
+
+
+# --------------------------------------------------------------------------- #
+# podcast collectionId (podcast_id)
+# --------------------------------------------------------------------------- #
+
+
+def _itunes_result_with_id(collection_name, collection_id):
+    # A one-result iTunes podcast body carrying a collectionId, so a matched
+    # result yields both a cover and the show's id.
+    body = {"resultCount": 1, "results": [{"collectionName": collection_name}]}
+    if collection_id is not None:
+        body["results"][0]["collectionId"] = collection_id
+    body["results"][0]["artworkUrl600"] = (
+        "https://is1-ssl.mzstatic.com/image/x/600x600bb.jpg"
+    )
+    return json.dumps(body).encode("utf-8")
+
+
+def test_podcast_match_keeps_collection_id(tmp_path):
+    # A matched podcast returns its iTunes collectionId alongside the cover and
+    # writes an .id sidecar next to the cached cover.
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("itunes_podcast.json")),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    result = lookup.find_with_id(
+        "Episode 1", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+
+    assert result.art_url is not None and result.art_url.startswith("/cover/lookup/")
+    assert result.podcast_id == 201671138
+    sidecar = _lookup_dir(tmp_path) / (Path(result.art_url).stem + ".id")
+    assert sidecar.read_text() == "201671138"
+
+
+def test_cached_podcast_id_returned_without_network(tmp_path):
+    # The first lookup caches the cover and the id; a second lookup answers from
+    # disk with no network call and still returns the id.
+    first = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("itunes_podcast.json")),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, first)
+    seeded = lookup.find_with_id(
+        "Episode 1", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+    assert seeded.podcast_id == 201671138
+
+    # A fresh lookup over a fetch that would fail every call: a cached hit must
+    # not touch it.
+    offline = FakeFetch([])
+    cached_lookup = ArtLookup(tmp_path, offline)
+    result = cached_lookup.find_with_id(
+        "Episode 2", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+    assert result.art_url == seeded.art_url
+    assert result.podcast_id == 201671138
+    assert offline.calls == []
+
+
+def test_podcast_cover_without_collection_id_has_no_id(tmp_path):
+    # A matched show whose result carries no collectionId still returns the
+    # cover, with podcast_id None and no sidecar written.
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _itunes_result_with_id("Harbor Notes", None)),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+    result = lookup.find_with_id(
+        "Episode 1", "Harbor Notes", "Harbor Notes", "long_form", ["Podcast"]
+    )
+    assert result.art_url is not None
+    assert result.podcast_id is None
+    assert list(_lookup_dir(tmp_path).glob("*.id")) == []
+
+
+@pytest.mark.parametrize("bad_id", [0, -5, 1.5, True, "201671138", None])
+def test_podcast_malformed_collection_id_rejected(tmp_path, bad_id):
+    # A non-positive, non-integer, boolean, or string collectionId is rejected:
+    # the cover is still found, but no id is published or cached.
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _itunes_result_with_id("Harbor Notes", bad_id)),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+    result = lookup.find_with_id(
+        "Episode 1", "Harbor Notes", "Harbor Notes", "long_form", ["Podcast"]
+    )
+    assert result.art_url is not None
+    assert result.podcast_id is None
+    assert list(_lookup_dir(tmp_path).glob("*.id")) == []
+
+
+def test_corrupt_id_sidecar_reads_as_none(tmp_path):
+    # A cached cover whose sidecar is not a positive integer returns no id rather
+    # than a bad one, and the cover is still served.
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("itunes_podcast.json")),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+    seeded = lookup.find_with_id(
+        "Episode 1", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+    sidecar = _lookup_dir(tmp_path) / (Path(seeded.art_url).stem + ".id")
+    sidecar.write_text("not-a-number")
+
+    offline = ArtLookup(tmp_path, FakeFetch([]))
+    result = offline.find_with_id(
+        "Episode 2", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+    assert result.art_url == seeded.art_url
+    assert result.podcast_id is None
+
+
+def test_audiobook_route_has_no_podcast_id(tmp_path):
+    # Only the podcast route carries an id; an audiobook cover never does.
+    fetch = FakeFetch(
+        [
+            ("openlibrary.org/search", _fixture_bytes("openlibrary.json")),
+            ("covers.openlibrary.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+    result = lookup.find_with_id(
+        "Chapter 1", "Jane Austen", "Pride and Prejudice", "long_form", ["Audiobook"]
+    )
+    assert result.art_url is not None
+    assert result.podcast_id is None
+
+
+def test_prune_removes_id_sidecar_with_its_cover(tmp_path):
+    # The .id sidecar does not count toward the file cap and is removed with the
+    # cover it belongs to, so it never outlives nor evicts that cover.
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("itunes_podcast.json")),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch, max_files=1)
+    podcast = lookup.find_with_id(
+        "Episode 1", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+    assert podcast.podcast_id == 201671138
+    sidecar = _lookup_dir(tmp_path) / (Path(podcast.art_url).stem + ".id")
+    assert sidecar.is_file()
+
+    # A second, newer cover pushes the podcast cover past the one-file cap.
+    music = FakeFetch(
+        [
+            ("musicbrainz.org", _fixture_bytes("musicbrainz.json")),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    ArtLookup(tmp_path, music, max_files=1, clock=_frozen_clock(), sleep=lambda _s: None).find(
+        "Airbag", "Radiohead", "OK Computer", "music", None
+    )
+    # The evicted podcast cover took its sidecar with it; no orphan is left.
+    assert not sidecar.exists()

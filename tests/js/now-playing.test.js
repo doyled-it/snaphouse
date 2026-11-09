@@ -62,6 +62,20 @@ test("parseNowPlayingDoc reads a full track into the model shape", () => {
   assert.deepEqual(np.rooms, ["Bedroom", "Office"]);
 });
 
+test("parseNowPlayingDoc validates the track's podcast_id into podcastId", () => {
+  const good = parseNowPlayingDoc(nowPlayingDoc({ track: { podcast_id: 1200361736 } }));
+  assert.equal(good.podcastId, 1200361736);
+  // Absent on older data, and anything not a positive integer is rejected.
+  assert.equal(parseNowPlayingDoc(nowPlayingDoc()).podcastId, null);
+  for (const bad of ["1200361736", 0, -1, 2.5, true]) {
+    assert.equal(
+      parseNowPlayingDoc(nowPlayingDoc({ track: { podcast_id: bad } })).podcastId,
+      null,
+      JSON.stringify(bad)
+    );
+  }
+});
+
 test("parseNowPlayingDoc returns null for a missing or non-object body", () => {
   for (const bad of [null, undefined, "", 0, "not an object", []]) {
     assert.equal(parseNowPlayingDoc(bad), null);
