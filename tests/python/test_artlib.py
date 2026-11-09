@@ -260,6 +260,41 @@ def test_scan_does_not_raise_when_file_vanishes_mid_scan(tmp_path, monkeypatch):
     assert "survivor.jpg" in ids
 
 
+def test_scan_ignores_literal_collection_subdirectory(tmp_path):
+    # A subdirectory named like the built-in folder (which the API refuses but an
+    # SMB client can create by hand) would emit ids like "Collection/x.jpg" that
+    # _resolve_piece maps back to the top level, risking a wrong-file delete or
+    # move. The scan reserves the name and ignores such a directory.
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "top.jpg")
+    _write_image(library_root(library) / "Collection" / "sneaky.jpg")
+
+    index = library.scan()
+
+    ids = [piece["id"] for piece in index["pieces"]]
+    assert ids == ["top.jpg"]
+    assert not any(piece["id"].startswith("Collection/") for piece in index["pieces"])
+    # Only the one built-in Collection folder is listed, counting top-level files.
+    collection_folders = [f for f in index["folders"] if f["name"] == "Collection"]
+    assert len(collection_folders) == 1
+    assert collection_folders[0]["count"] == 1
+
+
+def test_scan_percent_encodes_url_and_thumb(tmp_path):
+    # Folder names may contain spaces, so url/thumb segments must be encoded.
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "My Folder" / "a b.jpg")
+
+    piece = _piece(library.scan(), "My Folder/a b.jpg")
+
+    assert piece["url"] == "/art/My%20Folder/a%20b.jpg"
+    assert " " not in piece["thumb"]
+    # The encoded url still points at the real piece once unquoted.
+    import urllib.parse
+
+    assert urllib.parse.unquote(piece["url"]) == "/art/My Folder/a b.jpg"
+
+
 # --------------------------------------------------------------------------- #
 # id and folder-name validation (Review Focus 1)
 # --------------------------------------------------------------------------- #
@@ -408,12 +443,27 @@ def test_upload_rejects_oversized_bytes(tmp_path):
 def test_upload_rejects_decompression_bomb(tmp_path, monkeypatch):
     library = _make_library(tmp_path)
     monkeypatch.setattr(artlib, "MAX_IMAGE_PIXELS", 100)
-    data = _image_bytes(size=(400, 200))  # 80000 px, far over 2x the lowered cap
+    data = _image_bytes(size=(400, 200))  # 80000 px, far over the lowered cap
 
     with pytest.raises(ArtError) as excinfo:
         library.upload("bomb.jpg", data, "Collection", None, None)
     assert excinfo.value.status == 413
     assert list(library_root(library).iterdir()) == []
+
+
+def test_upload_does_not_touch_global_max_image_pixels(tmp_path, monkeypatch):
+    # The bomb guard is an explicit size check, not a mutation of Pillow's
+    # process-global cap, so it is safe under Task 2's threaded server.
+    library = _make_library(tmp_path)
+    before = Image.MAX_IMAGE_PIXELS
+
+    library.upload("ok.jpg", _image_bytes(size=(400, 200)), "Collection", None, None)
+    assert Image.MAX_IMAGE_PIXELS == before
+
+    monkeypatch.setattr(artlib, "MAX_IMAGE_PIXELS", 100)
+    with pytest.raises(ArtError):
+        library.upload("bomb.jpg", _image_bytes(size=(400, 200)), "Collection", None, None)
+    assert Image.MAX_IMAGE_PIXELS == before
 
 
 def test_upload_rejects_unknown_folder(tmp_path):

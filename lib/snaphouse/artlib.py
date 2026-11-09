@@ -29,6 +29,7 @@ import re
 import shutil
 import tempfile
 import time
+import urllib.parse
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -59,8 +60,9 @@ MIN_ASPECT = 1.3
 #: Upload size limit per file; nginx enforces the same limit at the edge.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
-#: Decompression-bomb guard: Pillow refuses an image declared larger than twice
-#: this. Real museum photos (about 12 megapixels) sit well under it.
+#: Decompression-bomb guard: an upload whose header declares more than this many
+#: pixels is refused before any decode (an explicit check, not Pillow's global).
+#: Real museum photos (about 12 megapixels) sit well under it.
 MAX_IMAGE_PIXELS = 80_000_000
 
 #: Rotation intervals the page offers, in minutes.
@@ -144,7 +146,13 @@ class Library:
 
         for entry in self._iter_dir(self.root):
             if entry.is_dir():
-                if entry.name == TRASH_DIR:
+                # `.trash` is hidden, and a subdirectory literally named like the
+                # built-in folder is ignored: its pieces would get ids of the form
+                # `Collection/x.jpg`, which `_resolve_piece` maps back to the top
+                # level, so a later delete or move would hit the wrong file. The
+                # API refuses to create the name (`create_folder`); a hand-made
+                # one over SMB is skipped here so it never emits colliding ids.
+                if entry.name in (TRASH_DIR, BUILTIN_FOLDER):
                     continue
                 folder_counts.setdefault(entry.name, 0)
                 for child in self._iter_dir(entry):
@@ -221,8 +229,8 @@ class Library:
             "landscape": self._is_landscape(width, height),
             "size": stat.st_size,
             "mtime": int(stat.st_mtime),
-            "thumb": f"/art-thumbs/{thumb_name}",
-            "url": "/art/" + piece_id,
+            "thumb": self._thumb_url(thumb_name),
+            "url": self._art_url(piece_id),
         }
 
     def _build_trash(self, referenced: set[str]) -> list[dict]:
@@ -249,7 +257,7 @@ class Library:
                         "id": trash_id,
                         "original": meta.get("original", child.name),
                         "deleted_at": meta.get("deleted_at", ""),
-                        "thumb": f"/art-thumbs/{thumb_name}",
+                        "thumb": self._thumb_url(thumb_name),
                     }
                 )
         entries.sort(key=lambda entry: entry["id"], reverse=True)
@@ -303,37 +311,49 @@ class Library:
         quality 92; PNG stays PNG; WebP becomes PNG when it carries transparency,
         otherwise JPEG. Nothing from the source's metadata (EXIF, ICC, text
         chunks) is passed to ``save``, so none of it reaches disk.
+
+        The decompression-bomb guard is an explicit pixel-count check on the
+        header dimensions before any decode: it never touches the process-global
+        ``Image.MAX_IMAGE_PIXELS``, so it is safe under the threaded admin server
+        and background rescan of Task 2.
         """
-        previous_cap = Image.MAX_IMAGE_PIXELS
-        Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
         try:
-            try:
-                image = Image.open(BytesIO(data))
-                image.load()
-            except Image.DecompressionBombError:
-                raise ArtError(413, "That image is too large to process.")
-            except (UnidentifiedImageError, OSError, ValueError):
-                raise ArtError(400, "That file is not a JPEG, PNG, or WebP image.")
+            image = Image.open(BytesIO(data))
+        except Image.DecompressionBombError:
+            raise ArtError(413, "That image is too large to process.")
+        except (UnidentifiedImageError, OSError, ValueError):
+            raise ArtError(400, "That file is not a JPEG, PNG, or WebP image.")
 
-            source_format = image.format
-            if source_format not in _UPLOAD_FORMATS:
-                raise ArtError(400, "That file is not a JPEG, PNG, or WebP image.")
+        # `Image.open` has parsed the header, so the declared size is known
+        # without decoding the pixels. Refuse an oversized image here, before
+        # `load()` allocates anything for it.
+        if image.width * image.height > MAX_IMAGE_PIXELS:
+            raise ArtError(413, "That image is too large to process.")
 
-            oriented = ImageOps.exif_transpose(image) or image
-            oriented.info.pop("exif", None)
+        try:
+            image.load()
+        except Image.DecompressionBombError:
+            raise ArtError(413, "That image is too large to process.")
+        except (UnidentifiedImageError, OSError, ValueError):
+            raise ArtError(400, "That file is not a JPEG, PNG, or WebP image.")
 
-            buffer = BytesIO()
-            if source_format == "PNG" or (
-                source_format == "WEBP" and self._has_alpha(oriented)
-            ):
-                converted = oriented if oriented.mode in ("RGB", "RGBA", "L", "LA", "P") else oriented.convert("RGBA")
-                converted.save(buffer, format="PNG")
-                return buffer.getvalue(), ".png"
-            converted = oriented if oriented.mode == "RGB" else oriented.convert("RGB")
-            converted.save(buffer, format="JPEG", quality=92)
-            return buffer.getvalue(), ".jpg"
-        finally:
-            Image.MAX_IMAGE_PIXELS = previous_cap
+        source_format = image.format
+        if source_format not in _UPLOAD_FORMATS:
+            raise ArtError(400, "That file is not a JPEG, PNG, or WebP image.")
+
+        oriented = ImageOps.exif_transpose(image) or image
+        oriented.info.pop("exif", None)
+
+        buffer = BytesIO()
+        if source_format == "PNG" or (
+            source_format == "WEBP" and self._has_alpha(oriented)
+        ):
+            converted = oriented if oriented.mode in ("RGB", "RGBA", "L", "LA", "P") else oriented.convert("RGBA")
+            converted.save(buffer, format="PNG")
+            return buffer.getvalue(), ".png"
+        converted = oriented if oriented.mode == "RGB" else oriented.convert("RGB")
+        converted.save(buffer, format="JPEG", quality=92)
+        return buffer.getvalue(), ".jpg"
 
     @staticmethod
     def _has_alpha(image: "Image.Image") -> bool:
@@ -765,6 +785,22 @@ class Library:
         self._atomic_write(self.state, json.dumps(control, indent=2).encode("utf-8"), 0o644)
 
     # -- shared helpers ---------------------------------------------------- #
+
+    @staticmethod
+    def _encode_path(relative: str) -> str:
+        """Percent-encode each segment of a relative path, keeping the slashes.
+
+        Folder names may contain spaces, so a raw ``My Folder/x.jpg`` is not a
+        usable URL path. Each segment is quoted (nothing left safe), so a reader
+        can fetch the piece or its thumbnail without guessing the encoding.
+        """
+        return "/".join(urllib.parse.quote(segment, safe="") for segment in relative.split("/"))
+
+    def _art_url(self, piece_id: str) -> str:
+        return "/art/" + self._encode_path(piece_id)
+
+    def _thumb_url(self, thumb_name: str) -> str:
+        return "/art-thumbs/" + self._encode_path(thumb_name)
 
     @staticmethod
     def _is_landscape(width: int, height: int) -> bool:
