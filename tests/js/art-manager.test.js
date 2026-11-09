@@ -16,6 +16,7 @@ import {
   rotationSummary,
   intervalOptions,
   apiRequest,
+  libraryRefreshMayRebuild,
   ALLOWED_INTERVALS,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
@@ -353,4 +354,28 @@ test("apiRequest sends FormData as multipart without a Content-Type header", () 
   // Content-Type here would break the boundary.
   assert.equal("Content-Type" in req.init.headers, false);
   assert.equal(req.init.body, form);
+});
+
+// libraryRefreshMayRebuild keeps an open menu alive across the periodic refresh:
+// the timer-driven rebuild is held while a menu is open or a select is focused,
+// but an action or first-load refresh always rebuilds.
+
+test("libraryRefreshMayRebuild lets a non-periodic refresh rebuild even with a menu open", () => {
+  assert.equal(libraryRefreshMayRebuild({ periodic: false, menuOpen: true, selectFocused: true }), true);
+});
+
+test("libraryRefreshMayRebuild holds the periodic rebuild while a menu is open", () => {
+  assert.equal(libraryRefreshMayRebuild({ periodic: true, menuOpen: true, selectFocused: false }), false);
+});
+
+test("libraryRefreshMayRebuild holds the periodic rebuild while a select has focus", () => {
+  assert.equal(libraryRefreshMayRebuild({ periodic: true, menuOpen: false, selectFocused: true }), false);
+});
+
+test("libraryRefreshMayRebuild allows the periodic rebuild when the grid is idle", () => {
+  assert.equal(libraryRefreshMayRebuild({ periodic: true, menuOpen: false, selectFocused: false }), true);
+});
+
+test("libraryRefreshMayRebuild defaults to allowing a rebuild", () => {
+  assert.equal(libraryRefreshMayRebuild(), true);
 });

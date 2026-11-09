@@ -629,6 +629,24 @@ export function rotationSummary(index, control) {
   return { count, empty: false, text: `${count} ${noun} in rotation.` };
 }
 
+// Decide whether a library refresh may rebuild the grid right now. Rebuilding
+// does els.artGrid.replaceChildren(), which tears down every tile, so an open
+// per-piece Options menu (a native <details>) and any half-made "Move to folder"
+// selection snap shut. That is only acceptable for a refresh the owner asked for
+// (an action, or the first load): a periodic refresh is held while a menu is open
+// or a select has focus, and the page re-runs it once the menu closes.
+//
+// `periodic` is true only for the timer-driven refresh. `menuOpen` is true when
+// any Options menu is open, `selectFocused` when a menu's select has focus. A
+// non-periodic refresh always rebuilds; a periodic one rebuilds only when the
+// grid is idle.
+export function libraryRefreshMayRebuild({ periodic, menuOpen, selectFocused } = {}) {
+  if (!periodic) {
+    return true;
+  }
+  return !menuOpen && !selectFocused;
+}
+
 // The interval selector's options: the allowed set with a human label each. The
 // page renders one option per entry and matches the current setting by minutes.
 export function intervalOptions() {
