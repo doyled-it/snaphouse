@@ -37,7 +37,9 @@ import {
   apiRequest,
   libraryRefreshMayRebuild,
   mirrorState,
+  mirrorCaption,
   historyDeleteTarget,
+  trashRestoreId,
   openInLinks,
   pageCount,
   pageSlice,
@@ -83,6 +85,7 @@ const els = {
   mirror: document.getElementById("mirror"),
   mirrorImg: document.getElementById("mirror-img"),
   mirrorUpdated: document.getElementById("mirror-updated"),
+  mirrorCaption: document.getElementById("mirror-caption"),
   frameCaption: document.getElementById("frame-caption"),
   frameControls: document.getElementById("frame-controls"),
   frameBack: document.getElementById("frame-back"),
@@ -166,6 +169,10 @@ const state = {
   // The frame mirror state (mirrorState result) and the cover-busting src set.
   mirror: { visible: false, updatedLabel: "" },
   mirrorSrc: null,
+  // What the frame is actually showing (mirrorCaption result): art, or a screen
+  // that has taken the panel over. When it is not art, the mirror carries a plain
+  // caption and the art piece below is labelled as the next piece in rotation.
+  frameShowing: { isArt: true, caption: "", nextLabel: null },
 
   // The frame's current piece and its shown history (from art-history.json).
   artCurrent: null,
@@ -559,13 +566,19 @@ async function refreshFrame() {
     return;
   }
   state.mirror = mirrorState(json, Date.now());
+  state.frameShowing = mirrorCaption(json);
   renderMirror(json);
+  // The art piece and its label depend on what the frame is showing, so re-render
+  // the caption with the latest reading (the piece itself comes from refreshArt).
+  renderFrameCaption(state.artCurrent);
   updateSections();
 }
 
 function renderMirror(json) {
   if (!state.mirror.visible) {
     els.mirror.hidden = true;
+    els.mirrorCaption.hidden = true;
+    els.mirrorCaption.textContent = "";
     state.mirrorSrc = null;
     return;
   }
@@ -580,8 +593,12 @@ function renderMirror(json) {
   // If the image itself 404s (the json landed before the png), hide the mirror.
   els.mirrorImg.onerror = () => {
     els.mirror.hidden = true;
+    els.mirrorCaption.hidden = true;
+    els.mirrorCaption.textContent = "";
     state.mirror = { visible: false, updatedLabel: "" };
+    state.frameShowing = { isArt: true, caption: "", nextLabel: null };
     state.mirrorSrc = null;
+    renderFrameCaption(state.artCurrent);
     updateSections();
   };
   els.mirror.hidden = false;
@@ -591,6 +608,15 @@ function renderMirror(json) {
   } else {
     els.mirrorUpdated.hidden = true;
     els.mirrorUpdated.textContent = "";
+  }
+  // When a screen other than art holds the panel, name it plainly under the
+  // image so the mirror does not read as if the art piece were showing.
+  if (state.frameShowing.caption) {
+    els.mirrorCaption.textContent = state.frameShowing.caption;
+    els.mirrorCaption.hidden = false;
+  } else {
+    els.mirrorCaption.hidden = true;
+    els.mirrorCaption.textContent = "";
   }
 }
 
@@ -622,6 +648,15 @@ function renderFrameCaption(current) {
   els.frameCaption.replaceChildren();
   if (!current) {
     return;
+  }
+  // When another screen holds the panel, this piece is the next one in rotation,
+  // not what is on the glass; label it so the title and its Back / Next controls
+  // read as changing what comes next rather than what is showing now.
+  if (state.frameShowing.nextLabel) {
+    const label = document.createElement("span");
+    label.className = "frame-next-label";
+    label.textContent = state.frameShowing.nextLabel;
+    els.frameCaption.append(label);
   }
   els.frameCaption.append(titleNode(current, "frame-title"));
   if (current.artist) {
@@ -683,7 +718,7 @@ function artHistoryRow(piece) {
     del.className = "btn btn-small danger row-action";
     del.type = "button";
     del.textContent = "Delete";
-    del.addEventListener("click", () => moveToTrash(target, piece.file));
+    del.addEventListener("click", () => moveToTrash(target));
     li.append(del);
   }
   return li;
@@ -1246,7 +1281,7 @@ function tileMenu(piece, index) {
     body.append(moveLabel);
   }
 
-  body.append(menuButton("Delete", () => moveToTrash(piece.id, piece.file), "danger"));
+  body.append(menuButton("Delete", () => moveToTrash(piece.id), "danger"));
   menu.append(body);
   return menu;
 }
@@ -1352,10 +1387,10 @@ async function frameDeleteCurrent() {
   // Advance the frame first so the deleted piece is gone from the panel in one
   // redraw and cannot come back from a stale state (Review Focus 2).
   await postApi("/api/art/command", { action: "next" });
-  await moveToTrash(target, current.file);
+  await moveToTrash(target);
 }
 
-async function moveToTrash(target, file) {
+async function moveToTrash(target) {
   if (!target) {
     showToast("This piece can't be deleted.");
     return;
@@ -1368,24 +1403,21 @@ async function moveToTrash(target, file) {
     showToast(result.error);
     return;
   }
-  showToast("Moved to trash.", () => undoTrash(file));
+  // Undo is keyed on the delete target (the piece id), which is what the hub
+  // records as the trash entry's `original`. Keying on the basename instead
+  // silently failed to restore any piece that lived in a user folder.
+  showToast("Moved to trash.", () => undoTrash(target));
 }
 
-async function undoTrash(file) {
+async function undoTrash(target) {
   await refreshLibrary();
   const index = state.artIndex;
-  if (!index) {
-    showToast("Nothing to undo.");
+  const restoreId = index ? trashRestoreId(index.trash, target) : null;
+  if (!restoreId) {
+    showToast("Couldn't undo. Restore it from the Trash section.");
     return;
   }
-  const matches = index.trash
-    .filter((entry) => entry.original === file)
-    .sort((a, b) => (Date.parse(b.deletedAt || "") || 0) - (Date.parse(a.deletedAt || "") || 0));
-  if (matches.length === 0) {
-    showToast("Nothing to undo.");
-    return;
-  }
-  runAction("/api/art/restore", { id: matches[0].id });
+  runAction("/api/art/restore", { id: restoreId });
 }
 
 // Open the library, filter to the current piece's folder, page to it, and

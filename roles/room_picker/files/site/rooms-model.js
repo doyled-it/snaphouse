@@ -782,6 +782,29 @@ export function historyDeleteTarget(entry) {
   return null;
 }
 
+// The id the Undo after a delete restores, matched against the trash by the
+// delete target, or null when no trash entry matches (the caller then points the
+// owner at the Trash section instead of silently doing nothing).
+//
+// `target` is the id the delete was keyed on (what historyDeleteTarget returned,
+// or a library piece's id). The hub records a trash entry's `original` as the
+// full folder-relative piece id (lib/snaphouse/artlib.py), so the match is on
+// that whole id. A piece in a user folder is matched by its folder-relative id
+// (e.g. "Photos/beach.jpg"), so Undo restores it instead of silently failing,
+// and two pieces that share a basename in different folders never collide. A
+// top-level piece's id is just its basename, so it is matched by name without a
+// cross-folder fallback that could restore the wrong piece. When a name was
+// deleted more than once, the newest entry wins.
+export function trashRestoreId(trash, target) {
+  if (!Array.isArray(trash) || typeof target !== "string" || target.length === 0) {
+    return null;
+  }
+  const matches = trash
+    .filter((e) => e && e.original === target && typeof e.id === "string" && e.id.length > 0)
+    .sort((a, b) => (Date.parse(b.deletedAt || "") || 0) - (Date.parse(a.deletedAt || "") || 0));
+  return matches.length > 0 ? matches[0].id : null;
+}
+
 // The frame mirror's visibility and "Updated" caption, from the hub's
 // same-origin /frame.json ({ updated_at, screen }) and the client clock `nowMs`.
 // A missing or malformed document (the caller passes null on a 404) hides the
@@ -798,6 +821,50 @@ export function mirrorState(frameJson, nowMs) {
   }
   return { visible: true, updatedLabel: updatedLabelFor(frameJson.updated_at, nowMs) };
 }
+
+// What the frame is actually showing, so the page captions the mirror by the
+// truth rather than always naming the art piece. The frame rotates art but also
+// takes over the panel for now playing, weather, a game, or another screen; when
+// it does, the art piece under the mirror is the next piece in rotation, not what
+// is on the glass, so labelling it "title, artist" with Back / Next reads as if
+// that painting were showing.
+//
+// `frameJson` is the same-origin /frame.json ({ updated_at, screen }). Returns
+// { isArt, caption, nextLabel }:
+//   - isArt is true when art is on the panel, or when `screen` is missing or
+//     unusable (default to today's framing rather than invent a caption);
+//   - caption is "" when art shows, otherwise a plain sentence naming the screen;
+//   - nextLabel is null when art shows, otherwise "Up next", the label the page
+//     puts on the art piece so its controls read as changing what comes next,
+//     not what is up now.
+export function mirrorCaption(frameJson) {
+  const art = { isArt: true, caption: "", nextLabel: null };
+  if (!frameJson || typeof frameJson !== "object" || Array.isArray(frameJson)) {
+    return art;
+  }
+  const screen = frameJson.screen;
+  if (typeof screen !== "string" || screen.length === 0 || screen === "art") {
+    return art;
+  }
+  // `screen` comes off the network and is only validated to a non-empty string,
+  // so look it up on a Map, never a plain object: a key like "constructor" or
+  // "toString" would otherwise return an inherited function as the caption.
+  return {
+    isArt: false,
+    caption: SCREEN_CAPTIONS.get(screen) ?? DEFAULT_SCREEN_CAPTION,
+    nextLabel: "Up next",
+  };
+}
+
+// The plain caption for each non-art screen the frame can hold, with a generic
+// fallback for a screen name the page does not have specific wording for.
+const SCREEN_CAPTIONS = new Map([
+  ["now_playing", "Showing what is playing. Art resumes when the audio stops."],
+  ["weather", "Showing the weather. Art resumes shortly."],
+  ["game", "Showing a game. Art resumes shortly."],
+]);
+
+const DEFAULT_SCREEN_CAPTION = "Showing another screen. Art resumes shortly.";
 
 function updatedLabelFor(updatedAt, nowMs) {
   if (typeof updatedAt !== "string") {
