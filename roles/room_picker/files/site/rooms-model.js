@@ -782,6 +782,29 @@ export function historyDeleteTarget(entry) {
   return null;
 }
 
+// The id the Undo after a delete restores, matched against the trash by the
+// delete target, or null when no trash entry matches (the caller then points the
+// owner at the Trash section instead of silently doing nothing).
+//
+// `target` is the id the delete was keyed on (what historyDeleteTarget returned,
+// or a library piece's id). The hub records a trash entry's `original` as the
+// full folder-relative piece id (lib/snaphouse/artlib.py), so the match is on
+// that whole id. A piece in a user folder is matched by its folder-relative id
+// (e.g. "Photos/beach.jpg"), so Undo restores it instead of silently failing,
+// and two pieces that share a basename in different folders never collide. A
+// top-level piece's id is just its basename, so it is matched by name without a
+// cross-folder fallback that could restore the wrong piece. When a name was
+// deleted more than once, the newest entry wins.
+export function trashRestoreId(trash, target) {
+  if (!Array.isArray(trash) || typeof target !== "string" || target.length === 0) {
+    return null;
+  }
+  const matches = trash
+    .filter((e) => e && e.original === target && typeof e.id === "string" && e.id.length > 0)
+    .sort((a, b) => (Date.parse(b.deletedAt || "") || 0) - (Date.parse(a.deletedAt || "") || 0));
+  return matches.length > 0 ? matches[0].id : null;
+}
+
 // The frame mirror's visibility and "Updated" caption, from the hub's
 // same-origin /frame.json ({ updated_at, screen }) and the client clock `nowMs`.
 // A missing or malformed document (the caller passes null on a 404) hides the

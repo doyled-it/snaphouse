@@ -17,6 +17,7 @@ import {
   intervalOptions,
   apiRequest,
   libraryRefreshMayRebuild,
+  trashRestoreId,
   ALLOWED_INTERVALS,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
@@ -378,4 +379,63 @@ test("libraryRefreshMayRebuild allows the periodic rebuild when the grid is idle
 
 test("libraryRefreshMayRebuild defaults to allowing a rebuild", () => {
   assert.equal(libraryRefreshMayRebuild(), true);
+});
+
+// --------------------------------------------------------------------------- #
+// trashRestoreId: which trash entry an Undo restores, keyed on the delete target
+// --------------------------------------------------------------------------- #
+//
+// The hub records a trash entry's `original` as the full folder-relative piece
+// id (lib/snaphouse/artlib.py), so Undo must match by that whole id, not the
+// bare basename, or every piece in a user folder fails to restore.
+
+test("trashRestoreId restores a top-level piece by its name", () => {
+  const trash = [{ id: ".trash/t1/sunset.jpg", original: "sunset.jpg", deletedAt: "2026-11-09T06:00:00-08:00" }];
+  assert.equal(trashRestoreId(trash, "sunset.jpg"), ".trash/t1/sunset.jpg");
+});
+
+test("trashRestoreId restores a folder piece by its full original id", () => {
+  const trash = [
+    { id: ".trash/t2/beach.jpg", original: "Photos/beach.jpg", deletedAt: "2026-11-09T06:10:00-08:00" },
+  ];
+  // The target is the full folder-relative id, which equals the recorded
+  // `original`; a basename-only key ("beach.jpg") would never match.
+  assert.equal(trashRestoreId(trash, "Photos/beach.jpg"), ".trash/t2/beach.jpg");
+  assert.equal(trashRestoreId(trash, "beach.jpg"), null);
+});
+
+test("trashRestoreId tells two same-basename pieces in different folders apart", () => {
+  const trash = [
+    { id: ".trash/a/beach.jpg", original: "Trips/beach.jpg", deletedAt: "2026-11-09T06:20:00-08:00" },
+    { id: ".trash/b/beach.jpg", original: "Photos/beach.jpg", deletedAt: "2026-11-09T06:21:00-08:00" },
+  ];
+  assert.equal(trashRestoreId(trash, "Trips/beach.jpg"), ".trash/a/beach.jpg");
+  assert.equal(trashRestoreId(trash, "Photos/beach.jpg"), ".trash/b/beach.jpg");
+});
+
+test("trashRestoreId restores the newest match when a name was deleted more than once", () => {
+  const trash = [
+    { id: ".trash/old/wave.jpg", original: "wave.jpg", deletedAt: "2026-11-09T06:00:00-08:00" },
+    { id: ".trash/new/wave.jpg", original: "wave.jpg", deletedAt: "2026-11-09T06:30:00-08:00" },
+  ];
+  assert.equal(trashRestoreId(trash, "wave.jpg"), ".trash/new/wave.jpg");
+});
+
+test("trashRestoreId never restores a different folder's piece by basename alone", () => {
+  // A top-level target's id is its bare name; it must not match a folder piece
+  // that merely shares that basename, or an Undo would restore the wrong piece.
+  const trash = [
+    { id: ".trash/leg/old.jpg", original: "Legacy/old.jpg", deletedAt: "2026-11-09T05:00:00-08:00" },
+  ];
+  assert.equal(trashRestoreId(trash, "old.jpg"), null);
+  assert.equal(trashRestoreId(trash, "Legacy/old.jpg"), ".trash/leg/old.jpg");
+});
+
+test("trashRestoreId returns null when nothing matches or the input is unusable", () => {
+  const trash = [{ id: ".trash/t/x.jpg", original: "x.jpg", deletedAt: "2026-11-09T06:00:00-08:00" }];
+  assert.equal(trashRestoreId(trash, "missing.jpg"), null);
+  assert.equal(trashRestoreId([], "x.jpg"), null);
+  assert.equal(trashRestoreId(null, "x.jpg"), null);
+  assert.equal(trashRestoreId(trash, ""), null);
+  assert.equal(trashRestoreId(trash, null), null);
 });

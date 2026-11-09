@@ -39,6 +39,7 @@ import {
   mirrorState,
   mirrorCaption,
   historyDeleteTarget,
+  trashRestoreId,
   openInLinks,
   pageCount,
   pageSlice,
@@ -717,7 +718,7 @@ function artHistoryRow(piece) {
     del.className = "btn btn-small danger row-action";
     del.type = "button";
     del.textContent = "Delete";
-    del.addEventListener("click", () => moveToTrash(target, piece.file));
+    del.addEventListener("click", () => moveToTrash(target));
     li.append(del);
   }
   return li;
@@ -1280,7 +1281,7 @@ function tileMenu(piece, index) {
     body.append(moveLabel);
   }
 
-  body.append(menuButton("Delete", () => moveToTrash(piece.id, piece.file), "danger"));
+  body.append(menuButton("Delete", () => moveToTrash(piece.id), "danger"));
   menu.append(body);
   return menu;
 }
@@ -1386,10 +1387,10 @@ async function frameDeleteCurrent() {
   // Advance the frame first so the deleted piece is gone from the panel in one
   // redraw and cannot come back from a stale state (Review Focus 2).
   await postApi("/api/art/command", { action: "next" });
-  await moveToTrash(target, current.file);
+  await moveToTrash(target);
 }
 
-async function moveToTrash(target, file) {
+async function moveToTrash(target) {
   if (!target) {
     showToast("This piece can't be deleted.");
     return;
@@ -1402,24 +1403,21 @@ async function moveToTrash(target, file) {
     showToast(result.error);
     return;
   }
-  showToast("Moved to trash.", () => undoTrash(file));
+  // Undo is keyed on the delete target (the piece id), which is what the hub
+  // records as the trash entry's `original`. Keying on the basename instead
+  // silently failed to restore any piece that lived in a user folder.
+  showToast("Moved to trash.", () => undoTrash(target));
 }
 
-async function undoTrash(file) {
+async function undoTrash(target) {
   await refreshLibrary();
   const index = state.artIndex;
-  if (!index) {
-    showToast("Nothing to undo.");
+  const restoreId = index ? trashRestoreId(index.trash, target) : null;
+  if (!restoreId) {
+    showToast("Couldn't undo. Restore it from the Trash section.");
     return;
   }
-  const matches = index.trash
-    .filter((entry) => entry.original === file)
-    .sort((a, b) => (Date.parse(b.deletedAt || "") || 0) - (Date.parse(a.deletedAt || "") || 0));
-  if (matches.length === 0) {
-    showToast("Nothing to undo.");
-    return;
-  }
-  runAction("/api/art/restore", { id: matches[0].id });
+  runAction("/api/art/restore", { id: restoreId });
 }
 
 // Open the library, filter to the current piece's folder, page to it, and
