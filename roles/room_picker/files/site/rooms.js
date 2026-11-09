@@ -16,10 +16,10 @@ import {
   groupUnmuteRequest,
   healthBanner,
   artFromHistory,
-  parseNowPlayingDoc,
+  nowPlayingFromBody,
   progressAt,
   formatDuration,
-  parsePlayHistory,
+  historyFromBody,
   interpretRpcResponse,
   safeJsonParse,
 } from "./rooms-model.js";
@@ -564,23 +564,25 @@ function relativeTime(iso) {
 }
 
 // The now-playing card from the hub's now-playing.json, one same-origin file the
-// hub writes continuously. A 404 or a body that will not parse means nothing is
-// playing (old hub, service down, partial write, Review Focus 3): the card hides
-// and never shows stale data. A transient hub error (the fetch itself throwing)
-// leaves the last render in place rather than flashing the card away and back.
+// hub writes continuously. A 404, or a 200 with an empty or malformed body (an
+// old hub, the service down, a partial write, Review Focus 3), means nothing is
+// playing: the card hides and never shows stale data. Only a network failure
+// (the fetch or the body read itself throwing) leaves the last render in place,
+// rather than flashing the card away and back. The parse is kept out of that
+// try so a bad body hides the card instead of looking like a transient error.
 async function refreshNowPlaying() {
-  let raw;
+  let body;
   try {
     const response = await fetch("now-playing.json", { cache: "no-store" });
     if (!response.ok) {
       updateNowPlayingCard(null);
       return;
     }
-    raw = await response.json();
+    body = await response.text();
   } catch (err) {
     return;
   }
-  updateNowPlayingCard(parseNowPlayingDoc(raw));
+  updateNowPlayingCard(nowPlayingFromBody(body));
 }
 
 // Fill the card from a parsed track, or hide it when nothing is playing. The
@@ -652,21 +654,22 @@ function setOptionalLine(el, text) {
 }
 
 // The play history from the hub's play-history.json, one same-origin file. Like
-// the now-playing card, a 404 or an unparseable body hides the section; a
-// transient hub error leaves the last render in place.
+// the now-playing card, a 404 or a 200 with an empty or unparseable body clears
+// the section; only a network failure leaves the last render in place, so the
+// parse is kept out of that try.
 async function refreshHistory() {
-  let plays;
+  let body;
   try {
     const response = await fetch("play-history.json", { cache: "no-store" });
     if (!response.ok) {
       renderHistory([]);
       return;
     }
-    plays = parsePlayHistory(await response.json());
+    body = await response.text();
   } catch (err) {
     return;
   }
-  renderHistory(plays);
+  renderHistory(historyFromBody(body));
 }
 
 function renderHistory(plays) {

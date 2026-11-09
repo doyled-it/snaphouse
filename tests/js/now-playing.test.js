@@ -15,6 +15,8 @@ import {
   progressAt,
   formatDuration,
   parsePlayHistory,
+  nowPlayingFromBody,
+  historyFromBody,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // A full now-playing.json body: a long-form track playing in two rooms, with a
@@ -317,4 +319,53 @@ test("parsePlayHistory nulls the optional fields when they are missing", () => {
 test("parsePlayHistory rejects an off-origin art_url", () => {
   const [p] = parsePlayHistory({ plays: [play({ art_url: "https://evil.example/x.jpg" })] });
   assert.equal(p.artUrl, null);
+});
+
+// --------------------------------------------------------------------------- #
+// nowPlayingFromBody / historyFromBody: parse a response body without throwing
+// --------------------------------------------------------------------------- #
+//
+// The page reads the response body as text and turns it into the model here, so
+// a 200 response with an empty or garbled body (a partial or in-progress write,
+// Review Focus 3) resolves to "nothing playing" rather than throwing. That lets
+// the view glue keep the last render only on a real network failure, and hide
+// on any unparseable body, exactly like a 404.
+
+test("nowPlayingFromBody parses a good body into the track model", () => {
+  const np = nowPlayingFromBody(JSON.stringify(nowPlayingDoc()));
+  assert.equal(np.title, "Episode 412");
+  assert.deepEqual(np.rooms, ["Bedroom", "Office"]);
+});
+
+test("nowPlayingFromBody returns null for an empty body", () => {
+  assert.equal(nowPlayingFromBody(""), null);
+});
+
+test("nowPlayingFromBody returns null for a garbled body", () => {
+  assert.equal(nowPlayingFromBody('{"track": {"title": "cut off'), null);
+});
+
+test("nowPlayingFromBody returns null for a valid body with nothing playing", () => {
+  assert.equal(nowPlayingFromBody('{"track": null, "rooms": []}'), null);
+});
+
+test("nowPlayingFromBody returns null for a non-string body", () => {
+  assert.equal(nowPlayingFromBody(undefined), null);
+});
+
+test("historyFromBody parses a good body into the play list", () => {
+  const plays = historyFromBody(JSON.stringify({ plays: [play(), play({ title: "Older" })] }));
+  assert.deepEqual(plays.map((p) => p.title), ["A Song", "Older"]);
+});
+
+test("historyFromBody returns an empty list for an empty body", () => {
+  assert.deepEqual(historyFromBody(""), []);
+});
+
+test("historyFromBody returns an empty list for a garbled body", () => {
+  assert.deepEqual(historyFromBody('{"plays": [{"title": "cut'), []);
+});
+
+test("historyFromBody returns an empty list for a valid empty history", () => {
+  assert.deepEqual(historyFromBody('{"plays": []}'), []);
 });

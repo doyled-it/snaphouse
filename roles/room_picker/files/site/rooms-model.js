@@ -407,3 +407,21 @@ function coverPathOrNull(value) {
   }
   return value;
 }
+
+// Turn a now-playing.json response body (text) into the card model, or null.
+// The body is parsed here, not in the fetch, so the page can tell a network
+// failure (keep the last render) apart from a 200 response with an empty or
+// malformed body (hide the card, never show stale data: Review Focus 3). An
+// empty, garbled, or non-string body parses to null, exactly like a 404 or a
+// body with nothing playing.
+export function nowPlayingFromBody(text) {
+  return parseNowPlayingDoc(safeJsonParse(text));
+}
+
+// Turn a play-history.json response body (text) into the play list, or an empty
+// list. Same split as nowPlayingFromBody: an empty or garbled 200 body yields an
+// empty list the history section hides, while only a network failure keeps the
+// last render.
+export function historyFromBody(text) {
+  return parsePlayHistory(safeJsonParse(text));
+}
