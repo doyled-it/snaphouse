@@ -7,7 +7,14 @@
 // it falls back to polling Server.GetStatus every 30 seconds. A status reply
 // that will not parse never breaks the page: it keeps the last good render and
 // shows a quiet notice. Toggles and the volume sliders send Client.SetVolume
-// back the same way. A health line polls each machine's status file.
+// back the same way. A health line polls the hub's aggregate status file.
+//
+// Beyond the rooms it mirrors the bedside e-ink frame (/frame.png and
+// /frame.json), shows what is playing on the House stream and the recent plays,
+// and manages the art library (rotation, a collapsed paged grid, uploads,
+// folders, and a restorable trash) through the hub's /api/art/ service. Every
+// untrusted string reaches the DOM through textContent, and every image src is a
+// same-origin path the model already validated.
 
 import {
   roomsFromStatus,
@@ -29,6 +36,11 @@ import {
   intervalOptions,
   apiRequest,
   libraryRefreshMayRebuild,
+  mirrorState,
+  historyDeleteTarget,
+  openInLinks,
+  pageCount,
+  pageSlice,
 } from "./rooms-model.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -44,30 +56,43 @@ const SLIDER_DEBOUNCE_MS = 150;
 const NOW_PLAYING_MS = 5000;
 const HISTORY_MS = 30000;
 const TICK_MS = 1000;
-// The art library documents the admin service publishes, refreshed on the same
-// slow cadence as the frame history and re-read after every manager action.
+// The frame mirror and the art library documents the hub publishes, refreshed on
+// the same slow cadence as the frame history and re-read after every action.
+const FRAME_MS = 30000;
 const LIBRARY_MS = 30000;
-// The default library filter: every folder.
+// The default library filter: every folder. Matches the model's "all" sentinel.
 const ALL_FOLDERS = "all";
-// How long the manager's status line lingers before it clears itself.
-const ART_MESSAGE_MS = 6000;
+// How long a toast lingers before it clears itself.
+const TOAST_MS = 7000;
 
 // Shown on the connection line when a status reply will not parse. The page
 // keeps its last good render and says so quietly rather than breaking.
 const STATUS_UNAVAILABLE_MSG = "Status unavailable; showing the last update.";
-// Shown while the live WebSocket is down and the page is polling instead. The
-// cadence is derived from POLL_MS so the text cannot drift from the real poll.
+// Shown while the live WebSocket is down and the page is polling instead.
 const OFFLINE_MSG = `Live updates are offline; refreshing every ${POLL_MS / 1000} seconds.`;
 
 const els = {
+  menuButton: document.getElementById("menu-button"),
+  drawer: document.getElementById("drawer"),
+  drawerNav: document.getElementById("drawer-nav"),
+
   health: document.getElementById("health"),
-  rooms: document.getElementById("rooms"),
   connection: document.getElementById("connection"),
-  art: document.getElementById("art"),
-  artCurrent: document.getElementById("art-current"),
-  artRecentHeading: document.getElementById("art-recent-heading"),
-  artHistory: document.getElementById("art-history"),
-  npCard: document.getElementById("np-card"),
+
+  frame: document.getElementById("frame"),
+  mirror: document.getElementById("mirror"),
+  mirrorImg: document.getElementById("mirror-img"),
+  mirrorUpdated: document.getElementById("mirror-updated"),
+  frameCaption: document.getElementById("frame-caption"),
+  frameControls: document.getElementById("frame-controls"),
+  frameBack: document.getElementById("frame-back"),
+  frameNext: document.getElementById("frame-next"),
+  frameMenu: document.getElementById("frame-menu"),
+  frameShow: document.getElementById("frame-show"),
+  frameDelete: document.getElementById("frame-delete"),
+  frameHint: document.getElementById("frame-hint"),
+
+  npSection: document.getElementById("now-playing"),
   npArtImg: document.getElementById("np-art-img"),
   npArtPh: document.getElementById("np-art-ph"),
   npTitle: document.getElementById("np-title"),
@@ -78,57 +103,84 @@ const els = {
   npElapsed: document.getElementById("np-elapsed"),
   npEnds: document.getElementById("np-ends"),
   npStatus: document.getElementById("np-status"),
-  npHistory: document.getElementById("np-history"),
-  npHistoryList: document.getElementById("np-history-list"),
-  artNowshowing: document.getElementById("art-nowshowing"),
-  artBack: document.getElementById("art-back"),
-  artNext: document.getElementById("art-next"),
-  artMessage: document.getElementById("art-message"),
-  artManager: document.getElementById("art-manager"),
-  artRotationSummary: document.getElementById("art-rotation-summary"),
-  artInterval: document.getElementById("art-interval"),
-  artFolderChips: document.getElementById("art-folder-chips"),
+  npRooms: document.getElementById("np-rooms"),
+
+  rooms: document.getElementById("rooms"),
+
+  library: document.getElementById("library"),
+  libraryDetails: document.getElementById("library-details"),
+  libraryCount: document.getElementById("library-count"),
   artFolderFilter: document.getElementById("art-folder-filter"),
   artGrid: document.getElementById("art-grid"),
   artGridEmpty: document.getElementById("art-grid-empty"),
+  libraryPager: document.getElementById("library-pager"),
+  libPrev: document.getElementById("lib-prev"),
+  libNext: document.getElementById("lib-next"),
+  libPage: document.getElementById("lib-page"),
+
+  artHistorySection: document.getElementById("art-history-section"),
+  artHistory: document.getElementById("art-history"),
+
+  playHistorySection: document.getElementById("play-history-section"),
+  npHistoryList: document.getElementById("np-history-list"),
+
+  rotation: document.getElementById("rotation"),
+  artRotationSummary: document.getElementById("art-rotation-summary"),
+  artInterval: document.getElementById("art-interval"),
+  artFolderChips: document.getElementById("art-folder-chips"),
+
+  upload: document.getElementById("upload"),
   artUploadFolder: document.getElementById("art-upload-folder"),
   artUploadInput: document.getElementById("art-upload-input"),
   artUploadProgress: document.getElementById("art-upload-progress"),
   artFolderCreate: document.getElementById("art-folder-create"),
   artFolderName: document.getElementById("art-folder-name"),
   artFolderList: document.getElementById("art-folder-list"),
-  artTrash: document.getElementById("art-trash"),
+
+  trash: document.getElementById("trash"),
   artTrashList: document.getElementById("art-trash-list"),
   artTrashEmpty: document.getElementById("art-trash-empty"),
+
+  openSheet: document.getElementById("open-sheet"),
+  sheetTitle: document.getElementById("sheet-title"),
+  sheetClose: document.getElementById("sheet-close"),
+  sheetLinks: document.getElementById("sheet-links"),
+
+  toast: document.getElementById("toast"),
 };
 
 const state = {
   config: { rooms: [] },
-  cards: new Map(), // room id -> { card, toggle, slider, dragging }
+  cards: new Map(), // room id -> { card, toggle, slider, dragging, pending }
   rooms: new Map(), // room id -> latest row from roomsFromStatus
   socket: null,
   pollTimer: null,
   reconnectTimer: null,
   nextId: 1,
-  // The last parsed now-playing track (or null), the card's progress bar ticks
-  // from it each second, and the cover src last set, so the image is only
-  // swapped when it changes rather than reloaded on every poll.
+
+  // The last parsed now-playing track (or null); the progress bar ticks from it.
+  // npArtSrc is the cover src last set, so the image is swapped only on change.
   nowTrack: null,
   npArtSrc: null,
-  // The parsed art library and rotation control (null until the admin service's
-  // documents have been read at least once), the folder the library grid is
-  // filtered to, whether the interval selector has been populated, and the timer
-  // that clears the manager's status line.
+
+  // The frame mirror state (mirrorState result) and the cover-busting src set.
+  mirror: { visible: false, updatedLabel: "" },
+  mirrorSrc: null,
+
+  // The frame's current piece and its shown history (from art-history.json).
+  artCurrent: null,
+  artHistory: [],
+
+  // The parsed art library and rotation control (null until read once), the
+  // library filter and zero-indexed page, whether the interval selector is
+  // built, a held-refresh flag, and the toast timer.
   artIndex: null,
   artControl: null,
-  artHasHistory: false,
   artFilter: ALL_FOLDERS,
+  libPage: 0,
   artIntervalBuilt: false,
-  artMessageTimer: null,
-  // Set when a periodic library refresh was held because the owner had a tile's
-  // Options menu open or a "Move to folder" select focused. The held refresh runs
-  // once the menu closes so the library never goes stale for long.
   artRefreshPending: false,
+  toastTimer: null,
 };
 
 // The JSON-RPC endpoint and its WebSocket twin, both relative to this page so
@@ -146,38 +198,37 @@ async function start() {
   await loadConfig();
   buildCards();
   connect();
+  wireChrome();
   wireArtManager();
   refreshHealth();
+  refreshFrame();
   refreshArt();
   refreshLibrary();
   refreshNowPlaying();
   refreshHistory();
   setInterval(refreshHealth, HEALTH_MS);
+  setInterval(refreshFrame, FRAME_MS);
   setInterval(refreshArt, HEALTH_MS);
   setInterval(() => refreshLibrary({ periodic: true }), LIBRARY_MS);
   setInterval(refreshNowPlaying, NOW_PLAYING_MS);
   setInterval(refreshHistory, HISTORY_MS);
-  // The card's elapsed time and bar advance between polls, driven only by the
-  // local clock and the last position anchor.
   setInterval(tickNowPlaying, TICK_MS);
 
-  // A phone that was asleep or backgrounded comes back with a dead socket and
-  // stale cards. On return to the foreground, reconnect if needed, re-read the
-  // full status, and refresh the health line so the page is current at a glance.
+  // A phone that was asleep comes back with a dead socket and stale cards. On
+  // return to the foreground, reconnect if needed, re-read the status, and
+  // refresh everything so the page is current at a glance.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") {
       return;
     }
     const socket = state.socket;
     if (!socket || socket.readyState === WebSocket.CLOSED) {
-      // The socket died while backgrounded; bring it back now.
       connect();
     } else if (socket.readyState === WebSocket.OPEN) {
-      // Still up: just re-read, the picture may be stale.
       requestStatus();
     }
-    // CONNECTING or CLOSING: leave the in-flight transition alone.
     refreshHealth();
+    refreshFrame();
     refreshArt();
     refreshLibrary();
     refreshNowPlaying();
@@ -194,13 +245,79 @@ async function loadConfig() {
   }
 }
 
-// One card per room, built once so a slider the user is dragging is never torn
+function reducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+// --------------------------------------------------------------------------- //
+// Page chrome: the section drawer and the "Open in" sheet, both real dialogs
+// (focus trapped, Escape closes).
+// --------------------------------------------------------------------------- //
+
+const SECTIONS = [
+  { id: "frame", label: "Frame" },
+  { id: "now-playing", label: "Now playing" },
+  { id: "rooms-section", label: "Rooms" },
+  { id: "library", label: "Library" },
+  { id: "art-history-section", label: "Art history" },
+  { id: "play-history-section", label: "Play history" },
+  { id: "rotation", label: "Rotation" },
+  { id: "upload", label: "Upload" },
+  { id: "trash", label: "Trash" },
+];
+
+function wireChrome() {
+  els.menuButton.addEventListener("click", openDrawer);
+  // A click on the dialog's own box (the backdrop area) closes it.
+  els.drawer.addEventListener("click", (event) => {
+    if (event.target === els.drawer) {
+      els.drawer.close();
+    }
+  });
+
+  els.sheetClose.addEventListener("click", () => els.openSheet.close());
+  els.openSheet.addEventListener("click", (event) => {
+    if (event.target === els.openSheet) {
+      els.openSheet.close();
+    }
+  });
+}
+
+function openDrawer() {
+  els.drawerNav.replaceChildren();
+  const title = document.createElement("p");
+  title.className = "drawer-title";
+  title.textContent = "Jump to";
+  els.drawerNav.append(title);
+  for (const section of SECTIONS) {
+    const target = document.getElementById(section.id);
+    if (!target || target.hidden) {
+      continue;
+    }
+    const link = document.createElement("button");
+    link.className = "drawer-link";
+    link.type = "button";
+    link.textContent = section.label;
+    link.addEventListener("click", () => {
+      els.drawer.close();
+      target.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+    });
+    els.drawerNav.append(link);
+  }
+  els.drawer.showModal();
+}
+
+// --------------------------------------------------------------------------- //
+// Rooms: the live snapserver picture.
+// --------------------------------------------------------------------------- //
+
+// One row per room, built once so a slider the user is dragging is never torn
 // out from under them. Later updates only change values and classes.
 function buildCards() {
   els.rooms.replaceChildren();
   state.cards.clear();
   for (const room of state.config.rooms) {
-    const card = document.createElement("section");
+    const card = document.createElement("li");
     card.className = "room";
 
     const label = document.createElement("div");
@@ -267,7 +384,6 @@ function connect() {
     scheduleReconnect();
   });
   socket.addEventListener("error", () => {
-    // close fires after error; the fallback and reconnect are handled there.
     socket.close();
   });
 }
@@ -280,35 +396,26 @@ function scheduleReconnect() {
 function onMessage(data) {
   const message = safeJsonParse(data);
   if (message === null) {
-    // The body would not parse (for example raw control characters snapserver
-    // emitted inline). Keep the last good render and say so quietly.
     setConnection(STATUS_UNAVAILABLE_MSG);
     return;
   }
   const messages = Array.isArray(message) ? message : [message];
   for (const one of messages) {
-    // A response to our Server.GetStatus carries the whole picture.
     if (one.result && one.result.server) {
       clearStatusMessage();
       render(one.result);
       continue;
     }
-    // Any notification means something changed; re-read the full status rather
-    // than track every event shape.
     if (one.method && one.id === undefined) {
       requestStatus();
     }
   }
 }
 
-// Restore the baseline connection line after a good read: empty when the live
-// socket is up, the offline notice while polling.
 function clearStatusMessage() {
   setConnection(state.pollTimer ? OFFLINE_MSG : "");
 }
 
-// Ask snapserver for the whole status, over the socket when it is open, else by
-// a plain POST (also the polling path).
 function requestStatus() {
   if (state.socket && state.socket.readyState === WebSocket.OPEN) {
     state.socket.send(envelope("Server.GetStatus", {}));
@@ -322,9 +429,6 @@ function requestStatus() {
       }
     })
     .catch((err) => {
-      // A reply that would not parse is not the same as snapserver being gone:
-      // keep the last good render and show the quiet notice. Any other failure
-      // (network, HTTP error) is reported as unreachable.
       if (err && err.parseFailed) {
         setConnection(STATUS_UNAVAILABLE_MSG);
       } else {
@@ -343,10 +447,6 @@ async function postRpc(method, params) {
     headers: { "Content-Type": "application/json" },
     body: envelope(method, params),
   });
-  // Interpret the reply in the model: a non-ok status (a proxy error page when
-  // snapserver is down) is the unreachable path, while an ok reply that will not
-  // parse is a tagged parse failure. This keeps "not reachable" and "status
-  // unavailable" distinct.
   return interpretRpcResponse(response.ok, await response.text());
 }
 
@@ -376,8 +476,6 @@ function stopPolling() {
   }
 }
 
-// Paint every room's state. The now-playing card and history are driven by the
-// hub's own files (refreshNowPlaying / refreshHistory), not this /jsonrpc read.
 function render(status) {
   const rooms = roomsFromStatus(status, state.config.rooms);
   for (const room of rooms) {
@@ -386,12 +484,10 @@ function render(status) {
     if (!entry) {
       continue;
     }
-    entry.card.classList.toggle("off", !room.on);
     entry.card.classList.toggle("disconnected", !room.connected);
     entry.toggle.setAttribute("aria-checked", room.on ? "true" : "false");
     entry.toggle.textContent = room.on ? "On" : "Off";
     entry.toggle.disabled = !room.connected;
-    // Do not fight a finger on the slider.
     if (!entry.dragging) {
       entry.slider.value = String(room.volume);
     }
@@ -406,14 +502,10 @@ function onToggle(id) {
   }
   const nowOn = entry.toggle.getAttribute("aria-checked") === "true";
   const next = !nowOn;
-  // Optimistic: flip the control now, snapserver's notification confirms it.
   entry.toggle.setAttribute("aria-checked", next ? "true" : "false");
   entry.toggle.textContent = next ? "On" : "Off";
-  entry.card.classList.toggle("off", !next);
 
   const room = state.rooms.get(id);
-  // Turning a room on whose group is muted must unmute the group too, or the
-  // client unmute alone leaves it silent and the control snaps back to Off.
   if (next && room && room.groupMuted && room.groupId) {
     sendControl(groupUnmuteRequest(room.groupId));
   }
@@ -428,9 +520,6 @@ function onVolume(id, percent, entry) {
 }
 
 async function refreshHealth() {
-  // One same-origin file the hub writes every 60 s. The browser never resolves
-  // other machines' .local names (Android Chrome often cannot), so all the
-  // cross-machine fetching happens on the hub, not here.
   let entries;
   try {
     const response = await fetch("house-status.json", { cache: "no-store" });
@@ -440,8 +529,6 @@ async function refreshHealth() {
       status: machine.status,
     }));
   } catch (err) {
-    // The hub itself is unreachable; leave the banner as it was rather than
-    // flashing a false all-clear or a false alarm.
     return;
   }
   const message = healthBanner(entries);
@@ -454,121 +541,156 @@ async function refreshHealth() {
   }
 }
 
-// The art on the nightstand frame, refreshed on the health cadence. Like the
-// health file, it is one same-origin file the hub writes; the browser never
-// resolves the frame's .local name. A missing file (404) hides the section; a
-// transient hub error leaves the last render in place rather than flashing the
-// section away and back.
+// --------------------------------------------------------------------------- //
+// The frame mirror: a live copy of the bedside e-ink frame, from the hub's
+// same-origin /frame.json (timestamp) and /frame.png (the image it sent). A
+// missing or malformed document (a 404 until the hub republishes, or a bad body)
+// hides the mirror; a transient hub error leaves the last render in place.
+// --------------------------------------------------------------------------- //
+
+async function refreshFrame() {
+  let json = null;
+  try {
+    const response = await fetch("frame.json", { cache: "no-store" });
+    if (response.ok) {
+      json = safeJsonParse(await response.text());
+    }
+  } catch (err) {
+    return;
+  }
+  state.mirror = mirrorState(json, Date.now());
+  renderMirror(json);
+  updateSections();
+}
+
+function renderMirror(json) {
+  if (!state.mirror.visible) {
+    els.mirror.hidden = true;
+    state.mirrorSrc = null;
+    return;
+  }
+  // Bust the cache only when the frame reports a new timestamp, so the mirror
+  // follows the frame without reloading the image on every poll.
+  const stamp = json && typeof json.updated_at === "string" ? json.updated_at : state.mirror.updatedLabel;
+  const src = `frame.png?v=${encodeURIComponent(stamp)}`;
+  if (state.mirrorSrc !== src) {
+    els.mirrorImg.src = src;
+    state.mirrorSrc = src;
+  }
+  // If the image itself 404s (the json landed before the png), hide the mirror.
+  els.mirrorImg.onerror = () => {
+    els.mirror.hidden = true;
+    state.mirror = { visible: false, updatedLabel: "" };
+    state.mirrorSrc = null;
+    updateSections();
+  };
+  els.mirror.hidden = false;
+  if (state.mirror.updatedLabel) {
+    els.mirrorUpdated.textContent = state.mirror.updatedLabel;
+    els.mirrorUpdated.hidden = false;
+  } else {
+    els.mirrorUpdated.hidden = true;
+    els.mirrorUpdated.textContent = "";
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// The frame's art history: the current piece (the mirror's caption) and the log
+// of what the frame has shown, each entry deletable.
+// --------------------------------------------------------------------------- //
+
 async function refreshArt() {
   let art;
   try {
     const response = await fetch("art-history.json", { cache: "no-store" });
     if (!response.ok) {
-      renderArt({ current: null, history: [] });
-      return;
+      art = { current: null, history: [] };
+    } else {
+      art = artFromHistory(await response.json());
     }
-    art = artFromHistory(await response.json());
   } catch (err) {
     return;
   }
-  renderArt(art);
+  state.artCurrent = art.current;
+  state.artHistory = art.history;
+  renderFrameCaption(art.current);
+  renderArtHistory(art.history);
+  updateSections();
 }
 
-function renderArt(art) {
-  const current = art.current;
-  // The producer keeps current as history[0]; showing it both as the hero and as
-  // the first thumbnail would look like a bug, so the "Recently shown" list is
-  // the pieces other than the current one.
-  const recent = art.history.filter((piece) => !samePiece(piece, current));
-
-  renderArtCurrent(current);
-  els.artHistory.replaceChildren();
-  for (const piece of recent) {
-    els.artHistory.append(historyItem(piece));
-  }
-  els.artRecentHeading.hidden = recent.length === 0;
-  state.artHasHistory = Boolean(current) || recent.length > 0;
-  updateArtSection();
-}
-
-// The "On the frame" section is shown when there is a frame piece or history to
-// show, or when the admin service's library is available (the manager). The
-// now-showing nav (Back and Next) rides with the manager, since it issues
-// rotation commands only that service answers.
-function updateArtSection() {
-  const managerActive = state.artIndex !== null;
-  els.art.hidden = !state.artHasHistory && !managerActive;
-  els.artNowshowing.hidden = !managerActive;
-  els.artManager.hidden = !managerActive;
-}
-
-function samePiece(a, b) {
-  return Boolean(a && b && a.file === b.file && a.shown_at === b.shown_at);
-}
-
-function renderArtCurrent(current) {
-  els.artCurrent.replaceChildren();
+function renderFrameCaption(current) {
+  els.frameCaption.replaceChildren();
   if (!current) {
     return;
   }
-  const figure = document.createElement("figure");
-  figure.className = "art-figure";
-
-  const img = document.createElement("img");
-  img.className = "art-image";
-  img.src = artUrl(current.file);
-  img.alt = current.title;
-  figure.append(img);
-
-  const caption = document.createElement("figcaption");
-  caption.className = "art-caption";
-  caption.append(titleNode(current, "art-title"));
+  els.frameCaption.append(titleNode(current, "frame-title"));
   if (current.artist) {
     const artist = document.createElement("span");
-    artist.className = "art-artist";
+    artist.className = "frame-artist";
     artist.textContent = current.artist;
-    caption.append(artist);
+    els.frameCaption.append(artist);
   }
-  figure.append(caption);
-  els.artCurrent.append(figure);
 }
 
-function historyItem(piece) {
+function renderArtHistory(history) {
+  els.artHistory.replaceChildren();
+  for (const piece of history) {
+    els.artHistory.append(artHistoryRow(piece));
+  }
+}
+
+function artHistoryRow(piece) {
   const li = document.createElement("li");
-  li.className = "art-item";
+  li.className = "row";
 
   const thumb = document.createElement("img");
-  thumb.className = "art-thumb";
+  thumb.className = "row-thumb";
   thumb.src = artUrl(piece.file);
-  thumb.alt = piece.title;
+  thumb.alt = "";
   thumb.loading = "lazy";
   thumb.decoding = "async";
+  // A frame piece that lives in a folder is not reachable at the share root, so
+  // swap a broken thumbnail for a placeholder rather than show a broken image.
+  thumb.addEventListener("error", () => {
+    thumb.replaceWith(thumbPlaceholder("row-thumb"));
+  });
   li.append(thumb);
 
   const meta = document.createElement("div");
-  meta.className = "art-meta";
-  meta.append(titleNode(piece, "art-item-title"));
+  meta.className = "row-meta";
+  meta.append(titleNode(piece, "row-title"));
   if (piece.artist) {
     const artist = document.createElement("span");
-    artist.className = "art-item-artist";
+    artist.className = "row-sub";
     artist.textContent = piece.artist;
     meta.append(artist);
   }
   const when = relativeTime(piece.shown_at);
   if (when) {
     const time = document.createElement("time");
-    time.className = "art-when";
+    time.className = "row-when";
     time.dateTime = piece.shown_at;
     time.textContent = when;
     meta.append(time);
   }
   li.append(meta);
+
+  // Delete is offered only when the entry can be targeted safely (an id, or a
+  // bare file name at the library root); otherwise the button is left out.
+  const target = historyDeleteTarget(piece);
+  if (target) {
+    const del = document.createElement("button");
+    del.className = "btn btn-small danger row-action";
+    del.type = "button";
+    del.textContent = "Delete";
+    del.addEventListener("click", () => moveToTrash(target, piece.file));
+    li.append(del);
+  }
   return li;
 }
 
 // The title, as a link to the museum page when the piece carries an https
-// source_url, otherwise plain text. The URL is only ever set as an href (never
-// interpolated into markup), and the link opens detached from this page.
+// source_url, otherwise plain text. The URL is only ever set as an href.
 function titleNode(piece, className) {
   if (piece.source_url) {
     const link = document.createElement("a");
@@ -576,7 +698,7 @@ function titleNode(piece, className) {
     link.textContent = piece.title;
     link.href = piece.source_url;
     link.target = "_blank";
-    link.rel = "noopener";
+    link.rel = "noopener noreferrer";
     return link;
   }
   const span = document.createElement("span");
@@ -586,14 +708,11 @@ function titleNode(piece, className) {
 }
 
 // The same-origin path to an art-share image. encodeURIComponent keeps a file
-// name with spaces or reserved characters a single path segment (the model has
-// already rejected any name with a separator).
+// name with spaces or reserved characters a single path segment.
 function artUrl(file) {
   return `art/${encodeURIComponent(file)}`;
 }
 
-// A short, human relative time for when a piece was shown. Returns "" for an
-// unparseable stamp so the page simply omits it.
 function relativeTime(iso) {
   const then = Date.parse(iso);
   if (Number.isNaN(then)) {
@@ -618,13 +737,10 @@ function relativeTime(iso) {
   return new Date(then).toLocaleDateString();
 }
 
-// The now-playing card from the hub's now-playing.json, one same-origin file the
-// hub writes continuously. A 404, or a 200 with an empty or malformed body (an
-// old hub, the service down, a partial write, Review Focus 3), means nothing is
-// playing: the card hides and never shows stale data. Only a network failure
-// (the fetch or the body read itself throwing) leaves the last render in place,
-// rather than flashing the card away and back. The parse is kept out of that
-// try so a bad body hides the card instead of looking like a transient error.
+// --------------------------------------------------------------------------- //
+// Now playing on the House stream.
+// --------------------------------------------------------------------------- //
+
 async function refreshNowPlaying() {
   let body;
   try {
@@ -640,16 +756,13 @@ async function refreshNowPlaying() {
   updateNowPlayingCard(nowPlayingFromBody(body));
 }
 
-// Fill the card from a parsed track, or hide it when nothing is playing. The
-// cover image is only swapped when its URL changes, so a poll that leaves the
-// track unchanged does not reload the picture.
 function updateNowPlayingCard(track) {
   state.nowTrack = track;
   if (!track) {
-    els.npCard.hidden = true;
+    els.npSection.hidden = true;
     return;
   }
-  els.npCard.hidden = false;
+  els.npSection.hidden = false;
 
   if (track.artUrl) {
     if (state.npArtSrc !== track.artUrl) {
@@ -669,15 +782,29 @@ function updateNowPlayingCard(track) {
   els.npTitle.textContent = track.title;
   setOptionalLine(els.npArtist, track.artist);
   setOptionalLine(els.npAlbum, track.album);
+  if (track.rooms && track.rooms.length > 0) {
+    els.npRooms.textContent = `Playing in ${joinNames(track.rooms)}`;
+    els.npRooms.hidden = false;
+  } else {
+    els.npRooms.hidden = true;
+    els.npRooms.textContent = "";
+  }
   tickNowPlaying();
 }
 
-// Advance the progress bar and times from the position anchor. Runs every second
-// and again on each poll. A track with no duration shows no bar; a paused track
-// freezes the bar and shows the "Paused" label instead of an end time.
+function joinNames(names) {
+  if (names.length === 1) {
+    return names[0];
+  }
+  if (names.length === 2) {
+    return `${names[0]} and ${names[1]}`;
+  }
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
 function tickNowPlaying() {
   const track = state.nowTrack;
-  if (!track || els.npCard.hidden) {
+  if (!track || els.npSection.hidden) {
     return;
   }
   const paused = track.status === "paused";
@@ -708,10 +835,10 @@ function setOptionalLine(el, text) {
   }
 }
 
-// The play history from the hub's play-history.json, one same-origin file. Like
-// the now-playing card, a 404 or a 200 with an empty or unparseable body clears
-// the section; only a network failure leaves the last render in place, so the
-// parse is kept out of that try.
+// --------------------------------------------------------------------------- //
+// Play history: each row opens the "Open in" sheet.
+// --------------------------------------------------------------------------- //
+
 async function refreshHistory() {
   let body;
   try {
@@ -728,80 +855,95 @@ async function refreshHistory() {
 }
 
 function renderHistory(plays) {
+  els.npHistoryList.replaceChildren();
   if (plays.length === 0) {
-    els.npHistory.hidden = true;
-    els.npHistoryList.replaceChildren();
+    els.playHistorySection.hidden = true;
     return;
   }
-  els.npHistory.hidden = false;
-  els.npHistoryList.replaceChildren();
+  els.playHistorySection.hidden = false;
   for (const play of plays) {
-    els.npHistoryList.append(playItem(play));
+    els.npHistoryList.append(playRow(play));
   }
 }
 
-function playItem(play) {
+function playRow(play) {
   const li = document.createElement("li");
-  li.className = "art-item";
+
+  const button = document.createElement("button");
+  button.className = "row row-tappable";
+  button.type = "button";
+  button.setAttribute("aria-haspopup", "dialog");
+  button.addEventListener("click", () => openInSheet(play));
 
   if (play.artUrl) {
     const thumb = document.createElement("img");
-    thumb.className = "art-thumb";
+    thumb.className = "row-thumb";
     thumb.src = play.artUrl;
-    thumb.alt = play.title;
+    thumb.alt = "";
     thumb.loading = "lazy";
     thumb.decoding = "async";
-    li.append(thumb);
+    button.append(thumb);
   } else {
     const ph = document.createElement("div");
-    ph.className = "art-thumb np-thumb-ph";
+    ph.className = "row-thumb row-thumb-ph";
     ph.setAttribute("aria-hidden", "true");
-    li.append(ph);
+    button.append(ph);
   }
 
   const meta = document.createElement("div");
-  meta.className = "art-meta";
+  meta.className = "row-meta";
 
   const title = document.createElement("span");
-  title.className = "art-item-title";
+  title.className = "row-title";
   title.textContent = play.title;
   meta.append(title);
 
-  const sub = [play.artist, play.album].filter(Boolean).join(" · ");
-  if (sub) {
+  const subParts = dedupe([play.artist, play.album].filter(Boolean));
+  if (subParts.length > 0) {
     const artist = document.createElement("span");
-    artist.className = "art-item-artist";
-    artist.textContent = sub;
+    artist.className = "row-sub";
+    artist.textContent = subParts.join(", ");
     meta.append(artist);
   }
 
   const when = formatStartTime(play.startedAt);
   if (when) {
     const time = document.createElement("time");
-    time.className = "art-when";
+    time.className = "row-when";
     time.dateTime = play.startedAt;
-    time.textContent = when;
+    time.textContent = play.duration !== null ? `${when}, ${formatDuration(play.duration)}` : when;
     meta.append(time);
   }
 
-  if (play.duration !== null) {
-    const length = document.createElement("span");
-    length.className = "np-item-len";
-    length.textContent = formatDuration(play.duration);
-    meta.append(length);
-  }
-
-  li.append(meta);
+  button.append(meta);
+  li.append(button);
   return li;
 }
 
-// A clock time like "9:46 PM" for the card's end time.
+function dedupe(values) {
+  return values.filter((v, i) => values.indexOf(v) === i);
+}
+
+function openInSheet(play) {
+  const links = openInLinks(play);
+  els.sheetTitle.textContent = play.title;
+  els.sheetLinks.replaceChildren();
+  for (const link of links) {
+    const anchor = document.createElement("a");
+    anchor.className = "sheet-link";
+    anchor.textContent = link.label;
+    anchor.href = link.url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    els.sheetLinks.append(anchor);
+  }
+  els.openSheet.showModal();
+}
+
 function formatClock(ms) {
   return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-// When a play started: the clock time if it was today, otherwise the date and
-// the time. Returns "" for an unparseable stamp so the row simply omits it.
 function formatStartTime(iso) {
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) {
@@ -822,17 +964,21 @@ function formatStartTime(iso) {
 }
 
 // --------------------------------------------------------------------------- //
-// The art manager: the frame rotation and the library, driven by the admin
-// service's two same-origin documents (art-index.json and art-control.json) and
-// its /api/art/ write endpoints. The pure reading and request-building live in
-// the model; this is the DOM and network glue around it. Every untrusted string
-// reaches the DOM through textContent, and every image src is a same-origin
-// /art/ or /art-thumbs/ path the model already validated.
+// The art library and rotation, driven by the hub's /api/art/ service and its
+// two same-origin documents (art-index.json and art-control.json).
 // --------------------------------------------------------------------------- //
 
 function wireArtManager() {
-  els.artBack.addEventListener("click", () => runAction("/api/art/command", { action: "previous" }));
-  els.artNext.addEventListener("click", () => runAction("/api/art/command", { action: "next" }));
+  els.frameBack.addEventListener("click", () => runAction("/api/art/command", { action: "previous" }));
+  els.frameNext.addEventListener("click", () => runAction("/api/art/command", { action: "next" }));
+  els.frameShow.addEventListener("click", () => {
+    els.frameMenu.open = false;
+    showInLibrary(state.artCurrent);
+  });
+  els.frameDelete.addEventListener("click", () => {
+    els.frameMenu.open = false;
+    frameDeleteCurrent();
+  });
 
   els.artInterval.addEventListener("change", () => {
     runAction("/api/art/settings", { rotate_minutes: Number(els.artInterval.value) });
@@ -840,13 +986,22 @@ function wireArtManager() {
 
   els.artFolderFilter.addEventListener("change", () => {
     state.artFilter = els.artFolderFilter.value;
+    state.libPage = 0;
+    renderLibraryGrid();
+  });
+
+  els.libPrev.addEventListener("click", () => {
+    state.libPage -= 1;
+    renderLibraryGrid();
+  });
+  els.libNext.addEventListener("click", () => {
+    state.libPage += 1;
     renderLibraryGrid();
   });
 
   els.artUploadInput.addEventListener("change", () => {
     const files = Array.from(els.artUploadInput.files || []);
     const folder = els.artUploadFolder.value;
-    // Let the same file be chosen again after this batch.
     els.artUploadInput.value = "";
     if (files.length === 0 || !folder) {
       return;
@@ -866,29 +1021,19 @@ function wireArtManager() {
     runAction("/api/art/folder/create", { name });
   });
 
-  // When a held refresh is pending, resume it the moment the grid goes idle: a
-  // menu closing (toggle does not bubble, so listen in the capture phase) or a
-  // select losing focus. The deferred check lets the open/focus state settle
-  // first, and runs the catch-up only if nothing is open again by then.
+  // When a held refresh is pending, resume it once the grid goes idle: a menu
+  // closing (toggle does not bubble, so capture) or a select losing focus.
   els.artGrid.addEventListener("toggle", maybeResumeLibraryRefresh, true);
   els.artGrid.addEventListener("focusout", maybeResumeLibraryRefresh);
 }
 
-// Is the library grid mid-interaction? A periodic refresh is held while any
-// per-piece Options menu (<details open>) is open or a menu's "Move to folder"
-// select has focus, so a rebuild cannot snap them shut under the owner's hand.
 function libraryMenuBusy() {
-  const menuOpen = els.artGrid.querySelector("details.art-menu[open]") !== null;
+  const menuOpen = els.artGrid.querySelector("details.menu[open]") !== null;
   const active = document.activeElement;
-  const selectFocused =
-    active instanceof HTMLSelectElement && els.artGrid.contains(active);
+  const selectFocused = active instanceof HTMLSelectElement && els.artGrid.contains(active);
   return { menuOpen, selectFocused };
 }
 
-// Run a refresh that was held while the owner had a menu open, once the grid is
-// idle again. Deferred to a timeout so focusout fires before activeElement moves
-// to the next element, and re-checked so a refresh never rebuilds under an open
-// menu.
 function maybeResumeLibraryRefresh() {
   if (!state.artRefreshPending) {
     return;
@@ -905,17 +1050,7 @@ function maybeResumeLibraryRefresh() {
   }, 0);
 }
 
-// Read both library documents and repaint, or leave the last render alone on a
-// network failure. A 404 (an older hub without the admin service) clears the
-// manager so the page falls back to the frame-history view. The parse is kept
-// out of the fetch try so a bad body degrades to an empty library rather than
-// looking like a transient error.
 async function refreshLibrary({ periodic = false } = {}) {
-  // A periodic refresh rebuilds the whole grid (replaceChildren), which tears
-  // down any open Options menu and a half-made "Move to folder" selection. Hold
-  // it while the owner is mid-action; it runs when the menu closes (see
-  // maybeResumeLibraryRefresh). An action or first-load refresh is never periodic
-  // and always runs. The decision itself is the pure model helper.
   const { menuOpen, selectFocused } = libraryMenuBusy();
   if (!libraryRefreshMayRebuild({ periodic, menuOpen, selectFocused })) {
     state.artRefreshPending = true;
@@ -933,7 +1068,7 @@ async function refreshLibrary({ periodic = false } = {}) {
     if (!indexRes.ok) {
       state.artIndex = null;
       state.artControl = null;
-      updateArtSection();
+      updateSections();
       return;
     }
     indexBody = await indexRes.text();
@@ -950,12 +1085,10 @@ function renderLibrary() {
   const index = state.artIndex;
   const control = state.artControl;
   if (!index || !control) {
-    updateArtSection();
+    updateSections();
     return;
   }
 
-  // Interval selector: built once, its value tracks the control file so a change
-  // made elsewhere shows here too.
   if (!state.artIntervalBuilt) {
     els.artInterval.replaceChildren();
     for (const option of intervalOptions()) {
@@ -968,25 +1101,36 @@ function renderLibrary() {
   }
   els.artInterval.value = String(control.rotateMinutes);
 
-  // Rotation summary and the folder chips that toggle rotation.
   const summary = rotationSummary(index, control);
   els.artRotationSummary.textContent = summary.text;
   els.artRotationSummary.classList.toggle("empty", summary.empty);
   renderFolderChips(index, control);
 
-  // The folder filter and the upload target both list every folder; the filter
-  // also offers "All". Both keep the current choice when it still exists.
+  // The library count, in plain words.
+  const total = index.pieces.length;
+  if (total === 0) {
+    els.libraryCount.textContent = "Library is empty";
+  } else {
+    const noun = total === 1 ? "piece" : "pieces";
+    els.libraryCount.textContent = `Library: ${total} ${noun}, ${summary.count} in rotation`;
+  }
+
   const folderNames = index.folders.map((f) => f.name);
   if (state.artFilter !== ALL_FOLDERS && !folderNames.includes(state.artFilter)) {
     state.artFilter = ALL_FOLDERS;
+    state.libPage = 0;
   }
-  fillSelect(els.artFolderFilter, [{ value: ALL_FOLDERS, label: "All folders" }, ...folderNames.map((n) => ({ value: n, label: n }))], state.artFilter);
+  fillSelect(
+    els.artFolderFilter,
+    [{ value: ALL_FOLDERS, label: "All folders" }, ...folderNames.map((n) => ({ value: n, label: n }))],
+    state.artFilter
+  );
   fillSelect(els.artUploadFolder, folderNames.map((n) => ({ value: n, label: n })), els.artUploadFolder.value);
 
   renderLibraryGrid();
   renderFolderList(index);
   renderTrash(index);
-  updateArtSection();
+  updateSections();
 }
 
 function renderFolderChips(index, control) {
@@ -994,7 +1138,7 @@ function renderFolderChips(index, control) {
   els.artFolderChips.replaceChildren();
   for (const folder of index.folders) {
     const chip = document.createElement("button");
-    chip.className = "art-chip";
+    chip.className = "chip";
     chip.type = "button";
     const on = enabled.has(folder.name);
     chip.setAttribute("aria-pressed", on ? "true" : "false");
@@ -1013,50 +1157,64 @@ function renderLibraryGrid() {
     return;
   }
   const pieces = piecesInFolder(index, state.artFilter);
+  const count = pageCount(pieces.length);
+  state.libPage = Math.max(0, Math.min(count - 1, state.libPage));
+  const slice = pageSlice(pieces, state.libPage);
+
   els.artGrid.replaceChildren();
-  for (const piece of pieces) {
+  for (const piece of slice) {
     els.artGrid.append(libraryTile(piece, index));
   }
   els.artGridEmpty.hidden = pieces.length > 0;
+
+  els.libraryPager.hidden = count <= 1;
+  els.libPage.textContent = `Page ${state.libPage + 1} of ${count}`;
+  els.libPrev.disabled = state.libPage === 0;
+  els.libNext.disabled = state.libPage >= count - 1;
 }
 
 function libraryTile(piece, index) {
   const li = document.createElement("li");
-  li.className = "art-tile";
+  li.className = "tile";
 
-  const figure = document.createElement("div");
-  figure.className = "art-tile-thumb-wrap";
-  figure.append(thumbNode(piece.thumb, piece.title, "art-thumb art-tile-thumb"));
+  const wrap = document.createElement("div");
+  wrap.className = "tile-thumb-wrap";
+  wrap.append(thumbNode(piece.thumb, piece.title, "row-thumb tile-thumb"));
   if (!piece.landscape) {
     const badge = document.createElement("span");
-    badge.className = "art-badge";
-    badge.textContent = "Portrait";
-    badge.title = "Portrait pieces do not rotate on the frame.";
-    figure.append(badge);
+    badge.className = "badge";
+    badge.textContent = "Too tall";
+    badge.title = "Too tall to rotate on the frame.";
+    wrap.append(badge);
   }
-  li.append(figure);
+  li.append(wrap);
 
   const title = document.createElement("span");
-  title.className = "art-tile-title";
+  title.className = "tile-title";
   title.textContent = piece.title;
   li.append(title);
+
+  if (piece.artist) {
+    const artist = document.createElement("span");
+    artist.className = "tile-artist";
+    artist.textContent = piece.artist;
+    li.append(artist);
+  }
 
   li.append(tileMenu(piece, index));
   return li;
 }
 
-// The per-piece actions, tucked behind a disclosure so the grid stays compact.
-// A portrait piece gets no "Show now" (the frame would skip it).
 function tileMenu(piece, index) {
   const menu = document.createElement("details");
-  menu.className = "art-menu";
+  menu.className = "menu";
   const summary = document.createElement("summary");
-  summary.className = "art-menu-summary";
+  summary.className = "btn menu-summary";
   summary.textContent = "Options";
   menu.append(summary);
 
   const body = document.createElement("div");
-  body.className = "art-menu-body";
+  body.className = "menu-body";
 
   if (piece.landscape) {
     body.append(menuButton("Show now", () => runAction("/api/art/command", { action: "show", piece: piece.id })));
@@ -1065,10 +1223,10 @@ function tileMenu(piece, index) {
   const others = index.folders.map((f) => f.name).filter((n) => n !== piece.folder);
   if (others.length > 0) {
     const moveLabel = document.createElement("label");
-    moveLabel.className = "art-menu-move";
+    moveLabel.className = "menu-move";
     moveLabel.append(document.createTextNode("Move to "));
     const select = document.createElement("select");
-    select.className = "art-select";
+    select.className = "select";
     const placeholder = document.createElement("option");
     placeholder.value = "";
     placeholder.textContent = "folder...";
@@ -1088,7 +1246,7 @@ function tileMenu(piece, index) {
     body.append(moveLabel);
   }
 
-  body.append(menuButton("Delete", () => runAction("/api/art/delete", { id: piece.id }), "art-menu-danger"));
+  body.append(menuButton("Delete", () => moveToTrash(piece.id, piece.file), "danger"));
   menu.append(body);
   return menu;
 }
@@ -1097,16 +1255,15 @@ function renderFolderList(index) {
   els.artFolderList.replaceChildren();
   for (const folder of index.folders) {
     if (folder.builtin) {
-      // The reserved Collection folder is not renamed or deleted.
       continue;
     }
     const li = document.createElement("li");
-    li.className = "art-folder-row";
+    li.className = "folder-row";
 
     const form = document.createElement("form");
-    form.className = "art-folder-rename";
+    form.className = "folder-rename";
     const input = document.createElement("input");
-    input.className = "art-text";
+    input.className = "text";
     input.type = "text";
     input.maxLength = 40;
     input.value = folder.name;
@@ -1114,7 +1271,7 @@ function renderFolderList(index) {
     form.append(input);
 
     const rename = document.createElement("button");
-    rename.className = "art-btn art-btn-small";
+    rename.className = "btn btn-small";
     rename.type = "submit";
     rename.textContent = "Rename";
     form.append(rename);
@@ -1129,10 +1286,9 @@ function renderFolderList(index) {
     li.append(form);
 
     const del = document.createElement("button");
-    del.className = "art-btn art-btn-small art-menu-danger";
+    del.className = "btn btn-small danger";
     del.type = "button";
     del.textContent = "Delete";
-    // Delete is only offered for an empty folder; the service also enforces it.
     del.disabled = folder.count > 0;
     if (folder.count > 0) {
       del.title = "Only an empty folder can be deleted.";
@@ -1148,28 +1304,28 @@ function renderTrash(index) {
   els.artTrashList.replaceChildren();
   for (const entry of index.trash) {
     const li = document.createElement("li");
-    li.className = "art-item art-trash-item";
+    li.className = "row";
 
-    li.append(thumbNode(entry.thumb, entry.original, "art-thumb"));
+    li.append(thumbNode(entry.thumb, entry.original, "row-thumb"));
 
     const meta = document.createElement("div");
-    meta.className = "art-meta";
+    meta.className = "row-meta";
     const name = document.createElement("span");
-    name.className = "art-item-title";
+    name.className = "row-title";
     name.textContent = entry.original;
     meta.append(name);
     const when = relativeTime(entry.deletedAt);
     if (when) {
       const time = document.createElement("time");
-      time.className = "art-when";
+      time.className = "row-when";
       time.dateTime = entry.deletedAt;
-      time.textContent = `deleted ${when}`;
+      time.textContent = `Deleted ${when}`;
       meta.append(time);
     }
     li.append(meta);
 
     const restore = document.createElement("button");
-    restore.className = "art-btn art-btn-small";
+    restore.className = "btn btn-small row-action";
     restore.type = "button";
     restore.textContent = "Restore";
     restore.addEventListener("click", () => runAction("/api/art/restore", { id: entry.id }));
@@ -1180,19 +1336,86 @@ function renderTrash(index) {
   els.artTrashEmpty.hidden = index.trash.length > 0;
 }
 
-// Upload one file with a live progress line and the server's error text on
-// failure. A separate request per file keeps the progress honest and one bad
-// file from sinking the rest. XHR is used for the upload-progress events fetch
-// does not surface; the model builds the multipart request so the guard header
-// and the browser-set boundary stay correct.
+// Move a piece to the trash, then offer an Undo that restores it. The frame's
+// "Delete this piece" advances the frame first (next) so it moves off the piece
+// within one redraw, then deletes; the library and history deletes just delete.
+async function frameDeleteCurrent() {
+  const current = state.artCurrent;
+  if (!current) {
+    return;
+  }
+  const target = historyDeleteTarget(current);
+  if (!target) {
+    showToast("This piece can't be deleted from here.");
+    return;
+  }
+  // Advance the frame first so the deleted piece is gone from the panel in one
+  // redraw and cannot come back from a stale state (Review Focus 2).
+  await postApi("/api/art/command", { action: "next" });
+  await moveToTrash(target, current.file);
+}
+
+async function moveToTrash(target, file) {
+  if (!target) {
+    showToast("This piece can't be deleted.");
+    return;
+  }
+  const result = await postApi("/api/art/delete", { id: target });
+  refreshArt();
+  refreshFrame();
+  await refreshLibrary();
+  if (!result.ok) {
+    showToast(result.error);
+    return;
+  }
+  showToast("Moved to trash.", () => undoTrash(file));
+}
+
+async function undoTrash(file) {
+  await refreshLibrary();
+  const index = state.artIndex;
+  if (!index) {
+    showToast("Nothing to undo.");
+    return;
+  }
+  const matches = index.trash
+    .filter((entry) => entry.original === file)
+    .sort((a, b) => (Date.parse(b.deletedAt || "") || 0) - (Date.parse(a.deletedAt || "") || 0));
+  if (matches.length === 0) {
+    showToast("Nothing to undo.");
+    return;
+  }
+  runAction("/api/art/restore", { id: matches[0].id });
+}
+
+// Open the library, filter to the current piece's folder, page to it, and
+// scroll there, so "Show in library" lands on the piece.
+function showInLibrary(current) {
+  const index = state.artIndex;
+  if (!index || !current) {
+    return;
+  }
+  const piece = index.pieces.find((p) => (current.id && p.id === current.id) || p.file === current.file);
+  els.library.hidden = false;
+  els.libraryDetails.open = true;
+  if (piece) {
+    state.artFilter = piece.folder;
+    const list = piecesInFolder(index, piece.folder);
+    const idx = list.findIndex((p) => p.id === piece.id);
+    state.libPage = idx >= 0 ? Math.floor(idx / 24) : 0;
+    renderLibrary();
+  }
+  els.library.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+}
+
 function uploadOne(file, folder) {
   const li = document.createElement("li");
-  li.className = "art-upload-item";
+  li.className = "upload-item";
   const name = document.createElement("span");
-  name.className = "art-upload-name";
+  name.className = "upload-name";
   name.textContent = file.name;
   const status = document.createElement("span");
-  status.className = "art-upload-status";
+  status.className = "upload-status";
   status.textContent = "0%";
   li.append(name, status);
   els.artUploadProgress.append(li);
@@ -1232,38 +1455,63 @@ function uploadOne(file, folder) {
   xhr.send(init.body);
 }
 
-// Send a write to the admin service, show the server's error text on failure,
-// then re-read both documents so the manager reflects the change (and the frame
-// history catches up as it redraws).
-async function runAction(path, body) {
+// Post one write to the admin service, returning { ok } or { ok:false, error }.
+async function postApi(path, body) {
   const { url, init } = apiRequest(path, body);
   try {
     const response = await fetch(url, init);
     if (!response.ok) {
       const data = safeJsonParse(await response.text());
-      showArtMessage((data && data.error) || `Request failed (${response.status}).`);
+      return { ok: false, error: (data && data.error) || `Request failed (${response.status}).` };
     }
+    return { ok: true };
   } catch (err) {
-    showArtMessage("Could not reach the art service.");
+    return { ok: false, error: "Could not reach the art service." };
+  }
+}
+
+// Send a write and refresh, showing the server's error text as a toast on
+// failure, so the manager reflects the change (and the frame catches up).
+async function runAction(path, body) {
+  const result = await postApi(path, body);
+  if (!result.ok) {
+    showToast(result.error);
   }
   refreshArt();
+  refreshFrame();
   refreshLibrary();
 }
 
-// A short-lived status line for a failed action. It clears itself so a stale
-// error does not sit under a later success.
-function showArtMessage(text) {
-  clearTimeout(state.artMessageTimer);
-  els.artMessage.textContent = text;
-  els.artMessage.hidden = false;
-  state.artMessageTimer = setTimeout(() => {
-    els.artMessage.hidden = true;
-    els.artMessage.textContent = "";
-  }, ART_MESSAGE_MS);
+// A short-lived toast at the foot of the page, optionally carrying an Undo
+// action. It clears itself so a stale message does not sit under a later one.
+function showToast(text, onUndo) {
+  clearTimeout(state.toastTimer);
+  els.toast.replaceChildren();
+  const span = document.createElement("span");
+  span.className = "toast-text";
+  span.textContent = text;
+  els.toast.append(span);
+  if (onUndo) {
+    const undo = document.createElement("button");
+    undo.className = "toast-undo";
+    undo.type = "button";
+    undo.textContent = "Undo";
+    undo.addEventListener("click", () => {
+      hideToast();
+      onUndo();
+    });
+    els.toast.append(undo);
+  }
+  els.toast.hidden = false;
+  state.toastTimer = setTimeout(hideToast, TOAST_MS);
 }
 
-// Replace a <select>'s options, keeping the given value selected when it still
-// exists (otherwise the first option).
+function hideToast() {
+  clearTimeout(state.toastTimer);
+  els.toast.hidden = true;
+  els.toast.replaceChildren();
+}
+
 function fillSelect(select, options, selected) {
   select.replaceChildren();
   for (const { value, label } of options) {
@@ -1277,12 +1525,6 @@ function fillSelect(select, options, selected) {
   }
 }
 
-// A thumbnail image, or a placeholder when there is no thumb yet. The hub can
-// publish the index before thumbnails are generated, so a fresh piece arrives
-// with a null thumb; it still belongs in the grid. When a thumb path is present
-// but 404s (a thumbnail still being written), onerror swaps in the same
-// placeholder rather than leaving a broken-image icon. `className` carries the
-// sizing classes the placeholder reuses so the tile keeps its shape.
 function thumbNode(src, label, className) {
   if (!src) {
     return thumbPlaceholder(className);
@@ -1301,7 +1543,7 @@ function thumbNode(src, label, className) {
 
 function thumbPlaceholder(className) {
   const ph = document.createElement("div");
-  ph.className = `${className} art-thumb-ph`;
+  ph.className = `${className} thumb-ph`;
   ph.setAttribute("aria-hidden", "true");
   return ph;
 }
@@ -1309,10 +1551,30 @@ function thumbPlaceholder(className) {
 function menuButton(label, onClick, extraClass) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = extraClass ? `art-menu-item ${extraClass}` : "art-menu-item";
+  button.className = extraClass ? `menu-item ${extraClass}` : "menu-item";
   button.textContent = label;
   button.addEventListener("click", onClick);
   return button;
+}
+
+// Section visibility: the frame shows with a mirror, a current piece, or the
+// manager; the library, rotation, upload, and trash need the admin service; the
+// art-history section needs at least one shown piece. Now playing and play
+// history toggle themselves in their own renders.
+function updateSections() {
+  const managerActive = state.artIndex !== null;
+  const frameVisible = state.mirror.visible || Boolean(state.artCurrent) || managerActive;
+  els.frame.hidden = !frameVisible;
+  els.frameControls.hidden = !managerActive;
+  els.frameHint.hidden = !managerActive;
+  els.frameCaption.hidden = !state.artCurrent;
+
+  els.library.hidden = !managerActive;
+  els.rotation.hidden = !managerActive;
+  els.upload.hidden = !managerActive;
+  els.trash.hidden = !managerActive;
+
+  els.artHistorySection.hidden = state.artHistory.length === 0;
 }
 
 function setConnection(message) {

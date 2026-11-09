@@ -209,6 +209,12 @@ function validatePiece(raw) {
   const artist =
     typeof raw.artist === "string" && raw.artist.length > 0 ? raw.artist : null;
   return {
+    // `id` is the piece id relative to the art folder, added to art-history
+    // entries going forward (docs/cross-repo-features.md). It is optional: older
+    // entries have none, and the page falls back to `file` when deleting. A
+    // present `id` can be folder-deep (e.g. "Photos/beach.jpg"), so unlike `file`
+    // it is kept verbatim with no separator check.
+    id: nonEmptyStringOrNull(raw.id),
     file: raw.file,
     title: raw.title,
     artist,
@@ -368,6 +374,9 @@ function validatePlay(raw) {
     title: raw.title,
     artist: nonEmptyStringOrNull(raw.artist),
     album: nonEmptyStringOrNull(raw.album),
+    // `kind` ("music" or "long_form") routes the "Open in" sheet to the right
+    // apps (openInLinks); it is optional and null when the producer omits it.
+    kind: nonEmptyStringOrNull(raw.kind),
     duration: positiveNumberOrNull(raw.duration),
     startedAt: nonEmptyStringOrNull(raw.started_at),
     artUrl: coverPathOrNull(raw.art_url),
@@ -720,4 +729,142 @@ function artPathOrNull(value, prefix) {
     return null;
   }
   return value;
+}
+
+// The page-redesign model: the collapsed paged library, the art-history delete
+// target, the frame mirror's caption, and the "Open in" sheet. All pure, so the
+// view glue in rooms.js stays a thin DOM layer over them.
+
+// The default library page size (global constraints: 24 per page).
+const PAGE_SIZE = 24;
+
+// How many pages a library of `total` pieces needs, at least one so the pager
+// always has a page to show. A negative or non-numeric total counts as empty.
+export function pageCount(total, size = PAGE_SIZE) {
+  const n = Number.isFinite(total) && total > 0 ? Math.floor(total) : 0;
+  const per = Number.isFinite(size) && size > 0 ? Math.floor(size) : PAGE_SIZE;
+  return Math.max(1, Math.ceil(n / per));
+}
+
+// The pieces on one zero-indexed page. The page is clamped into range, so a
+// filter that shrinks the library (the current page no longer exists) shows the
+// last page rather than nothing, and a stray negative shows the first. A missing
+// or non-array list yields an empty page.
+export function pageSlice(pieces, page, size = PAGE_SIZE) {
+  if (!Array.isArray(pieces)) {
+    return [];
+  }
+  const per = Number.isFinite(size) && size > 0 ? Math.floor(size) : PAGE_SIZE;
+  const last = pageCount(pieces.length, per) - 1;
+  const wanted = Number.isFinite(page) ? Math.floor(page) : 0;
+  const clamped = Math.max(0, Math.min(last, wanted));
+  const start = clamped * per;
+  return pieces.slice(start, start + per);
+}
+
+// Which id the art-history Delete button deletes by, or null to hide the button.
+// Prefer the entry's `id` (kept verbatim, so a folder-deep piece is targeted
+// correctly). Without an id, fall back to the bare `file` name only when it has
+// no path separator: an older entry can only be deleted at the library root by
+// its plain name, so a name carrying a separator (or a piece actually in a
+// folder) is never mis-targeted and the button simply hides (Review Focus 3).
+export function historyDeleteTarget(entry) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  if (typeof entry.id === "string" && entry.id.length > 0) {
+    return entry.id;
+  }
+  const file = entry.file;
+  if (typeof file === "string" && file.length > 0 && !file.includes("/") && !file.includes("\\")) {
+    return file;
+  }
+  return null;
+}
+
+// The frame mirror's visibility and "Updated" caption, from the hub's
+// same-origin /frame.json ({ updated_at, screen }) and the client clock `nowMs`.
+// A missing or malformed document (the caller passes null on a 404) hides the
+// mirror. A present document shows it; the caption carries the wall-clock time
+// from `updated_at` when it parses and is not in the future (clock skew), and is
+// otherwise blank so the image is shown honestly without a misleading time
+// (Review Focus 1). The clock is read straight off the ISO string's time part,
+// so it shows the frame's own local time without a timezone round-trip.
+//
+// Returns { visible, updatedLabel }.
+export function mirrorState(frameJson, nowMs) {
+  if (!frameJson || typeof frameJson !== "object" || Array.isArray(frameJson)) {
+    return { visible: false, updatedLabel: "" };
+  }
+  return { visible: true, updatedLabel: updatedLabelFor(frameJson.updated_at, nowMs) };
+}
+
+function updatedLabelFor(updatedAt, nowMs) {
+  if (typeof updatedAt !== "string") {
+    return "";
+  }
+  const ms = Date.parse(updatedAt);
+  if (Number.isNaN(ms)) {
+    return "";
+  }
+  // Reject a timestamp in the future beyond a minute of skew: better no time
+  // than a wrong one.
+  if (Number.isFinite(nowMs) && ms > nowMs + 60000) {
+    return "";
+  }
+  const match = /T(\d{2}):(\d{2})/.exec(updatedAt);
+  if (!match) {
+    return "";
+  }
+  const hour24 = Number(match[1]);
+  const hour12 = ((hour24 + 11) % 12) + 1;
+  return `Updated ${hour12}:${match[2]}`;
+}
+
+// The "Open in" sheet for a play-history row: a short list of { label, url },
+// each a search for the track in an app Android can open (the hub serves plain
+// http on the LAN, so the real share sheet is out of reach; the spec's
+// fallback). The apps are chosen by the play's `kind`:
+//   - "music": Apple Music, Spotify, YouTube Music, and a web search.
+//   - "long_form" (podcasts): Apple Podcasts, Spotify, and a web search.
+//   - anything else, or a missing kind: a web search alone.
+// The query is the title plus the artist (for music) or the show, i.e. the album
+// (for a podcast), URL-encoded. A play with no title to search yields no links.
+// Pocket Casts and libro.fm from the design are dropped: neither exposes a
+// stable public search-by-query URL (the spec says to drop such services), and
+// the pinned play-history contract carries no audiobook signal to route a book
+// to a bookstore in the first place.
+export function openInLinks(play) {
+  if (!play || typeof play !== "object") {
+    return [];
+  }
+  const kind = nonEmptyStringOrNull(play.kind);
+  const title = nonEmptyStringOrNull(play.title);
+  const artist = nonEmptyStringOrNull(play.artist);
+  const album = nonEmptyStringOrNull(play.album);
+
+  const secondTerm = kind === "long_form" ? album || artist : artist;
+  const query = [title, secondTerm].filter(Boolean).join(" ");
+  if (query.length === 0) {
+    return [];
+  }
+  const q = encodeURIComponent(query);
+  const web = { label: "Web search", url: `https://duckduckgo.com/?q=${q}` };
+
+  if (kind === "music") {
+    return [
+      { label: "Apple Music", url: `https://music.apple.com/search?term=${q}` },
+      { label: "Spotify", url: `https://open.spotify.com/search/${q}` },
+      { label: "YouTube Music", url: `https://music.youtube.com/search?q=${q}` },
+      web,
+    ];
+  }
+  if (kind === "long_form") {
+    return [
+      { label: "Apple Podcasts", url: `https://podcasts.apple.com/search?term=${q}` },
+      { label: "Spotify", url: `https://open.spotify.com/search/${q}` },
+      web,
+    ];
+  }
+  return [web];
 }
