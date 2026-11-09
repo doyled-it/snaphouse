@@ -278,6 +278,11 @@ export function parseNowPlayingDoc(raw) {
     positionAt: nonEmptyStringOrNull(t.position_at),
     startedAt: nonEmptyStringOrNull(t.started_at),
     artUrl: coverPathOrNull(t.art_url),
+    // `podcast_id` is the hub's additive field (docs/cross-repo-features.md): a
+    // matched podcast's iTunes collectionId, or null (and absent on older data).
+    // The "Open in" sheet uses it to offer Pocket Casts and the Apple Podcasts
+    // show page.
+    podcastId: positiveIntegerOrNull(t.podcast_id),
     rooms: Array.isArray(raw.rooms)
       ? raw.rooms.filter((r) => typeof r === "string" && r.length > 0)
       : [],
@@ -384,6 +389,10 @@ function validatePlay(raw) {
     duration: positiveNumberOrNull(raw.duration),
     startedAt: nonEmptyStringOrNull(raw.started_at),
     artUrl: coverPathOrNull(raw.art_url),
+    // `podcast_id` is the hub's additive field: a matched podcast's iTunes
+    // collectionId, or null (absent on entries written before this field). It
+    // routes the "Open in" sheet to Pocket Casts and the Apple Podcasts show.
+    podcastId: positiveIntegerOrNull(raw.podcast_id),
   };
 }
 
@@ -416,6 +425,14 @@ function stringListOrNull(value) {
 
 function positiveNumberOrNull(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// A positive integer, or null for anything else. The hub's `podcast_id` is a
+// matched show's iTunes collectionId (a positive integer) or null; the page
+// mirrors that validation so a missing, non-integer, or non-positive value is
+// treated as "no id" and the "Open in" sheet never builds a URL from it.
+function positiveIntegerOrNull(value) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 function nonNegativeNumberOrNull(value) {
@@ -922,7 +939,7 @@ function updatedLabelFor(updatedAt, nowMs) {
 //   - "music": Apple Music, Spotify, YouTube Music, and a web search.
 //   - an audiobook or spoken-word genre (case-insensitive "audiobook",
 //     "audio book", or "spoken"): libro.fm and a web search.
-//   - a podcast genre: Apple Podcasts, Spotify, and a web search.
+//   - a podcast genre: the podcast apps and a web search.
 //   - any other "long_form" play (no telling genre): both the podcast apps and
 //     libro.fm, plus a web search, since the kind alone cannot tell a podcast
 //     from a book.
@@ -930,9 +947,16 @@ function updatedLabelFor(updatedAt, nowMs) {
 // The query is the title plus the artist (for music) or the show or book, i.e.
 // the album (for long-form), URL-encoded. A play with no title to search yields
 // no links. libro.fm's public search is `https://libro.fm/search?q=<query>`
-// (verified: the endpoint stays on that path with no redirect). Pocket Casts is
-// still dropped: it exposes no stable public search-by-query or share-by-query
-// URL (verified), so there is nothing to link.
+// (verified: the endpoint stays on that path with no redirect).
+//
+// The podcast apps depend on the play's validated `podcastId` (the hub's matched
+// iTunes collectionId). With an id they are Pocket Casts (`https://pca.st/itunes/
+// <id>`, which 302s to the show on device and opens in the Pocket Casts app),
+// then the Apple Podcasts show page (`https://podcasts.apple.com/podcast/id<id>`),
+// then Spotify's search. Without an id Pocket Casts is dropped (it exposes no
+// stable public search-by-query URL) and Apple Podcasts falls back to a search,
+// so older entries and anything with no matched id keep today's links. The id is
+// re-validated here, so a caller passing an unvalidated value never builds a URL.
 export function openInLinks(play) {
   if (!play || typeof play !== "object") {
     return [];
@@ -941,6 +965,7 @@ export function openInLinks(play) {
   const title = nonEmptyStringOrNull(play.title);
   const artist = nonEmptyStringOrNull(play.artist);
   const album = nonEmptyStringOrNull(play.album);
+  const podcastId = positiveIntegerOrNull(play.podcastId);
 
   const secondTerm = kind === "long_form" ? album || artist : artist;
   const query = [title, secondTerm].filter(Boolean).join(" ");
@@ -950,8 +975,15 @@ export function openInLinks(play) {
   const q = encodeURIComponent(query);
   const web = { label: "Web search", url: `https://duckduckgo.com/?q=${q}` };
   const libro = { label: "libro.fm", url: `https://libro.fm/search?q=${q}` };
+  const applePodcasts =
+    podcastId !== null
+      ? { label: "Apple Podcasts", url: `https://podcasts.apple.com/podcast/id${podcastId}` }
+      : { label: "Apple Podcasts", url: `https://podcasts.apple.com/search?term=${q}` };
   const podcastApps = [
-    { label: "Apple Podcasts", url: `https://podcasts.apple.com/search?term=${q}` },
+    ...(podcastId !== null
+      ? [{ label: "Pocket Casts", url: `https://pca.st/itunes/${podcastId}` }]
+      : []),
+    applePodcasts,
     { label: "Spotify", url: `https://open.spotify.com/search/${q}` },
   ];
 

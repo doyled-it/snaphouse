@@ -208,7 +208,8 @@ is whatever is on the House stream right now, from either input. Shape:
     "position": 1390.0,
     "position_at": "2026-11-08T21:13:58-08:00",
     "started_at": "2026-11-08T20:50:48-08:00",
-    "art_url": "/cover/3f2a....jpg"
+    "art_url": "/cover/3f2a....jpg",
+    "podcast_id": 1200361736
   },
   "rooms": ["Bedroom", "Office"]
 }
@@ -222,6 +223,11 @@ the stream metadata (the hub's additive field), or `null` when unknown; it is ad
 the nightstand frame ignores it (the room-picker page uses it to route the "Open in" sheet).
 `artist`, `album`, `duration`, `position`, `position_at`, and `art_url` may each be `null`. `art_url` is always a
 same-origin `/cover/...` path on the hub (or `null`), never an absolute or off-origin URL.
+`podcast_id` is the matched show's iTunes `collectionId` (a positive integer), filled in
+later like `art_url` once the podcast art lookup lands, or `null` for anything that is not a
+matched podcast; it is additive and the nightstand frame ignores it (the room-picker page
+uses it to open the show in Pocket Casts, `https://pca.st/itunes/<podcast_id>`, and on the
+Apple Podcasts show page, `https://podcasts.apple.com/podcast/id<podcast_id>`).
 `position` is the position at the moment the properties were emitted and `position_at` is
 when the service received it, so a consumer ticks `position + (now - position_at)` while
 playing and freezes it while paused. `rooms` is the connected, unmuted clients on the House
@@ -240,7 +246,7 @@ it at `http://house.local/play-history.json`. Shape:
       "title": "...", "artist": "...", "album": "...",
       "kind": "music", "genre": ["Rock"], "source": "airplay",
       "duration": 322.0, "started_at": "2026-11-08T21:01:10-08:00",
-      "art_url": "/cover/history/....jpg"
+      "art_url": "/cover/history/....jpg", "podcast_id": null
     }
   ]
 }
@@ -253,8 +259,12 @@ minutes. `art_url` is a same-origin `/cover/history/...` path (a durable copy th
 keeps so it survives cover pruning) or `null`, and is filled in later if the cover lookup
 finishes after the play was recorded. `genre` is a list of strings from the stream metadata,
 or `null` when unknown; it is additive, so entries written before this field have no `genre`
-key and stay valid (a consumer treats a missing `genre` as unknown). `artist`, `album`,
-`duration`, `genre`, and `art_url` may be `null`.
+key and stay valid (a consumer treats a missing `genre` as unknown). `podcast_id` is the
+matched show's iTunes `collectionId` (a positive integer), filled in later like `art_url`
+once the podcast art lookup lands, or `null` for anything that is not a matched podcast; it
+is additive too (entries written before this field have no `podcast_id` key and stay valid)
+and routes the room-picker page's "Open in" sheet to Pocket Casts and the Apple Podcasts
+show page. `artist`, `album`, `duration`, `genre`, `art_url`, and `podcast_id` may be `null`.
 
 **Art index file.** snaphouse produces, the room-picker page and nightstand consume. The
 `snaphouse-artadmin` service writes `/var/lib/snaphouse/public/art/art-index.json` atomically
