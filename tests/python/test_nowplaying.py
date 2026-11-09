@@ -15,7 +15,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from snaphouse.nowplaying import Tracker, classify, rewrite_art_url
+from snaphouse.nowplaying import (
+    Tracker,
+    _normalize_genre,
+    classify,
+    rewrite_art_url,
+)
 
 TZ = timezone(timedelta(hours=-8))
 _EPOCH = datetime(2026, 11, 8, 20, 0, 0, tzinfo=TZ)
@@ -94,8 +99,55 @@ def test_classify():
     assert classify(None, None) == "music"
     # Genre match is case-insensitive and covers audiobook and spoken word.
     assert classify(300, ["audiobook"]) == "long_form"
+    # The "audio book" spelling matches the page's "Open in" matcher.
+    assert classify(300, ["Audio Book"]) == "long_form"
     assert classify(300, ["Spoken Word"]) == "long_form"
     assert classify(300, ["Rock"]) == "music"
+
+
+def test_normalize_genre():
+    # A clean list of strings passes through, each trimmed.
+    assert _normalize_genre(["  Rock  ", "Pop"]) == ["Rock", "Pop"]
+    # A non-list value becomes None (the source may send a bare string, dict,
+    # number, or null).
+    assert _normalize_genre("Audiobook") is None
+    assert _normalize_genre(None) is None
+    assert _normalize_genre(7) is None
+    assert _normalize_genre({"genre": "Rock"}) is None
+    # Mixed types: keep only the non-empty strings, drop numbers, nested lists,
+    # null, and blank or whitespace-only items.
+    assert _normalize_genre(["Jazz", 7, None, ["nested"], "", "   "]) == ["Jazz"]
+    # A list with nothing usable, or an empty list, becomes None.
+    assert _normalize_genre([1, 2, 3]) is None
+    assert _normalize_genre([]) is None
+    # Each item is capped at 64 characters.
+    assert _normalize_genre(["A" * 100]) == ["A" * 64]
+    # The list is capped at 5 items.
+    assert _normalize_genre([f"g{i}" for i in range(20)]) == [
+        "g0",
+        "g1",
+        "g2",
+        "g3",
+        "g4",
+    ]
+
+
+def test_nonlist_genre_published_as_null():
+    # A bare-string genre from the source is normalized away, not published raw.
+    tracker = Tracker("House", [], count_after_s=30)
+    tracker.on_server(server(props(title="T", genre="Audiobook", position=0.0)), dt(0))
+    assert tracker.now_playing_doc(dt(0))["track"]["genre"] is None
+    tracker.tick(dt(30))
+    assert tracker.history_doc()["plays"][0]["genre"] is None
+
+
+def test_oversized_genre_capped_in_history():
+    tracker = Tracker("House", [], count_after_s=30)
+    big = [f"genre-{i}" for i in range(20)]
+    tracker.on_server(server(props(title="T", genre=big, position=0.0)), dt(0))
+    tracker.tick(dt(30))
+    play = tracker.history_doc()["plays"][0]
+    assert play["genre"] == ["genre-0", "genre-1", "genre-2", "genre-3", "genre-4"]
 
 
 def test_rewrite_art_url():

@@ -321,6 +321,31 @@ test("parsePlayHistory rejects an off-origin art_url", () => {
   assert.equal(p.artUrl, null);
 });
 
+test("parsePlayHistory keeps a clean genre list and nulls a malformed one", () => {
+  // A list of strings is kept; the page routes on it.
+  const [good] = parsePlayHistory({ plays: [play({ genre: ["Audiobook", "Fiction"] })] });
+  assert.deepEqual(good.genre, ["Audiobook", "Fiction"]);
+  // Anything that is not a list of non-empty strings becomes null, so a hostile
+  // or legacy value cannot reach the router as a half-shape.
+  for (const bad of ["Audiobook", 7, { g: "x" }, [1, 2], ["", "   "], [], null, undefined]) {
+    const [p] = parsePlayHistory({ plays: [play({ genre: bad })] });
+    assert.equal(p.genre, null, JSON.stringify(bad));
+  }
+});
+
+test("parsePlayHistory drops only blank items from a mixed genre list", () => {
+  const [p] = parsePlayHistory({ plays: [play({ genre: ["Jazz", 7, "", "Vocal"] })] });
+  assert.deepEqual(p.genre, ["Jazz", "Vocal"]);
+});
+
+test("parsePlayHistory reads an older entry with no genre key, nulling genre", () => {
+  const older = play();
+  delete older.genre;
+  const [p] = parsePlayHistory({ plays: [older] });
+  assert.equal(p.title, "A Song");
+  assert.equal(p.genre, null);
+});
+
 // --------------------------------------------------------------------------- #
 // nowPlayingFromBody / historyFromBody: parse a response body without throwing
 // --------------------------------------------------------------------------- #

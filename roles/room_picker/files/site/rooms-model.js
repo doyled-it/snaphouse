@@ -391,14 +391,26 @@ function nonEmptyStringOrNull(value) {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-// A list of non-empty strings, or null when the value is absent, not an array,
-// or has no usable strings. The hub's `genre` field is a list of strings;
-// anything else is treated as "no genre" so routing falls back safely.
+// A list of non-empty, trimmed strings, or null when the value is absent, not an
+// array, or has no usable strings. The hub's `genre` field is a list of strings
+// (the hub already trims, caps, and drops empties); the page mirrors that so a
+// malformed or legacy value is treated as "no genre" and routing falls back
+// safely. Anything that is not an array, and any whitespace-only or non-string
+// item, is dropped.
 function stringListOrNull(value) {
   if (!Array.isArray(value)) {
     return null;
   }
-  const list = value.filter((item) => typeof item === "string" && item.length > 0);
+  const list = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      continue;
+    }
+    const trimmed = item.trim();
+    if (trimmed.length > 0) {
+      list.push(trimmed);
+    }
+  }
   return list.length > 0 ? list : null;
 }
 

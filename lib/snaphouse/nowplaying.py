@@ -61,9 +61,17 @@ from .artlookup import ArtLookup, keep_for_history, prune_history_covers, urllib
 TrackKey = tuple[str, Optional[str], Optional[str]]
 
 # Long-form audio is 20 minutes or more, or a genre that names talk content.
-# These two levers decide "Kind" in the design.
+# These two levers decide "Kind" in the design. The spellings match the page's
+# "Open in" matcher (rooms-model.js openInLinks), so "audio book" routes the same
+# on both sides.
 _LONG_FORM_SECONDS = 1200
-_LONG_FORM_GENRE = ("podcast", "audiobook", "spoken")
+_LONG_FORM_GENRE = ("podcast", "audiobook", "audio book", "spoken")
+
+# The published genre is a list of strings, but the source (AirPlay or Bluetooth
+# AVRCP) can send anything. These cap each item and the whole list so a hostile
+# or malformed value cannot bloat play-history.json, which every poller fetches.
+_GENRE_ITEM_MAX = 64
+_GENRE_LIST_MAX = 5
 
 # The House meta stream's inputs, in meta priority order, paired with the
 # ``source`` value each one publishes. AirPlay wins a tie (it is listed first in
@@ -134,6 +142,31 @@ def rewrite_art_url(url: str | None) -> str | None:
     return None
 
 
+def _normalize_genre(value: object) -> list[str] | None:
+    """Normalize the stream's genre metadata to a capped list of strings, or None.
+
+    The contract publishes ``genre`` as a list of strings, but the source can
+    send a bare string, a list with non-strings or nested lists, or an unbounded
+    list of long strings. This keeps only non-empty trimmed strings, caps each to
+    ``_GENRE_ITEM_MAX`` characters and the list to ``_GENRE_LIST_MAX`` items, and
+    returns None when the value is not a list or nothing usable is left, so no
+    non-list, oversized, or empty value ever ships to play-history.json.
+    """
+    if not isinstance(value, list):
+        return None
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        trimmed = item.strip()
+        if not trimmed:
+            continue
+        out.append(trimmed[:_GENRE_ITEM_MAX])
+        if len(out) >= _GENRE_LIST_MAX:
+            break
+    return out or None
+
+
 def _coerce_text(value: object) -> str | None:
     """Coerce a metadata text field to a display string or ``None``.
 
@@ -179,7 +212,7 @@ def _parse_track(properties: dict) -> _TrackInfo | None:
     return _TrackInfo(
         key=key,
         duration=metadata.get("duration"),
-        genre=metadata.get("genre"),
+        genre=_normalize_genre(metadata.get("genre")),
         art=rewrite_art_url(metadata.get("artUrl")),
     )
 
