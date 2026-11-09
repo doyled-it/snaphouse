@@ -28,6 +28,7 @@ import {
   rotationSummary,
   intervalOptions,
   apiRequest,
+  libraryRefreshMayRebuild,
 } from "./rooms-model.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -124,6 +125,10 @@ const state = {
   artFilter: ALL_FOLDERS,
   artIntervalBuilt: false,
   artMessageTimer: null,
+  // Set when a periodic library refresh was held because the owner had a tile's
+  // Options menu open or a "Move to folder" select focused. The held refresh runs
+  // once the menu closes so the library never goes stale for long.
+  artRefreshPending: false,
 };
 
 // The JSON-RPC endpoint and its WebSocket twin, both relative to this page so
@@ -149,7 +154,7 @@ async function start() {
   refreshHistory();
   setInterval(refreshHealth, HEALTH_MS);
   setInterval(refreshArt, HEALTH_MS);
-  setInterval(refreshLibrary, LIBRARY_MS);
+  setInterval(() => refreshLibrary({ periodic: true }), LIBRARY_MS);
   setInterval(refreshNowPlaying, NOW_PLAYING_MS);
   setInterval(refreshHistory, HISTORY_MS);
   // The card's elapsed time and bar advance between polls, driven only by the
@@ -860,6 +865,44 @@ function wireArtManager() {
     els.artFolderName.value = "";
     runAction("/api/art/folder/create", { name });
   });
+
+  // When a held refresh is pending, resume it the moment the grid goes idle: a
+  // menu closing (toggle does not bubble, so listen in the capture phase) or a
+  // select losing focus. The deferred check lets the open/focus state settle
+  // first, and runs the catch-up only if nothing is open again by then.
+  els.artGrid.addEventListener("toggle", maybeResumeLibraryRefresh, true);
+  els.artGrid.addEventListener("focusout", maybeResumeLibraryRefresh);
+}
+
+// Is the library grid mid-interaction? A periodic refresh is held while any
+// per-piece Options menu (<details open>) is open or a menu's "Move to folder"
+// select has focus, so a rebuild cannot snap them shut under the owner's hand.
+function libraryMenuBusy() {
+  const menuOpen = els.artGrid.querySelector("details.art-menu[open]") !== null;
+  const active = document.activeElement;
+  const selectFocused =
+    active instanceof HTMLSelectElement && els.artGrid.contains(active);
+  return { menuOpen, selectFocused };
+}
+
+// Run a refresh that was held while the owner had a menu open, once the grid is
+// idle again. Deferred to a timeout so focusout fires before activeElement moves
+// to the next element, and re-checked so a refresh never rebuilds under an open
+// menu.
+function maybeResumeLibraryRefresh() {
+  if (!state.artRefreshPending) {
+    return;
+  }
+  setTimeout(() => {
+    if (!state.artRefreshPending) {
+      return;
+    }
+    const { menuOpen, selectFocused } = libraryMenuBusy();
+    if (menuOpen || selectFocused) {
+      return;
+    }
+    refreshLibrary();
+  }, 0);
 }
 
 // Read both library documents and repaint, or leave the last render alone on a
@@ -867,7 +910,19 @@ function wireArtManager() {
 // manager so the page falls back to the frame-history view. The parse is kept
 // out of the fetch try so a bad body degrades to an empty library rather than
 // looking like a transient error.
-async function refreshLibrary() {
+async function refreshLibrary({ periodic = false } = {}) {
+  // A periodic refresh rebuilds the whole grid (replaceChildren), which tears
+  // down any open Options menu and a half-made "Move to folder" selection. Hold
+  // it while the owner is mid-action; it runs when the menu closes (see
+  // maybeResumeLibraryRefresh). An action or first-load refresh is never periodic
+  // and always runs. The decision itself is the pure model helper.
+  const { menuOpen, selectFocused } = libraryMenuBusy();
+  if (!libraryRefreshMayRebuild({ periodic, menuOpen, selectFocused })) {
+    state.artRefreshPending = true;
+    return;
+  }
+  state.artRefreshPending = false;
+
   let indexBody;
   let controlBody;
   try {
