@@ -272,6 +272,38 @@ def test_first_apply_passes_a_check_that_needs_the_status_file(world):
     assert status["verify"] == "pass"
 
 
+def test_existing_status_is_untouched_by_the_provisional_write(world):
+    """On an established machine a status file already exists. The provisional
+    write must be a no-op there and must never clobber the real status before
+    verify runs. A capture check copies the file mid-verify so the content it saw
+    can be checked; it must still be the pre-existing document.
+    """
+    world.status.parent.mkdir(parents=True, exist_ok=True)
+    sentinel = '{"host": "sentinel", "commit": "preexisting"}\n'
+    world.status.write_text(sentinel)
+
+    capture = world.tmp / "verify.d" / "capture.sh"
+    capture.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'cp "$SNAPHOUSE_STATUS" "$SNAPHOUSE_STATUS.at_verify"\n'
+    )
+    capture.chmod(0o755)
+
+    v1 = push_commit(world, msg="v1")
+    assert update.main(["--force"]) == 0
+
+    # Mid-verify the file still held the pre-existing content: the provisional
+    # write saw an existing file and did nothing.
+    at_verify = Path(str(world.status) + ".at_verify").read_text()
+    assert at_verify == sentinel
+
+    # The run's own publish then wrote the real result over it.
+    status = read_json(world.status)
+    assert status["commit"] == v1
+    assert status["verify"] == "pass"
+
+
 def test_failure_with_no_last_good_exits_nonzero(world):
     v1 = push_commit(world, msg="v1", verify="fail")
     assert update.main([]) != 0

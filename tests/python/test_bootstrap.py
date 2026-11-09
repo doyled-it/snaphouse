@@ -98,9 +98,11 @@ def test_no_argument_leaves_the_target_host_empty():
     assert result.stdout == "[]"
 
 
-def _self_update_fixtures(tmp_path: Path, *, apply_rc: int):
+def _self_update_fixtures(tmp_path: Path, *, apply_rc: int, systemctl_rc: int = 0):
     """A systemctl stub that records its calls and a fake repo whose
-    bin/snaphouse exits with apply_rc. Returns (env, calls_file, repo_dir)."""
+    bin/snaphouse exits with apply_rc. The systemctl stub exits with systemctl_rc
+    so a timer-enable failure can be exercised. Returns (env, calls_file,
+    repo_dir)."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     calls = tmp_path / "systemctl.calls"
@@ -110,7 +112,7 @@ def _self_update_fixtures(tmp_path: Path, *, apply_rc: int):
             f"""\
             #!/usr/bin/env bash
             echo "$@" >> "{calls}"
-            exit 0
+            exit {systemctl_rc}
             """
         )
     )
@@ -134,21 +136,42 @@ def _self_update_fixtures(tmp_path: Path, *, apply_rc: int):
     return env, calls, repo_dir
 
 
+# main calls start_self_update on the left of `||`, which disables set -e inside
+# the function. The tests drive it the same way, so a failure the function does
+# not handle itself is swallowed exactly as it would be in main.
+_CALL_LIKE_MAIN = 'rc=0\nstart_self_update || rc=$?\nexit "$rc"'
+
+
 def test_first_apply_failure_still_enables_timer_and_exits_nonzero(tmp_path: Path):
     env, calls, repo_dir = _self_update_fixtures(tmp_path, apply_rc=1)
-    result = _run(f'repo_dir="{repo_dir}"\nstart_self_update', env=env)
+    result = _run(f'repo_dir="{repo_dir}"\n{_CALL_LIKE_MAIN}', env=env)
 
     assert result.returncode != 0, result.stdout
     assert calls.exists(), "systemctl was never called"
-    assert "enable --now snaphouse-update.timer" in calls.read_text()
+    # The timer is enabled exactly once, before the non-zero exit.
+    assert calls.read_text().count("enable --now snaphouse-update.timer") == 1
+    assert "did not pass verify" in result.stderr
 
 
 def test_first_apply_success_enables_timer_and_exits_zero(tmp_path: Path):
     env, calls, repo_dir = _self_update_fixtures(tmp_path, apply_rc=0)
-    result = _run(f'repo_dir="{repo_dir}"\nstart_self_update', env=env)
+    result = _run(f'repo_dir="{repo_dir}"\n{_CALL_LIKE_MAIN}', env=env)
 
     assert result.returncode == 0, result.stderr
-    assert "enable --now snaphouse-update.timer" in calls.read_text()
+    assert calls.read_text().count("enable --now snaphouse-update.timer") == 1
+
+
+def test_timer_enable_failure_fails_bootstrap_even_when_apply_passes(tmp_path: Path):
+    # The apply passes but enabling the timer fails. Because start_self_update is
+    # called on the left of `||` in main, bash disables set -e inside it, so the
+    # function must check the enable's status itself. Otherwise bootstrap would
+    # report success with no timer (the regression the review caught).
+    env, calls, repo_dir = _self_update_fixtures(tmp_path, apply_rc=0, systemctl_rc=1)
+    result = _run(f'repo_dir="{repo_dir}"\n{_CALL_LIKE_MAIN}', env=env)
+
+    assert result.returncode != 0, result.stdout
+    assert calls.read_text().count("enable --now snaphouse-update.timer") == 1
+    assert "timer" in result.stderr and "fail" in result.stderr.lower()
 
 
 def test_set_hostname_is_idempotent_in_etc_hosts(tmp_path: Path):
