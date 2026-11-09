@@ -19,7 +19,10 @@ from snaphouse.housestatus import (
     aggregate,
     main,
     publish_art_history,
+    publish_frame_image,
+    publish_frame_meta,
     select_art_history,
+    select_frame_meta,
     select_status,
     write_art_history,
     write_house_status,
@@ -155,8 +158,36 @@ def test_select_art_history_keeps_current_and_history_fields():
     older = _piece(file="aic-9.jpg", title="Older", shown_at="2026-11-05T09:00:00-08:00")
     selected = select_art_history({"current": current, "history": [current, older]})
     assert set(selected) == {"current", "history"}
-    assert set(selected["current"]) == {"file", "title", "artist", "source_url", "shown_at"}
+    assert set(selected["current"]) == {"file", "title", "artist", "source_url", "shown_at", "id"}
     assert [p["file"] for p in selected["history"]] == ["aic-12345.jpg", "aic-9.jpg"]
+
+
+def test_select_art_history_keeps_a_safe_piece_id():
+    # Newer entries carry an id (the piece id relative to the art folder) that the
+    # page deletes by; it may be one folder deep. A safe id is passed through.
+    selected = select_art_history(
+        {
+            "current": _piece(id="Photos/beach.jpg"),
+            "history": [_piece(id="aic-12345.jpg")],
+        }
+    )
+    assert selected["current"]["id"] == "Photos/beach.jpg"
+    assert selected["history"][0]["id"] == "aic-12345.jpg"
+
+
+def test_select_art_history_nulls_a_missing_or_unsafe_piece_id():
+    # Older entries have no id (the page falls back to file); a traversal or a
+    # two-folder-deep id is rejected rather than republished.
+    selected = select_art_history(
+        {
+            "current": _piece(id="../secret.jpg"),
+            "history": [_piece(), _piece(id="a/b/c.jpg"), _piece(id=".hidden.jpg")],
+        }
+    )
+    assert selected["current"]["id"] is None
+    assert selected["history"][0]["id"] is None
+    assert selected["history"][1]["id"] is None
+    assert selected["history"][2]["id"] is None
 
 
 def test_select_art_history_strips_fields_outside_the_contract():
@@ -331,9 +362,12 @@ def test_main_completes_the_status_poll_when_the_art_step_fails(tmp_path, monkey
     def fake_fetch(url, *, timeout=0, select=select_status):
         if select is select_art_history:
             raise RuntimeError("frame unreachable in a surprising way")
+        if select is select_frame_meta:
+            return None
         return _status("house")
 
     monkeypatch.setattr(housestatus, "http_fetch", fake_fetch)
+    monkeypatch.setattr(housestatus, "fetch_frame_image", lambda url, *, timeout=0: None)
 
     code = main(
         [
@@ -343,6 +377,10 @@ def test_main_completes_the_status_poll_when_the_art_step_fails(tmp_path, monkey
             str(house_out),
             "--art-history-out",
             str(art_out),
+            "--frame-image-out",
+            str(tmp_path / "frame.png"),
+            "--frame-meta-out",
+            str(tmp_path / "frame.json"),
         ]
     )
     assert code == 0
@@ -360,9 +398,12 @@ def test_main_republishes_art_history_on_a_good_fetch(tmp_path, monkeypatch):
     def fake_fetch(url, *, timeout=0, select=select_status):
         if select is select_art_history:
             return {"current": _piece(), "history": [_piece()]}
+        if select is select_frame_meta:
+            return None
         return _status("house")
 
     monkeypatch.setattr(housestatus, "http_fetch", fake_fetch)
+    monkeypatch.setattr(housestatus, "fetch_frame_image", lambda url, *, timeout=0: None)
 
     code = main(
         [
@@ -372,9 +413,198 @@ def test_main_republishes_art_history_on_a_good_fetch(tmp_path, monkeypatch):
             str(house_out),
             "--art-history-out",
             str(art_out),
+            "--frame-image-out",
+            str(tmp_path / "frame.png"),
+            "--frame-meta-out",
+            str(tmp_path / "frame.json"),
         ]
     )
     assert code == 0
     art_doc = json.loads(art_out.read_text())
     assert art_doc["current"]["file"] == "aic-12345.jpg"
     assert (art_out.stat().st_mode & 0o777) == 0o644
+
+
+# The hub also republishes the nightstand frame mirror same-origin: frame.png (the
+# exact image last pushed to the panel) and frame.json ({updated_at, screen}). Both
+# use the art-history hardening: no redirects, a size cap, a shape or signature
+# check, an atomic write, and the last good copy kept on any failure. The shapes
+# are the "Frame mirror" contract in docs/cross-repo-features.md.
+
+_FRAME_META = {"updated_at": "2026-11-09T07:00:00-08:00", "screen": "art"}
+
+
+def test_select_frame_meta_keeps_updated_at_and_screen():
+    assert select_frame_meta(dict(_FRAME_META)) == _FRAME_META
+
+
+def test_select_frame_meta_strips_fields_outside_the_contract():
+    body = dict(_FRAME_META)
+    body["secret"] = "do not copy"
+    body["script"] = "<img onerror=...>"
+    assert select_frame_meta(body) == _FRAME_META
+
+
+def test_select_frame_meta_rejects_malformed_bodies():
+    assert select_frame_meta("not a dict") is None
+    assert select_frame_meta(["a", "list"]) is None
+    assert select_frame_meta({"screen": "art"}) is None  # no updated_at
+    assert select_frame_meta({"updated_at": "t"}) is None  # no screen
+    assert select_frame_meta({"updated_at": "t", "screen": ""}) is None  # empty screen
+
+
+def test_fetch_frame_image_accepts_a_png(monkeypatch):
+    body = housestatus.PNG_SIGNATURE + b"pixels"
+    monkeypatch.setattr(housestatus, "_OPENER", _FakeOpener(_FakeResponse(body)))
+    assert housestatus.fetch_frame_image("http://x/frame.png") == body
+
+
+def test_fetch_frame_image_rejects_a_non_png(monkeypatch):
+    monkeypatch.setattr(housestatus, "_OPENER", _FakeOpener(_FakeResponse(b"<html>not a png</html>")))
+    assert housestatus.fetch_frame_image("http://x/frame.png") is None
+
+
+def test_fetch_frame_image_enforces_the_size_cap(monkeypatch):
+    oversize = housestatus.PNG_SIGNATURE + b"x" * (housestatus.MAX_FRAME_IMAGE_BYTES + 1)
+    monkeypatch.setattr(housestatus, "_OPENER", _FakeOpener(_FakeResponse(oversize)))
+    assert housestatus.fetch_frame_image("http://x/frame.png") is None
+
+
+def test_fetch_frame_image_rejects_a_non_200(monkeypatch):
+    body = housestatus.PNG_SIGNATURE + b"pixels"
+    monkeypatch.setattr(housestatus, "_OPENER", _FakeOpener(_FakeResponse(body, status=404)))
+    assert housestatus.fetch_frame_image("http://x/frame.png") is None
+
+
+def test_publish_frame_image_writes_a_valid_png_atomically(tmp_path, monkeypatch):
+    out = tmp_path / "frame.png"
+    body = housestatus.PNG_SIGNATURE + b"new-frame"
+    monkeypatch.setattr(housestatus, "fetch_frame_image", lambda url, *, timeout=0: body)
+    publish_frame_image("http://x/frame.png", out)
+    assert out.read_bytes() == body
+    assert [p.name for p in tmp_path.iterdir()] == ["frame.png"]
+    assert (out.stat().st_mode & 0o777) == 0o644
+
+
+def test_publish_frame_image_keeps_last_good_when_the_fetch_yields_none(tmp_path, monkeypatch):
+    out = tmp_path / "frame.png"
+    seeded = housestatus.PNG_SIGNATURE + b"old-good-frame"
+    out.write_bytes(seeded)
+    monkeypatch.setattr(housestatus, "fetch_frame_image", lambda url, *, timeout=0: None)
+    publish_frame_image("http://x/frame.png", out)
+    assert out.read_bytes() == seeded
+
+
+def test_publish_frame_image_logs_and_keeps_last_good_when_the_write_fails(
+    tmp_path, monkeypatch, capsys
+):
+    out = tmp_path / "frame.png"
+    seeded = housestatus.PNG_SIGNATURE + b"old"
+    out.write_bytes(seeded)
+    monkeypatch.setattr(
+        housestatus, "fetch_frame_image", lambda url, *, timeout=0: housestatus.PNG_SIGNATURE + b"new"
+    )
+
+    def _boom(path, data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(housestatus, "write_frame_image", _boom)
+    publish_frame_image("http://x/frame.png", out)
+    assert out.read_bytes() == seeded
+    err = capsys.readouterr().err
+    assert "frame.png" in err
+    assert "disk full" in err
+
+
+def test_publish_frame_meta_writes_validated_fields(tmp_path, monkeypatch):
+    out = tmp_path / "frame.json"
+    monkeypatch.setattr(
+        housestatus, "http_fetch", lambda url, *, timeout=0, select=None: dict(_FRAME_META)
+    )
+    publish_frame_meta("http://x/frame.json", out)
+    assert json.loads(out.read_text()) == _FRAME_META
+    assert [p.name for p in tmp_path.iterdir()] == ["frame.json"]
+    assert (out.stat().st_mode & 0o777) == 0o644
+
+
+def test_publish_frame_meta_keeps_last_good_when_the_fetch_yields_none(tmp_path, monkeypatch):
+    out = tmp_path / "frame.json"
+    seeded = b'{"updated_at": "t", "screen": "art"}\n'
+    out.write_bytes(seeded)
+    monkeypatch.setattr(housestatus, "http_fetch", lambda url, *, timeout=0, select=None: None)
+    publish_frame_meta("http://x/frame.json", out)
+    assert out.read_bytes() == seeded
+
+
+def test_main_republishes_the_frame_mirror(tmp_path, monkeypatch):
+    house_out = tmp_path / "house-status.json"
+    frame_png = tmp_path / "frame.png"
+    frame_json = tmp_path / "frame.json"
+    png_body = housestatus.PNG_SIGNATURE + b"mirror"
+
+    def fake_fetch(url, *, timeout=0, select=select_status):
+        if select is select_art_history:
+            return {"current": None, "history": []}
+        if select is select_frame_meta:
+            return dict(_FRAME_META)
+        return _status("house")
+
+    monkeypatch.setattr(housestatus, "http_fetch", fake_fetch)
+    monkeypatch.setattr(housestatus, "fetch_frame_image", lambda url, *, timeout=0: png_body)
+
+    code = main(
+        [
+            "--targets",
+            str(_write_targets(tmp_path)),
+            "--out",
+            str(house_out),
+            "--art-history-out",
+            str(tmp_path / "art-history.json"),
+            "--frame-image-out",
+            str(frame_png),
+            "--frame-meta-out",
+            str(frame_json),
+        ]
+    )
+    assert code == 0
+    assert frame_png.read_bytes() == png_body
+    assert json.loads(frame_json.read_text()) == _FRAME_META
+
+
+def test_main_completes_the_status_poll_when_the_frame_step_fails(tmp_path, monkeypatch):
+    house_out = tmp_path / "house-status.json"
+    frame_png = tmp_path / "frame.png"
+    seeded = housestatus.PNG_SIGNATURE + b"old"
+    frame_png.write_bytes(seeded)
+
+    def fake_fetch(url, *, timeout=0, select=select_status):
+        if select is select_frame_meta:
+            raise RuntimeError("frame unreachable in a surprising way")
+        if select is select_art_history:
+            return None
+        return _status("house")
+
+    def boom_image(url, *, timeout=0):
+        raise RuntimeError("frame png unreachable in a surprising way")
+
+    monkeypatch.setattr(housestatus, "http_fetch", fake_fetch)
+    monkeypatch.setattr(housestatus, "fetch_frame_image", boom_image)
+
+    code = main(
+        [
+            "--targets",
+            str(_write_targets(tmp_path)),
+            "--out",
+            str(house_out),
+            "--art-history-out",
+            str(tmp_path / "art-history.json"),
+            "--frame-image-out",
+            str(frame_png),
+            "--frame-meta-out",
+            str(tmp_path / "frame.json"),
+        ]
+    )
+    assert code == 0
+    assert json.loads(house_out.read_text())["machines"][0]["status"]["host"] == "house"
+    # The last good mirror image is untouched.
+    assert frame_png.read_bytes() == seeded

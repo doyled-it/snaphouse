@@ -80,6 +80,16 @@ git clone git@github.com:doyled-it/nightstand.git
   `http://house.local/art-history.json`, so the room-picker page shows what is on the frame
   without the browser resolving the frame's `.local` name. A change to the file's shape
   updates the contract below and both repos in the same PR set.
+- **Frame mirror (nightstand produces, snaphouse consumes).** After each push to the panel
+  nightstand writes the image it sent, passed through its panel simulation, as `frame.png`
+  (800x480 PNG) plus `frame.json` (`{"updated_at", "screen"}`), served by snaphouse's nginx
+  on the `nightstand` host at `http://nightstand.local/nightstand/frame.png` and
+  `/frame.json` (the "Frame mirror file" contract below). The hub's house-status timer
+  republishes both same-origin at `http://house.local/frame.png` and `/frame.json` (into a
+  timer-owned subdir of the public root, never chowning the shared root), with the same
+  hardening as the art-history poll: a size cap, a PNG-signature or JSON-shape check, an
+  atomic write, and the last good copy kept when a fetch fails. A missing file hides the
+  mirror on the page.
 - **Device ownership on `nightstand`.** snaphouse bootstrap installs the OS base and
   audio, clones nightstand, and runs its installer once. Both repos self-update on their
   own timers. Neither repo's playbook or installer may change files the other owns.
@@ -143,13 +153,39 @@ is actually pushed to the panel; snaphouse's nginx on the `nightstand` host serv
 `history` is newest first, at most 50 entries, and `current` is also `history[0]`
 (`current` is `null` and `history` is `[]` when nothing has been shown). A `Piece` is
 `{"file", "title", "artist": str|null, "source_url": str|null, "shown_at": ISO-8601 with
-offset}`. `file` is a bare image file name in the art share (no path separators).
-`source_url` is an https URL to the museum object page, or `null`; consumers drop a
-non-https value. Captions come from the sidecar `<image file>.txt` files of the "Art
-listing" contract (line 1 title, line 2 artist, optional line 3 an https source URL that
-is ignored unless it parses as https). The hub republishes a validated copy same-origin at
-`http://house.local/art-history.json`, keeping only these fields, capping history at 50,
-and keeping the last good copy when a fetch fails.
+offset, "id": str|null}`. `file` is a bare image file name in the art share (no path
+separators). `id` is the piece id relative to the art library root (at most one folder
+deep, the same id as in the "Art index file"), added so the room-picker page can delete
+the piece by id; it is `null` on older entries written before this field existed, and a
+consumer falls back to `file`. `source_url` is an https URL to the museum object page, or
+`null`; consumers drop a non-https value. Captions come from the sidecar `<image file>.txt`
+files of the "Art listing" contract (line 1 title, line 2 artist, optional line 3 an https
+source URL that is ignored unless it parses as https). The hub republishes a validated copy
+same-origin at `http://house.local/art-history.json`, keeping only these fields (an `id`
+that is unsafe, a traversal, or more than one folder deep becomes `null`), capping history
+at 50, and keeping the last good copy when a fetch fails.
+
+**Frame mirror file.** nightstand produces, snaphouse consumes. After each push to the
+panel nightstand writes the image it sent (passed through its panel simulation) atomically
+(0644) as `/var/lib/nightstand/public/frame.png`, an 800x480 PNG, plus
+`/var/lib/nightstand/public/frame.json`; snaphouse's nginx on the `nightstand` host serves
+them at `http://nightstand.local/nightstand/frame.png` and `/frame.json`. `frame.json`:
+
+```json
+{
+  "updated_at": "2026-11-09T07:00:00-08:00",
+  "screen": "art"
+}
+```
+
+`updated_at` is an ISO-8601 stamp with offset of when the frame last drew; `screen` names
+what is on the panel (`"art"`, `"now_playing"`, or another screen name), a non-empty
+string. The hub's house-status timer republishes both same-origin at
+`http://house.local/frame.png` and `http://house.local/frame.json`: the image fetch is
+capped at 2 MB and the body must start with the PNG signature, `frame.json` is validated to
+exactly these two fields, both are written atomically into a timer-owned subdir of the
+public root, and the last good copy is kept when a fetch fails or a body is malformed. The
+room-picker page reads the same-origin copies and hides the mirror when either is missing.
 
 **Now-playing file.** snaphouse produces, nightstand and the room-picker page consume. The
 hub's `snaphouse-nowplaying` service writes `/var/lib/snaphouse/public/nowplaying/now-playing.json`
@@ -247,8 +283,9 @@ background and the index is republished as they land. Shape:
 `folders[].builtin` is true only for the reserved top-level `Collection`; a folder named
 `Collection` cannot be created in any case. A piece `id` is its path relative to the library
 root, at most one folder deep; `url` and `thumb` are percent-encoded per path segment, while
-`id` is raw. `landscape` is true when the aspect is at least 1.3 (the frame's landscape rule);
-portrait pieces stay listed but do not rotate. `trash` entries are restorable for 30 days.
+`id` is raw. `landscape` is true when the aspect is at least `settings.min_aspect` from the
+"Art control file" (default 1.1, the frame's landscape rule); pieces below the cutoff stay
+listed but do not rotate. `trash` entries are restorable for 30 days.
 `thumb` (on a piece or a trash entry) is `null` until the background pass has generated that
 thumbnail, so the index can be published before the thumbnails exist; a consumer must tolerate
 a null `thumb` (show a placeholder and re-read later). Thumbnails are served by the same nginx
@@ -262,7 +299,7 @@ too, to show the current settings). The same service writes
 
 ```json
 {
-  "settings": {"rotate_minutes": 60, "folders_enabled": ["Collection"]},
+  "settings": {"rotate_minutes": 60, "folders_enabled": ["Collection"], "min_aspect": 1.1},
   "command": {"seq": 7, "action": "next", "piece": null,
               "issued_at": "2026-11-09T06:59:10-08:00"}
 }
@@ -270,7 +307,11 @@ too, to show the current settings). The same service writes
 
 `settings.rotate_minutes` is one of 15, 30, 60, 120, 180, 360, 720, or 1440 (default 60).
 `settings.folders_enabled` lists the folders in rotation by name; renaming a folder carries its
-enabled state. `command` is `null` until the first command; `action` is `next`, `previous`, or
+enabled state. `settings.min_aspect` is the landscape cutoff (a positive number, default 1.1):
+a piece rotates only when its width/height reaches it, and the hub's `landscape` flag in the
+"Art index file" uses the same value, so the hub is the single source of truth and the frame
+follows it (its local config is only the fallback). `command` is `null` until the first
+command; `action` is `next`, `previous`, or
 `show` (`piece` is the id for `show`, otherwise `null`). `seq` only increases, so a frame acts on
 a `seq` greater than the last one it applied; a frame that starts up and sees an existing command
 records its `seq` without replaying it.

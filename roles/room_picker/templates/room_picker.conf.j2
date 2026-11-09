@@ -38,6 +38,24 @@ location = /art-history.json {
     default_type application/json;
 }
 
+# The frame mirror, written by the same hub timer from the nightstand host's
+# frame.png and frame.json (the "Frame mirror" contract in
+# docs/cross-repo-features.md). Both live in a timer-owned subdir of the public
+# root; the root points at that subdir and nginx appends the single-segment URI,
+# so /frame.png serves frame/frame.png and /frame.json serves frame/frame.json.
+# Exact-match so each outranks the room-picker `location /` prefix. Either file
+# may be absent (no frame reached, or nothing drawn yet); a 404 then makes the
+# page hide the mirror cleanly.
+location = /frame.png {
+    root /var/lib/snaphouse/public/frame;
+    default_type image/png;
+}
+
+location = /frame.json {
+    root /var/lib/snaphouse/public/frame;
+    default_type application/json;
+}
+
 # The hub's now-playing data, written by the snaphouse-nowplaying service (the
 # metadata role) into its own snapserver-owned subdir of the public root. The
 # root points at that subdir, and nginx appends the single-segment URI, so the

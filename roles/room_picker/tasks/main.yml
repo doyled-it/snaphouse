@@ -43,6 +43,17 @@
     group: root
     mode: "0644"
 
+# The house-status timer (root) republishes the frame mirror into this subdir of
+# the public web root, so it never chowns the shared root. nginx serves frame.png
+# and frame.json from here.
+- name: Ensure the frame mirror subdir exists
+  ansible.builtin.file:
+    path: /var/lib/snaphouse/public/frame
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Install the room picker nginx locations
   ansible.builtin.template:
     src: room_picker.conf.j2

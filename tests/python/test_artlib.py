@@ -187,14 +187,16 @@ def test_scan_marks_portrait_not_landscape(tmp_path):
     assert piece["landscape"] is False
 
 
-def test_scan_landscape_threshold_is_1_3(tmp_path):
+def test_scan_landscape_threshold_is_1_1(tmp_path):
+    # The default rotation cutoff is 1.1 (settings.min_aspect): a 1.2 piece is
+    # landscape and rotates, a 1.05 piece is not.
     library = _make_library(tmp_path)
-    _write_image(library_root(library) / "square-ish.jpg", size=(130, 100))
-    _write_image(library_root(library) / "just-under.jpg", size=(129, 100))
+    _write_image(library_root(library) / "wide.jpg", size=(120, 100))
+    _write_image(library_root(library) / "just-under.jpg", size=(105, 100))
 
     index = library.scan()
 
-    assert _piece(index, "square-ish.jpg")["landscape"] is True
+    assert _piece(index, "wide.jpg")["landscape"] is True
     assert _piece(index, "just-under.jpg")["landscape"] is False
 
 
@@ -715,7 +717,44 @@ def test_control_defaults(tmp_path):
 
     assert control["settings"]["rotate_minutes"] == 60
     assert control["settings"]["folders_enabled"] == ["Collection"]
+    assert control["settings"]["min_aspect"] == 1.1
     assert control["command"] is None
+
+
+def test_control_carries_a_stored_min_aspect(tmp_path):
+    library = _make_library(tmp_path)
+    library.state.parent.mkdir(parents=True, exist_ok=True)
+    library.state.write_text(
+        json.dumps({"settings": {"min_aspect": 1.3}, "command": None}), encoding="utf-8"
+    )
+
+    assert library.control()["settings"]["min_aspect"] == 1.3
+
+
+@pytest.mark.parametrize("bad", [0, -1, "1.2", True, None])
+def test_control_rejects_a_bad_stored_min_aspect(tmp_path, bad):
+    library = _make_library(tmp_path)
+    library.state.parent.mkdir(parents=True, exist_ok=True)
+    library.state.write_text(
+        json.dumps({"settings": {"min_aspect": bad}, "command": None}), encoding="utf-8"
+    )
+
+    assert library.control()["settings"]["min_aspect"] == 1.1
+
+
+def test_scan_landscape_uses_the_stored_min_aspect(tmp_path):
+    # The stored cutoff is the single source of truth: raised to 1.3, a 1.2 piece
+    # no longer counts as landscape.
+    library = _make_library(tmp_path)
+    library.state.parent.mkdir(parents=True, exist_ok=True)
+    library.state.write_text(
+        json.dumps({"settings": {"min_aspect": 1.3}, "command": None}), encoding="utf-8"
+    )
+    _write_image(library_root(library) / "wide.jpg", size=(120, 100))
+
+    index = library.scan()
+
+    assert _piece(index, "wide.jpg")["landscape"] is False
 
 
 # --------------------------------------------------------------------------- #
