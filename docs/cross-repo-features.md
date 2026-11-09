@@ -162,8 +162,9 @@ consumer falls back to `file`. `source_url` is an https URL to the museum object
 files of the "Art listing" contract (line 1 title, line 2 artist, optional line 3 an https
 source URL that is ignored unless it parses as https). The hub republishes a validated copy
 same-origin at `http://house.local/art-history.json`, keeping only these fields (an `id`
-that is unsafe, a traversal, or more than one folder deep becomes `null`), capping history
-at 50, and keeping the last good copy when a fetch fails.
+that is unsafe, a traversal, more than one folder deep, prefixed with the reserved
+`Collection` folder, or whose last segment is not the entry's `file` becomes `null`),
+capping history at 50, and keeping the last good copy when a fetch fails.
 
 **Frame mirror file.** nightstand produces, snaphouse consumes. After each push to the
 panel nightstand writes the image it sent (passed through its panel simulation) atomically

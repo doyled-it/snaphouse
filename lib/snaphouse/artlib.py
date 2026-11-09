@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -875,7 +876,12 @@ class Library:
             if isinstance(folders, list):
                 state["settings"]["folders_enabled"] = [f for f in folders if isinstance(f, str)]
             min_aspect = settings.get("min_aspect")
-            if isinstance(min_aspect, (int, float)) and not isinstance(min_aspect, bool) and min_aspect > 0:
+            if (
+                isinstance(min_aspect, (int, float))
+                and not isinstance(min_aspect, bool)
+                and math.isfinite(min_aspect)
+                and min_aspect > 0
+            ):
                 state["settings"]["min_aspect"] = min_aspect
         command = data.get("command")
         if isinstance(command, dict) and isinstance(command.get("seq"), int):

@@ -731,7 +731,7 @@ def test_control_carries_a_stored_min_aspect(tmp_path):
     assert library.control()["settings"]["min_aspect"] == 1.3
 
 
-@pytest.mark.parametrize("bad", [0, -1, "1.2", True, None])
+@pytest.mark.parametrize("bad", [0, -1, "1.2", True, None, float("inf"), float("nan")])
 def test_control_rejects_a_bad_stored_min_aspect(tmp_path, bad):
     library = _make_library(tmp_path)
     library.state.parent.mkdir(parents=True, exist_ok=True)

@@ -45,15 +45,20 @@ location = /art-history.json {
 # so /frame.png serves frame/frame.png and /frame.json serves frame/frame.json.
 # Exact-match so each outranks the room-picker `location /` prefix. Either file
 # may be absent (no frame reached, or nothing drawn yet); a 404 then makes the
-# page hide the mirror cleanly.
+# page hide the mirror cleanly. Cache-Control "no-cache" makes a phone revalidate
+# both every time: the image is an <img> (not one of the page's no-store JSON
+# fetches), so without it a browser would apply heuristic freshness and show a
+# stale mirror for minutes.
 location = /frame.png {
     root /var/lib/snaphouse/public/frame;
     default_type image/png;
+    add_header Cache-Control "no-cache";
 }
 
 location = /frame.json {
     root /var/lib/snaphouse/public/frame;
     default_type application/json;
+    add_header Cache-Control "no-cache";
 }
 
 # The hub's now-playing data, written by the snaphouse-nowplaying service (the

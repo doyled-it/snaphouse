@@ -164,10 +164,11 @@ def test_select_art_history_keeps_current_and_history_fields():
 
 def test_select_art_history_keeps_a_safe_piece_id():
     # Newer entries carry an id (the piece id relative to the art folder) that the
-    # page deletes by; it may be one folder deep. A safe id is passed through.
+    # page deletes by; it may be one folder deep. A safe id whose last segment is
+    # the entry's file is passed through.
     selected = select_art_history(
         {
-            "current": _piece(id="Photos/beach.jpg"),
+            "current": _piece(file="beach.jpg", id="Photos/beach.jpg"),
             "history": [_piece(id="aic-12345.jpg")],
         }
     )
@@ -188,6 +189,35 @@ def test_select_art_history_nulls_a_missing_or_unsafe_piece_id():
     assert selected["history"][0]["id"] is None
     assert selected["history"][1]["id"] is None
     assert selected["history"][2]["id"] is None
+
+
+def test_select_art_history_drops_a_collection_prefixed_id():
+    # A piece id whose first segment is the reserved Collection folder is resolved
+    # back to the top level by the hub's scan, so deleting by it would hit the
+    # wrong file; reject it (case-insensitive) but keep the entry via `file`.
+    selected = select_art_history(
+        {
+            "current": _piece(file="x.jpg", id="Collection/x.jpg"),
+            "history": [_piece(file="x.jpg", id="collection/x.jpg")],
+        }
+    )
+    assert selected["current"]["id"] is None
+    assert selected["current"]["file"] == "x.jpg"
+    assert selected["history"][0]["id"] is None
+
+
+def test_select_art_history_drops_an_id_whose_last_segment_is_not_the_file():
+    # The id must name the same file as the entry, or a delete by id would act on
+    # a different piece than the one shown.
+    selected = select_art_history(
+        {
+            "current": _piece(file="a.jpg", id="Photos/b.jpg"),
+            "history": [_piece(file="a.jpg", id="b.jpg")],
+        }
+    )
+    assert selected["current"]["id"] is None
+    assert selected["current"]["file"] == "a.jpg"
+    assert selected["history"][0]["id"] is None
 
 
 def test_select_art_history_strips_fields_outside_the_contract():

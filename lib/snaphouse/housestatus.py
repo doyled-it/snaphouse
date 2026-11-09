@@ -139,14 +139,19 @@ def _safe_file_name(value: object) -> Optional[str]:
     return value
 
 
-def _safe_piece_id(value: object) -> Optional[str]:
+def _safe_piece_id(value: object, file: str) -> Optional[str]:
     """A piece id relative to the art folder (at most one folder deep), or None.
 
     Newer art-history entries carry this id and the page deletes by it; the hub
     only republishes a value it can trust. A non-string, an empty string, a value
     with a backslash, an empty or dot-leading segment (a traversal or hidden-file
-    attempt), or one more than a single folder deep is rejected (None). Older
-    entries have no id, so None is normal and the page falls back to `file`.
+    attempt), or one more than a single folder deep is rejected (None). A first
+    segment of ``Collection`` (case-insensitive) is rejected too: the hub's scan
+    resolves ``Collection/x.jpg`` back to the top-level ``x.jpg``, so a delete by
+    that id would hit the wrong piece. The id must also end in the entry's own
+    ``file``, or the delete would act on a different piece than the one shown.
+    Older entries have no id, so None is normal and the page falls back to
+    ``file``.
     """
     if not isinstance(value, str) or not value or "\\" in value:
         return None
@@ -154,6 +159,10 @@ def _safe_piece_id(value: object) -> Optional[str]:
     if len(parts) > 2:
         return None
     if any(not part or part.startswith(".") for part in parts):
+        return None
+    if parts[0].lower() == "collection":
+        return None
+    if parts[-1] != file:
         return None
     return value
 
@@ -197,7 +206,7 @@ def _select_piece(raw: object) -> Optional[dict]:
         "artist": artist,
         "source_url": _https_or_none(raw.get("source_url")),
         "shown_at": shown_at,
-        "id": _safe_piece_id(raw.get("id")),
+        "id": _safe_piece_id(raw.get("id"), file),
     }
 
 
