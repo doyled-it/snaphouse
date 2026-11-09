@@ -51,6 +51,10 @@ TRASH_DIR = ".trash"
 #: Long side of a generated thumbnail, in pixels.
 THUMB_LONG_SIDE = 320
 
+#: How many thumbnails the background pass generates between index republishes,
+#: so a large library's thumbnails appear in batches rather than one write each.
+THUMBNAIL_BATCH = 16
+
 #: Trash entries older than this are purged on scan.
 TRASH_RETENTION_SECONDS = 30 * 86400
 
@@ -127,14 +131,23 @@ class Library:
 
     # -- scan / index ------------------------------------------------------ #
 
-    def scan(self) -> dict:
+    def scan(self, *, ensure_thumbnails: bool = True) -> dict:
         """Build the ``/art-index.json`` document and reconcile side state.
 
-        Reads the whole library fresh (so SMB edits are picked up), creating or
-        refreshing each piece's thumbnail, pruning thumbnails nothing references,
-        and purging trash older than the retention window. A file that vanishes
-        or fails to decode between the listing and the open is skipped rather
-        than raising, so a hand-edit racing the scan never crashes a request.
+        Reads the whole library fresh (so SMB edits are picked up), pruning
+        thumbnails nothing references and purging trash older than the retention
+        window. A file that vanishes or fails to decode between the listing and
+        the open is skipped rather than raising, so a hand-edit racing the scan
+        never crashes a request.
+
+        With ``ensure_thumbnails`` (the default) each piece's thumbnail is
+        generated if missing, so the returned ``thumb`` is always a URL. With it
+        ``False`` the scan is metadata-only: it generates nothing (the slow
+        decode is skipped), a piece whose thumbnail does not exist yet gets
+        ``thumb: null``, and one whose thumbnail already exists keeps its URL.
+        The admin service publishes a metadata-only index at startup so a large
+        library is listed at once, then fills thumbnails in the background with
+        ``ensure_thumbnails`` and republishes.
         """
         self._purge_trash()
         control = self._load_state()
@@ -157,19 +170,23 @@ class Library:
                 folder_counts.setdefault(entry.name, 0)
                 for child in self._iter_dir(entry):
                     if child.is_file():
-                        piece = self._build_piece(child, entry.name, referenced)
+                        piece = self._build_piece(
+                            child, entry.name, referenced, ensure_thumbnails
+                        )
                         if piece is not None:
                             pieces.append(piece)
                             folder_counts[entry.name] += 1
             elif entry.is_file():
-                piece = self._build_piece(entry, BUILTIN_FOLDER, referenced)
+                piece = self._build_piece(
+                    entry, BUILTIN_FOLDER, referenced, ensure_thumbnails
+                )
                 if piece is not None:
                     pieces.append(piece)
                     folder_counts[BUILTIN_FOLDER] += 1
 
         pieces.sort(key=lambda piece: piece["id"])
         folders = self._build_folders(folder_counts, enabled)
-        trash = self._build_trash(referenced)
+        trash = self._build_trash(referenced, ensure_thumbnails)
         self._prune_thumbnails(referenced)
 
         return {
@@ -199,7 +216,9 @@ class Library:
             )
         return folders
 
-    def _build_piece(self, path: Path, folder: str, referenced: set[str]) -> Optional[dict]:
+    def _build_piece(
+        self, path: Path, folder: str, referenced: set[str], ensure_thumbnails: bool
+    ) -> Optional[dict]:
         if path.suffix.lower() not in IMAGE_EXTENSIONS:
             return None
         if folder == BUILTIN_FOLDER:
@@ -209,12 +228,17 @@ class Library:
         try:
             stat = path.stat()
             width, height = self._dimensions(path)
-            thumb_name = self._ensure_thumbnail(path, piece_id, stat.st_size, int(stat.st_mtime))
+            thumb_name = self._thumbnail_name(piece_id, stat.st_size, int(stat.st_mtime))
+            if ensure_thumbnails:
+                self._ensure_thumbnail(path, piece_id, stat.st_size, int(stat.st_mtime))
         except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
             # The file vanished (SMB edit racing the scan) or is not a real
             # image; skip it. The next scan catches up.
             return None
 
+        # Reference the expected name whether or not the thumbnail exists yet, so
+        # a thumbnail the background pass is about to write (or has just written)
+        # is never pruned out from under it.
         referenced.add(thumb_name)
         title, artist, source_url = self._read_sidecar(path)
         return {
@@ -229,11 +253,11 @@ class Library:
             "landscape": self._is_landscape(width, height),
             "size": stat.st_size,
             "mtime": int(stat.st_mtime),
-            "thumb": self._thumb_url(thumb_name),
+            "thumb": self._thumb_url_if_present(thumb_name),
             "url": self._art_url(piece_id),
         }
 
-    def _build_trash(self, referenced: set[str]) -> list[dict]:
+    def _build_trash(self, referenced: set[str], ensure_thumbnails: bool) -> list[dict]:
         trash_root = self.root / TRASH_DIR
         entries: list[dict] = []
         for stamp_dir in self._iter_dir(trash_root):
@@ -246,9 +270,13 @@ class Library:
                 trash_id = f"{TRASH_DIR}/{stamp_dir.name}/{child.name}"
                 try:
                     stat = child.stat()
-                    thumb_name = self._ensure_thumbnail(
-                        child, trash_id, stat.st_size, int(stat.st_mtime)
+                    thumb_name = self._thumbnail_name(
+                        trash_id, stat.st_size, int(stat.st_mtime)
                     )
+                    if ensure_thumbnails:
+                        self._ensure_thumbnail(
+                            child, trash_id, stat.st_size, int(stat.st_mtime)
+                        )
                 except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
                     continue
                 referenced.add(thumb_name)
@@ -257,11 +285,67 @@ class Library:
                         "id": trash_id,
                         "original": meta.get("original", child.name),
                         "deleted_at": meta.get("deleted_at", ""),
-                        "thumb": self._thumb_url(thumb_name),
+                        "thumb": self._thumb_url_if_present(thumb_name),
                     }
                 )
         entries.sort(key=lambda entry: entry["id"], reverse=True)
         return entries
+
+    def ensure_thumbnails(
+        self,
+        *,
+        batch_size: int = THUMBNAIL_BATCH,
+        on_batch: Optional[Callable[[], None]] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> int:
+        """Generate every missing thumbnail for pieces and trash, returning the
+        number generated.
+
+        The admin service calls this in the background after the fast
+        metadata-only publish, so the whole library is listed at once and the
+        thumbnails fill in behind it. ``on_batch`` is called after every
+        ``batch_size`` thumbnails so the caller republishes the index in batches
+        rather than once per thumbnail. ``should_stop`` is checked before each
+        thumbnail so a shutdown ends the pass promptly. A file that vanishes or
+        fails to decode mid-pass is skipped.
+        """
+        generated = 0
+        for path, piece_id in self._thumbnail_targets():
+            if should_stop is not None and should_stop():
+                break
+            try:
+                stat = path.stat()
+                name = self._thumbnail_name(piece_id, stat.st_size, int(stat.st_mtime))
+                if (self.thumbs / name).is_file():
+                    continue
+                self._ensure_thumbnail(path, piece_id, stat.st_size, int(stat.st_mtime))
+            except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
+                continue
+            generated += 1
+            if on_batch is not None and batch_size > 0 and generated % batch_size == 0:
+                on_batch()
+        return generated
+
+    def _thumbnail_targets(self):
+        """Yield ``(path, id)`` for every piece and trash image, matching scan's
+        walk (``.trash`` included, a literal ``Collection`` subdirectory skipped)."""
+        for entry in self._iter_dir(self.root):
+            if entry.is_dir():
+                if entry.name == TRASH_DIR:
+                    for stamp_dir in self._iter_dir(entry):
+                        if not stamp_dir.is_dir():
+                            continue
+                        for child in self._iter_dir(stamp_dir):
+                            if child.is_file() and child.suffix.lower() in IMAGE_EXTENSIONS:
+                                yield child, f"{TRASH_DIR}/{stamp_dir.name}/{child.name}"
+                elif entry.name == BUILTIN_FOLDER:
+                    continue
+                else:
+                    for child in self._iter_dir(entry):
+                        if child.is_file() and child.suffix.lower() in IMAGE_EXTENSIONS:
+                            yield child, f"{entry.name}/{child.name}"
+            elif entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS:
+                yield entry, entry.name
 
     # -- upload ------------------------------------------------------------ #
 
@@ -670,16 +754,22 @@ class Library:
 
     # -- thumbnails -------------------------------------------------------- #
 
+    @staticmethod
+    def _thumbnail_name(piece_id: str, size: int, mtime: int) -> str:
+        """The thumbnail file name for a piece: a hash of id, size, and mtime, so
+        an edited file gets a fresh thumbnail and an unchanged one reuses its own.
+        Pure (no I/O), so a metadata-only scan can name a thumbnail it has not
+        generated yet."""
+        key = hashlib.sha256(f"{piece_id}\x1f{size}\x1f{mtime}".encode("utf-8")).hexdigest()[:32]
+        return f"{key}.jpg"
+
     def _ensure_thumbnail(self, path: Path, piece_id: str, size: int, mtime: int) -> str:
         """Return the thumbnail file name for a piece, creating it if absent.
 
-        The name is a hash of id, size, and mtime, so an edited file gets a fresh
-        thumbnail and an unchanged one reuses its own. May raise ``OSError`` or a
-        Pillow error if the source vanished or is not decodable; the caller skips
-        the piece in that case.
+        May raise ``OSError`` or a Pillow error if the source vanished or is not
+        decodable; the caller skips the piece in that case.
         """
-        key = hashlib.sha256(f"{piece_id}\x1f{size}\x1f{mtime}".encode("utf-8")).hexdigest()[:32]
-        name = f"{key}.jpg"
+        name = self._thumbnail_name(piece_id, size, mtime)
         target = self.thumbs / name
         if target.is_file():
             return name
@@ -801,6 +891,13 @@ class Library:
 
     def _thumb_url(self, thumb_name: str) -> str:
         return "/art-thumbs/" + self._encode_path(thumb_name)
+
+    def _thumb_url_if_present(self, thumb_name: str) -> Optional[str]:
+        """The thumbnail URL if the file exists, otherwise ``None`` (the
+        metadata-only case: the thumbnail has not been generated yet)."""
+        if (self.thumbs / thumb_name).is_file():
+            return self._thumb_url(thumb_name)
+        return None
 
     @staticmethod
     def _is_landscape(width: int, height: int) -> bool:

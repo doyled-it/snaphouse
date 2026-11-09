@@ -12,6 +12,7 @@ dedicated art-owned directory, since the service writes it atomically and
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -232,6 +233,21 @@ def test_verify_check_asserts_active_and_a_parsed_index():
     assert "is-active" in text
     assert "snaphouse-artadmin.service" in text
     assert "art-index.json" in text
+
+
+def test_verify_check_retries_before_failing():
+    # The service publishes the index immediately now, but the check still retries
+    # (a restart, a slow nginx reload) rather than failing on the first miss.
+    text = VERIFY_CHECK.read_text()
+    assert "sleep" in text, "the check does not retry"
+    # A bounded retry loop driven by a deadline.
+    assert "deadline" in text
+    assert re.search(r"while|until", text), "no retry loop"
+    # The retry window (deadline = now + N seconds) must stay under `snaphouse
+    # verify`'s 60 s per-check timeout, or the harness kills the check mid-retry.
+    windows = [int(n) for n in re.findall(r"date \+%s\)\s*\+\s*(\d+)", text)]
+    assert windows, "no retry window found"
+    assert max(windows) < 60, "the retry window must stay under the 60 s harness timeout"
 
 
 # --------------------------------------------------------------------------- #
