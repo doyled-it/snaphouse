@@ -36,6 +36,14 @@
   box-sizing: border-box;
 }
 
+/* The hidden attribute must win over an element's own display. Several elements
+   the page toggles (the now-playing card, its progress block, the cover and its
+   placeholder) set display: grid/flex/block, which would otherwise override the
+   attribute's display: none and leave them visible when hidden. */
+[hidden] {
+  display: none !important;
+}
+
 html {
   -webkit-text-size-adjust: 100%;
 }
@@ -67,28 +75,115 @@ body {
   letter-spacing: 0.01em;
 }
 
-.now-playing {
+/* The now-playing card at the top: a cover (or a plain placeholder) beside the
+   title, artist, album, and a live progress bar. Same surface, border, and
+   radius as the room cards. */
+.np-card {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 16px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.np-art-img,
+.np-art-ph {
+  display: block;
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: var(--surface-off);
+}
+
+/* The placeholder when a track has no cover: a quiet note glyph on the empty
+   surface, so the card keeps its shape. */
+.np-art-ph {
+  position: relative;
+}
+
+.np-art-ph::before {
+  content: "\266A";
+  position: absolute;
+  inset: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  align-items: baseline;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
   color: var(--muted);
-  font-size: 1rem;
+}
+
+.np-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.np-title,
+.np-artist,
+.np-album {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .np-title {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 1.15rem;
 }
 
-.np-artist::before {
-  content: "\00b7";
-  margin-right: 10px;
-  color: var(--line);
+.np-artist {
+  color: var(--muted);
 }
 
-.np-idle {
-  font-style: italic;
+.np-album {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.np-progress {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.np-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.np-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s linear;
+}
+
+.np-times {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.np-status {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .health,
@@ -349,4 +444,28 @@ a.art-item-title:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Play history: the same row as the art history, with a note placeholder when a
+   play has no cover and the track length pushed to the end of the row. */
+.np-thumb-ph {
+  position: relative;
+}
+
+.np-thumb-ph::before {
+  content: "\266A";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  color: var(--muted);
+}
+
+.np-item-len {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
 }

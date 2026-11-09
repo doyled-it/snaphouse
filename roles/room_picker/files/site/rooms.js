@@ -11,12 +11,15 @@
 
 import {
   roomsFromStatus,
-  nowPlaying,
   toggleRequest,
   volumeRequest,
   groupUnmuteRequest,
   healthBanner,
   artFromHistory,
+  parseNowPlayingDoc,
+  progressAt,
+  formatDuration,
+  parsePlayHistory,
   interpretRpcResponse,
   safeJsonParse,
 } from "./rooms-model.js";
@@ -28,6 +31,12 @@ const POLL_MS = 30000;
 const HEALTH_MS = 30000;
 const RECONNECT_MS = 3000;
 const SLIDER_DEBOUNCE_MS = 150;
+// The hub writes now-playing.json continuously and play-history.json only when a
+// play lands, so the card polls quickly and the history slowly. The card's
+// progress bar ticks client-side every second from the position anchor.
+const NOW_PLAYING_MS = 5000;
+const HISTORY_MS = 30000;
+const TICK_MS = 1000;
 
 // Shown on the connection line when a status reply will not parse. The page
 // keeps its last good render and says so quietly rather than breaking.
@@ -37,7 +46,6 @@ const STATUS_UNAVAILABLE_MSG = "Status unavailable; showing the last update.";
 const OFFLINE_MSG = `Live updates are offline; refreshing every ${POLL_MS / 1000} seconds.`;
 
 const els = {
-  nowPlaying: document.getElementById("now-playing"),
   health: document.getElementById("health"),
   rooms: document.getElementById("rooms"),
   connection: document.getElementById("connection"),
@@ -45,6 +53,19 @@ const els = {
   artCurrent: document.getElementById("art-current"),
   artRecentHeading: document.getElementById("art-recent-heading"),
   artHistory: document.getElementById("art-history"),
+  npCard: document.getElementById("np-card"),
+  npArtImg: document.getElementById("np-art-img"),
+  npArtPh: document.getElementById("np-art-ph"),
+  npTitle: document.getElementById("np-title"),
+  npArtist: document.getElementById("np-artist"),
+  npAlbum: document.getElementById("np-album"),
+  npProgress: document.getElementById("np-progress"),
+  npFill: document.getElementById("np-fill"),
+  npElapsed: document.getElementById("np-elapsed"),
+  npEnds: document.getElementById("np-ends"),
+  npStatus: document.getElementById("np-status"),
+  npHistory: document.getElementById("np-history"),
+  npHistoryList: document.getElementById("np-history-list"),
 };
 
 const state = {
@@ -55,6 +76,11 @@ const state = {
   pollTimer: null,
   reconnectTimer: null,
   nextId: 1,
+  // The last parsed now-playing track (or null), the card's progress bar ticks
+  // from it each second, and the cover src last set, so the image is only
+  // swapped when it changes rather than reloaded on every poll.
+  nowTrack: null,
+  npArtSrc: null,
 };
 
 // The JSON-RPC endpoint and its WebSocket twin, both relative to this page so
@@ -74,8 +100,15 @@ async function start() {
   connect();
   refreshHealth();
   refreshArt();
+  refreshNowPlaying();
+  refreshHistory();
   setInterval(refreshHealth, HEALTH_MS);
   setInterval(refreshArt, HEALTH_MS);
+  setInterval(refreshNowPlaying, NOW_PLAYING_MS);
+  setInterval(refreshHistory, HISTORY_MS);
+  // The card's elapsed time and bar advance between polls, driven only by the
+  // local clock and the last position anchor.
+  setInterval(tickNowPlaying, TICK_MS);
 
   // A phone that was asleep or backgrounded comes back with a dead socket and
   // stale cards. On return to the foreground, reconnect if needed, re-read the
@@ -95,6 +128,8 @@ async function start() {
     // CONNECTING or CLOSING: leave the in-flight transition alone.
     refreshHealth();
     refreshArt();
+    refreshNowPlaying();
+    refreshHistory();
   });
 }
 
@@ -289,11 +324,9 @@ function stopPolling() {
   }
 }
 
-// Paint the whole picture: what is playing and every room's state.
+// Paint every room's state. The now-playing card and history are driven by the
+// hub's own files (refreshNowPlaying / refreshHistory), not this /jsonrpc read.
 function render(status) {
-  const playing = nowPlaying(status);
-  renderNowPlaying(playing);
-
   const rooms = roomsFromStatus(status, state.config.rooms);
   for (const room of rooms) {
     state.rooms.set(room.id, room);
@@ -311,27 +344,6 @@ function render(status) {
       entry.slider.value = String(room.volume);
     }
     entry.slider.disabled = !room.connected;
-  }
-}
-
-function renderNowPlaying(playing) {
-  els.nowPlaying.replaceChildren();
-  if (!playing) {
-    const idle = document.createElement("span");
-    idle.className = "np-idle";
-    idle.textContent = "Nothing playing";
-    els.nowPlaying.append(idle);
-    return;
-  }
-  const title = document.createElement("span");
-  title.className = "np-title";
-  title.textContent = playing.title;
-  els.nowPlaying.append(title);
-  if (playing.artist) {
-    const artist = document.createElement("span");
-    artist.className = "np-artist";
-    artist.textContent = playing.artist;
-    els.nowPlaying.append(artist);
   }
 }
 
@@ -549,6 +561,206 @@ function relativeTime(iso) {
     return `${days} day${days === 1 ? "" : "s"} ago`;
   }
   return new Date(then).toLocaleDateString();
+}
+
+// The now-playing card from the hub's now-playing.json, one same-origin file the
+// hub writes continuously. A 404 or a body that will not parse means nothing is
+// playing (old hub, service down, partial write, Review Focus 3): the card hides
+// and never shows stale data. A transient hub error (the fetch itself throwing)
+// leaves the last render in place rather than flashing the card away and back.
+async function refreshNowPlaying() {
+  let raw;
+  try {
+    const response = await fetch("now-playing.json", { cache: "no-store" });
+    if (!response.ok) {
+      updateNowPlayingCard(null);
+      return;
+    }
+    raw = await response.json();
+  } catch (err) {
+    return;
+  }
+  updateNowPlayingCard(parseNowPlayingDoc(raw));
+}
+
+// Fill the card from a parsed track, or hide it when nothing is playing. The
+// cover image is only swapped when its URL changes, so a poll that leaves the
+// track unchanged does not reload the picture.
+function updateNowPlayingCard(track) {
+  state.nowTrack = track;
+  if (!track) {
+    els.npCard.hidden = true;
+    return;
+  }
+  els.npCard.hidden = false;
+
+  if (track.artUrl) {
+    if (state.npArtSrc !== track.artUrl) {
+      els.npArtImg.src = track.artUrl;
+      state.npArtSrc = track.artUrl;
+    }
+    els.npArtImg.alt = track.title;
+    els.npArtImg.hidden = false;
+    els.npArtPh.hidden = true;
+  } else {
+    els.npArtImg.hidden = true;
+    els.npArtImg.removeAttribute("src");
+    state.npArtSrc = null;
+    els.npArtPh.hidden = false;
+  }
+
+  els.npTitle.textContent = track.title;
+  setOptionalLine(els.npArtist, track.artist);
+  setOptionalLine(els.npAlbum, track.album);
+  tickNowPlaying();
+}
+
+// Advance the progress bar and times from the position anchor. Runs every second
+// and again on each poll. A track with no duration shows no bar; a paused track
+// freezes the bar and shows the "Paused" label instead of an end time.
+function tickNowPlaying() {
+  const track = state.nowTrack;
+  if (!track || els.npCard.hidden) {
+    return;
+  }
+  const paused = track.status === "paused";
+  const progress = progressAt(track, Date.now());
+  if (progress) {
+    els.npProgress.hidden = false;
+    els.npFill.style.width = `${(progress.fraction * 100).toFixed(1)}%`;
+    els.npElapsed.textContent = `${formatDuration(progress.elapsed)} / ${formatDuration(progress.total)}`;
+    if (paused) {
+      els.npEnds.hidden = true;
+    } else {
+      els.npEnds.hidden = false;
+      els.npEnds.textContent = `ends ${formatClock(progress.endsAtMs)}`;
+    }
+  } else {
+    els.npProgress.hidden = true;
+  }
+  els.npStatus.hidden = !paused;
+}
+
+function setOptionalLine(el, text) {
+  if (text) {
+    el.textContent = text;
+    el.hidden = false;
+  } else {
+    el.textContent = "";
+    el.hidden = true;
+  }
+}
+
+// The play history from the hub's play-history.json, one same-origin file. Like
+// the now-playing card, a 404 or an unparseable body hides the section; a
+// transient hub error leaves the last render in place.
+async function refreshHistory() {
+  let plays;
+  try {
+    const response = await fetch("play-history.json", { cache: "no-store" });
+    if (!response.ok) {
+      renderHistory([]);
+      return;
+    }
+    plays = parsePlayHistory(await response.json());
+  } catch (err) {
+    return;
+  }
+  renderHistory(plays);
+}
+
+function renderHistory(plays) {
+  if (plays.length === 0) {
+    els.npHistory.hidden = true;
+    els.npHistoryList.replaceChildren();
+    return;
+  }
+  els.npHistory.hidden = false;
+  els.npHistoryList.replaceChildren();
+  for (const play of plays) {
+    els.npHistoryList.append(playItem(play));
+  }
+}
+
+function playItem(play) {
+  const li = document.createElement("li");
+  li.className = "art-item";
+
+  if (play.artUrl) {
+    const thumb = document.createElement("img");
+    thumb.className = "art-thumb";
+    thumb.src = play.artUrl;
+    thumb.alt = play.title;
+    thumb.loading = "lazy";
+    thumb.decoding = "async";
+    li.append(thumb);
+  } else {
+    const ph = document.createElement("div");
+    ph.className = "art-thumb np-thumb-ph";
+    ph.setAttribute("aria-hidden", "true");
+    li.append(ph);
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "art-meta";
+
+  const title = document.createElement("span");
+  title.className = "art-item-title";
+  title.textContent = play.title;
+  meta.append(title);
+
+  const sub = [play.artist, play.album].filter(Boolean).join(" · ");
+  if (sub) {
+    const artist = document.createElement("span");
+    artist.className = "art-item-artist";
+    artist.textContent = sub;
+    meta.append(artist);
+  }
+
+  const when = formatStartTime(play.startedAt);
+  if (when) {
+    const time = document.createElement("time");
+    time.className = "art-when";
+    time.dateTime = play.startedAt;
+    time.textContent = when;
+    meta.append(time);
+  }
+
+  if (play.duration !== null) {
+    const length = document.createElement("span");
+    length.className = "np-item-len";
+    length.textContent = formatDuration(play.duration);
+    meta.append(length);
+  }
+
+  li.append(meta);
+  return li;
+}
+
+// A clock time like "9:46 PM" for the card's end time.
+function formatClock(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// When a play started: the clock time if it was today, otherwise the date and
+// the time. Returns "" for an unparseable stamp so the row simply omits it.
+function formatStartTime(iso) {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) {
+    return "";
+  }
+  const then = new Date(ms);
+  const now = new Date();
+  const time = then.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const sameDay =
+    then.getFullYear() === now.getFullYear() &&
+    then.getMonth() === now.getMonth() &&
+    then.getDate() === now.getDate();
+  if (sameDay) {
+    return time;
+  }
+  const date = then.toLocaleDateString([], { month: "short", day: "numeric" });
+  return `${date}, ${time}`;
 }
 
 function setConnection(message) {

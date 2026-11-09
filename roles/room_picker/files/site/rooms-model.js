@@ -98,45 +98,6 @@ function clientsById(status) {
   return byId;
 }
 
-// What is playing right now, or null.
-//
-// The rooms play the House meta stream, which carries a playbackStatus and, when
-// the sender published it, a metadata block with a title and an artist list. The
-// stream the groups are assigned to is preferred over any other, so an inner
-// source (AirPlay or Bluetooth) that happens to be playing without a title does
-// not mask House's metadata. A playing stream with no track (the "playing, no
-// title" case the metadata bridge leaves bare) is treated as nothing to show.
-// The artist list is joined for display.
-export function nowPlaying(status) {
-  const streams = status?.server?.streams ?? [];
-  const groups = status?.server?.groups ?? [];
-  const groupStreamIds = new Set(
-    groups.map((group) => group.stream_id).filter((id) => id)
-  );
-  // The streams the rooms actually play come first; everything else is a
-  // fallback for the unusual case where no group stream is playing.
-  const ordered = [
-    ...streams.filter((stream) => groupStreamIds.has(stream.id)),
-    ...streams.filter((stream) => !groupStreamIds.has(stream.id)),
-  ];
-  const playing = ordered.find(isPlaying);
-  if (!playing) {
-    return null;
-  }
-  const metadata = playing.properties?.metadata;
-  const title = metadata?.title;
-  if (!title) {
-    return null;
-  }
-  const artistList = metadata.artist;
-  const artist = Array.isArray(artistList) ? artistList.join(", ") : artistList ?? "";
-  return { title, artist };
-}
-
-function isPlaying(stream) {
-  return stream.status === "playing" || stream.properties?.playbackStatus === "playing";
-}
-
 // The JSON-RPC request that turns a room on or off. Off mutes the client; on
 // unmutes it. snapserver keeps the percent, so a room returns at its old volume.
 export function toggleRequest(id, on) {
@@ -275,4 +236,174 @@ function httpsUrlOrNull(value) {
   } catch (err) {
     return null;
   }
+}
+
+// The hub's now-playing document, validated into the shape the card uses, or
+// null when nothing is playing or the body is missing or malformed (Review
+// Focus 3). `raw` is the parsed now-playing.json (the "Now-playing file"
+// contract in docs/cross-repo-features.md): an `updated_at`, a `track` that is
+// null when nothing with a title is on House, and a `rooms` list.
+//
+// Returns { title, artist, album, kind, status, duration, position, positionAt,
+// startedAt, artUrl, rooms } or null. Only `title` is required; a title-only
+// track (internet radio with no artist, album, duration, or art, Review Focus
+// 2) parses with those fields null so the card renders without empty lines.
+// `positionAt` and `startedAt` stay as ISO strings for progressAt to anchor on;
+// `artUrl` is kept only when it is a same-origin /cover/ path.
+export function parseNowPlayingDoc(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const t = raw.track;
+  if (!t || typeof t !== "object" || Array.isArray(t)) {
+    return null;
+  }
+  if (typeof t.title !== "string" || t.title.length === 0) {
+    return null;
+  }
+  return {
+    title: t.title,
+    artist: nonEmptyStringOrNull(t.artist),
+    album: nonEmptyStringOrNull(t.album),
+    kind: nonEmptyStringOrNull(t.kind),
+    status: t.status === "paused" ? "paused" : "playing",
+    duration: positiveNumberOrNull(t.duration),
+    position: nonNegativeNumberOrNull(t.position),
+    positionAt: nonEmptyStringOrNull(t.position_at),
+    startedAt: nonEmptyStringOrNull(t.started_at),
+    artUrl: coverPathOrNull(t.art_url),
+    rooms: Array.isArray(raw.rooms)
+      ? raw.rooms.filter((r) => typeof r === "string" && r.length > 0)
+      : [],
+  };
+}
+
+// Where a track is right now, extrapolated from its anchor, or null when it has
+// no usable duration. `track` is a parseNowPlayingDoc result and `nowMs` is the
+// client clock in ms (Date.now() in the page, a fixed value in tests).
+//
+// While playing, the elapsed time is the anchor plus the seconds since the
+// anchor was taken; while paused it is frozen at the anchor, so a resend for an
+// unrelated change never moves the bar backward (Review Focus 1 at the model
+// boundary). The anchor is `(position, positionAt)` when both are present,
+// otherwise `startedAt` counted from zero. Elapsed is clamped to the duration.
+// Returns { elapsed, total, fraction, endsAtMs }.
+export function progressAt(track, nowMs) {
+  const total = positiveNumberOrNull(track?.duration);
+  if (total === null) {
+    return null;
+  }
+  const playing = track.status === "playing";
+  const positionAtMs = parseMsOrNull(track.positionAt);
+  const position = nonNegativeNumberOrNull(track.position);
+
+  let anchorElapsed;
+  let anchorAtMs;
+  if (position !== null && positionAtMs !== null) {
+    anchorElapsed = position;
+    anchorAtMs = positionAtMs;
+  } else {
+    const startedMs = parseMsOrNull(track.startedAt);
+    if (startedMs === null) {
+      return null;
+    }
+    anchorElapsed = 0;
+    anchorAtMs = startedMs;
+  }
+
+  const raw = playing ? anchorElapsed + (nowMs - anchorAtMs) / 1000 : anchorElapsed;
+  const elapsed = Math.max(0, Math.min(total, raw));
+  return {
+    elapsed,
+    total,
+    fraction: elapsed / total,
+    endsAtMs: nowMs + (total - elapsed) * 1000,
+  };
+}
+
+// A whole number of seconds as "5:22" or, past an hour, "1:02:03". Invalid or
+// negative input renders as "0:00" so the strip never shows "NaN:NaN".
+export function formatDuration(seconds) {
+  let total = Math.floor(Number(seconds));
+  if (!Number.isFinite(total) || total < 0) {
+    total = 0;
+  }
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}:${pad(minutes)}:${pad(secs)}`;
+  }
+  return `${minutes}:${pad(secs)}`;
+}
+
+// The hub's play history, validated into the list the history section renders.
+// `raw` is the parsed play-history.json (the "Play-history file" contract): a
+// `plays` array, newest first, at most 50. Invalid entries are dropped and the
+// order is kept. Each play is { title, artist, album, duration, startedAt,
+// artUrl }; only `title` is required, the rest are nulled when missing, and
+// `artUrl` is kept only when it is a same-origin /cover/ path. A missing or
+// malformed body yields an empty list the section hides.
+export function parsePlayHistory(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return [];
+  }
+  const plays = Array.isArray(raw.plays) ? raw.plays : [];
+  return plays.map(validatePlay).filter((p) => p !== null).slice(0, MAX_PLAY_HISTORY);
+}
+
+// At most this many plays are kept, matching the producer's cap, so a runaway or
+// hostile file cannot grow the list without bound.
+const MAX_PLAY_HISTORY = 50;
+
+function validatePlay(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  if (typeof raw.title !== "string" || raw.title.length === 0) {
+    return null;
+  }
+  return {
+    title: raw.title,
+    artist: nonEmptyStringOrNull(raw.artist),
+    album: nonEmptyStringOrNull(raw.album),
+    duration: positiveNumberOrNull(raw.duration),
+    startedAt: nonEmptyStringOrNull(raw.started_at),
+    artUrl: coverPathOrNull(raw.art_url),
+  };
+}
+
+function nonEmptyStringOrNull(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function positiveNumberOrNull(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function nonNegativeNumberOrNull(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function parseMsOrNull(iso) {
+  if (typeof iso !== "string") {
+    return null;
+  }
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+// A same-origin cover path, or null. The hub always writes art_url as a
+// `/cover/...` path (or null); anything else (an off-origin or protocol-relative
+// URL, a different root, a traversal) is rejected so a malformed or hostile file
+// can never set a foreign <img src>.
+function coverPathOrNull(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  if (!value.startsWith("/cover/") || value.includes("..")) {
+    return null;
+  }
+  return value;
 }
