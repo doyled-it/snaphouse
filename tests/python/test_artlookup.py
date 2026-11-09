@@ -923,3 +923,144 @@ def test_prune_removes_id_sidecar_with_its_cover(tmp_path):
     )
     # The evicted podcast cover took its sidecar with it; no orphan is left.
     assert not sidecar.exists()
+
+
+# --------------------------------------------------------------------------- #
+# legacy cached cover back-fill (no .id sidecar)
+# --------------------------------------------------------------------------- #
+
+
+def _seed_legacy_cover(cover_root, chosen, artist, album, content=b"legacy-cover"):
+    # A cover cached by a previous release: the image on disk with no .id
+    # sidecar beside it. Returns the lookup key.
+    key = artlookup._lookup_key(chosen, "ignored-episode", artist, album)
+    lookup_dir = _lookup_dir(cover_root)
+    lookup_dir.mkdir(parents=True, exist_ok=True)
+    (lookup_dir / f"{key}.jpg").write_bytes(content)
+    return key
+
+
+def test_legacy_cover_backfills_id_with_one_search_no_download(tmp_path):
+    key = _seed_legacy_cover(tmp_path, "podcast", "This American Life", "This American Life")
+    # Only the search route is served; an artwork download would return None.
+    fetch = FakeFetch([("itunes.apple.com", _fixture_bytes("itunes_podcast.json"))])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    result = lookup.find_with_id(
+        "Episode 413", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+    assert result.art_url == f"/cover/lookup/{key}.jpg"
+    assert result.podcast_id == 201671138
+    # Exactly one request, and it is the id search; no artwork is downloaded.
+    assert len(fetch.calls) == 1
+    assert "itunes.apple.com" in fetch.calls[0]
+    assert not any("mzstatic.com" in call for call in fetch.calls)
+    # The sidecar is now written beside the cover.
+    assert (_lookup_dir(tmp_path) / f"{key}.id").read_text() == "201671138"
+
+    # A second play answers from the sidecar with no new request.
+    again = lookup.find_with_id(
+        "Episode 414", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+    assert again.podcast_id == 201671138
+    assert len(fetch.calls) == 1
+
+
+def test_legacy_cover_miss_writes_marker_once(tmp_path):
+    key = _seed_legacy_cover(tmp_path, "podcast", "Harbor Notes", "Harbor Notes")
+    # The search parses but names no matching show: a real miss.
+    body = json.dumps(
+        {"resultCount": 1, "results": [{"collectionName": "A Different Show", "collectionId": 55}]}
+    ).encode("utf-8")
+    fetch = FakeFetch([("itunes.apple.com", body)])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    result = lookup.find_with_id(
+        "Episode 1", "Harbor Notes", "Harbor Notes", "long_form", ["Podcast"]
+    )
+    assert result.art_url == f"/cover/lookup/{key}.jpg"
+    assert result.podcast_id is None
+    assert (_lookup_dir(tmp_path) / f"{key}.noid").is_file()
+    assert not (_lookup_dir(tmp_path) / f"{key}.id").exists()
+
+    calls_after_first = len(fetch.calls)
+    # The marker suppresses any further search for this cover.
+    again = lookup.find_with_id(
+        "Episode 2", "Harbor Notes", "Harbor Notes", "long_form", ["Podcast"]
+    )
+    assert again.podcast_id is None
+    assert len(fetch.calls) == calls_after_first
+
+
+def test_legacy_cover_matched_show_without_id_marks_noid(tmp_path):
+    # An exact name match whose result carries no usable collectionId is also a
+    # miss: the marker is written so the search never repeats.
+    key = _seed_legacy_cover(tmp_path, "podcast", "Harbor Notes", "Harbor Notes")
+    fetch = FakeFetch([("itunes.apple.com", _itunes_result_with_id("Harbor Notes", None))])
+    lookup = ArtLookup(tmp_path, fetch)
+    result = lookup.find_with_id(
+        "Episode 1", "Harbor Notes", "Harbor Notes", "long_form", ["Podcast"]
+    )
+    assert result.podcast_id is None
+    assert (_lookup_dir(tmp_path) / f"{key}.noid").is_file()
+
+
+def test_legacy_cover_fetch_failure_writes_nothing(tmp_path):
+    key = _seed_legacy_cover(tmp_path, "podcast", "This American Life", "This American Life")
+    # Every fetch fails (no routes), so the search is a transient error.
+    failing = FakeFetch([])
+    lookup = ArtLookup(tmp_path, failing)
+    result = lookup.find_with_id(
+        "Episode 1", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+    assert result.art_url == f"/cover/lookup/{key}.jpg"
+    assert result.podcast_id is None
+    # No marker of either kind: a transient failure must retry on a later play.
+    assert not (_lookup_dir(tmp_path) / f"{key}.id").exists()
+    assert not (_lookup_dir(tmp_path) / f"{key}.noid").exists()
+
+    # A later play with the catalogue reachable resolves and caches the id.
+    recovering = FakeFetch([("itunes.apple.com", _fixture_bytes("itunes_podcast.json"))])
+    lookup2 = ArtLookup(tmp_path, recovering)
+    recovered = lookup2.find_with_id(
+        "Episode 2", "This American Life", "This American Life", "long_form", ["Podcast"]
+    )
+    assert recovered.podcast_id == 201671138
+    assert len(recovering.calls) == 1
+
+
+def test_legacy_non_podcast_cover_never_searches_for_an_id(tmp_path):
+    # Music and audiobook covers never carry an id and must not trigger a search.
+    key = _seed_legacy_cover(tmp_path, "music", "Radiohead", "OK Computer")
+    fetch = FakeFetch([("itunes.apple.com", _fixture_bytes("itunes_podcast.json"))])
+    lookup = ArtLookup(tmp_path, fetch)
+    result = lookup.find_with_id("Airbag", "Radiohead", "OK Computer", "music", None)
+    assert result.art_url == f"/cover/lookup/{key}.jpg"
+    assert result.podcast_id is None
+    assert fetch.calls == []
+
+
+def test_prune_removes_noid_marker_with_its_cover(tmp_path):
+    # The .noid marker, like .id, does not count toward the cap and is removed
+    # with the cover it belongs to.
+    key = _seed_legacy_cover(tmp_path, "podcast", "Harbor Notes", "Harbor Notes")
+    noid = _lookup_dir(tmp_path) / f"{key}.noid"
+    body = json.dumps(
+        {"resultCount": 1, "results": [{"collectionName": "A Different Show", "collectionId": 55}]}
+    ).encode("utf-8")
+    lookup = ArtLookup(tmp_path, FakeFetch([("itunes.apple.com", body)]), max_files=1)
+    lookup.find_with_id("Episode 1", "Harbor Notes", "Harbor Notes", "long_form", ["Podcast"])
+    assert noid.is_file()
+
+    # A newer cover pushes the legacy cover past the one-file cap.
+    music = FakeFetch(
+        [
+            ("musicbrainz.org", _fixture_bytes("musicbrainz.json")),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    ArtLookup(tmp_path, music, max_files=1, clock=_frozen_clock(), sleep=lambda _s: None).find(
+        "Airbag", "Radiohead", "OK Computer", "music", None
+    )
+    assert not (_lookup_dir(tmp_path) / f"{key}.jpg").exists()
+    assert not noid.exists()

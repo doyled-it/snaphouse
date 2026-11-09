@@ -98,8 +98,14 @@ _MIN_BASE_LENGTH = 3
 
 _NONE_SUFFIX = ".none"
 # A podcast cover's iTunes collectionId is cached in a sidecar next to the cover,
-# so a cached hit returns the id without a network call.
+# so a cached hit returns the id without a network call. A ``.noid`` marker beside
+# a cover records that an id-only back-fill search ran and found none, so a cover
+# with no real id is searched for at most once rather than on every play.
 _ID_SUFFIX = ".id"
+_NOID_SUFFIX = ".noid"
+# Both ride alongside a cover and are keyed to it: excluded from the file-cap
+# count and removed with the cover they belong to.
+_SIDECAR_SUFFIXES = (_ID_SUFFIX, _NOID_SUFFIX)
 _DEFAULT_MISS_TTL = 7 * 86400
 _DEFAULT_MAX_FILES = 300
 
@@ -359,9 +365,11 @@ class ArtLookup:
         Answers from the disk cache with no network call when the image, or a
         fresh miss marker, already exists for this lookup, so a replayed track is
         not searched for again; a cached podcast cover returns its id from the
-        sidecar beside it. A miss writes a ``.none`` marker and returns no cover.
-        One INFO line names the lookup and its outcome (cover found, miss, or
-        failure), carrying only the show or album name.
+        sidecar beside it. A podcast cover cached before ids existed (no sidecar)
+        is back-filled once with a single id-only search, no image download. A
+        miss writes a ``.none`` marker and returns no cover. One INFO line names
+        the lookup and its outcome (cover found, miss, or failure), carrying only
+        the show or album name.
         """
         chosen = route(kind, genre)
         url, outcome, podcast_id = self._find(chosen, kind, title, artist, album)
@@ -387,9 +395,21 @@ class ArtLookup:
         image_path = self._lookup_dir() / f"{key}.jpg"
         miss_path = self._lookup_dir() / f"{key}{_NONE_SUFFIX}"
         id_path = self._lookup_dir() / f"{key}{_ID_SUFFIX}"
+        noid_path = self._lookup_dir() / f"{key}{_NOID_SUFFIX}"
 
         if image_path.is_file():
-            return (_lookup_url(key), "cover found", self._read_podcast_id(id_path))
+            podcast_id = self._read_podcast_id(id_path)
+            if (
+                podcast_id is None
+                and chosen == "podcast"
+                and not id_path.exists()
+                and not noid_path.exists()
+            ):
+                # A cover cached before podcast ids existed: back-fill it once.
+                podcast_id = self._backfill_podcast_id(
+                    id_path, noid_path, artist, album
+                )
+            return (_lookup_url(key), "cover found", podcast_id)
         if self._miss_fresh(miss_path):
             return (None, "miss", None)
 
@@ -440,6 +460,41 @@ class ArtLookup:
         except ValueError:
             return None
         return _valid_podcast_id(value)
+
+    def _backfill_podcast_id(
+        self,
+        id_path: Path,
+        noid_path: Path,
+        artist: Optional[str],
+        album: Optional[str],
+    ) -> Optional[int]:
+        """Resolve a legacy cached podcast cover's id with one id-only search.
+
+        A cover cached before this change has no ``.id`` sidecar, and the cached
+        path returns before any network code, so every episode of a show the
+        owner already follows would resolve without a podcast id until the cover
+        is evicted. The first time such a cover is served, run a single iTunes
+        search for the id alone (no image download, since the cover is already on
+        disk), writing the ``.id`` sidecar on an exact match. On a parsed miss (no
+        match, or a match with no usable id) write a ``.noid`` marker so the
+        search never repeats for this cover. A transient fetch failure writes no
+        marker and returns None, so a later play retries. iTunes podcast search is
+        not rate-gated, and the marker caps it at one search per cover.
+        """
+        resolved = self._podcast_id(artist, album)
+        if resolved.outcome == _ERROR:
+            return None
+        podcast_id = _valid_podcast_id(resolved.podcast_id)
+        if resolved.outcome == _FOUND and podcast_id is not None:
+            try:
+                _atomic_write(id_path, str(podcast_id).encode("ascii"))
+            except OSError:
+                # A sidecar we fail to write just means the next play retries the
+                # search; do not write the negative marker in that case.
+                return podcast_id
+            return podcast_id
+        self._write_marker(noid_path)
+        return None
 
     # -- lookups ----------------------------------------------------------
 
@@ -528,6 +583,40 @@ class ArtLookup:
                     # reaches the cache or the published shape.
                     podcast_id = _valid_podcast_id(result.get("collectionId"))
                     return _Resolved(_FOUND, image, podcast_id)
+        return _Resolved(_MISS, None)
+
+    def _podcast_id(
+        self, artist: Optional[str], album: Optional[str]
+    ) -> _Resolved:
+        """An id-only podcast search (the show name, then its base), no image."""
+        show = album or artist
+        if not show:
+            return _Resolved(_MISS, None)
+        return self._with_base(show, self._podcast_id_search)
+
+    def _podcast_id_search(self, show: str) -> _Resolved:
+        """Search the iTunes podcast directory for a show's collectionId alone.
+
+        ``_FOUND`` carries the id in ``podcast_id`` (``image`` stays None, since
+        the cover is already cached); ``_MISS`` is a parsed search that matched no
+        show, or matched one with no usable id; ``_ERROR`` is a failed or
+        unparseable fetch. It downloads no artwork.
+        """
+        url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
+            {"media": "podcast", "entity": "podcast", "term": show}
+        )
+        results = _search_list(self._fetch(url), "results")
+        if results is None:
+            return _Resolved(_ERROR, None)
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            if _names_match(result.get("collectionName"), show):
+                podcast_id = _valid_podcast_id(result.get("collectionId"))
+                if podcast_id is not None:
+                    return _Resolved(_FOUND, None, podcast_id)
+                # The show matched but carries no usable id: a real miss.
+                return _Resolved(_MISS, None)
         return _Resolved(_MISS, None)
 
     def _open_library(
@@ -634,21 +723,34 @@ class ArtLookup:
         else:
             self._prune()
 
+    def _write_marker(self, marker_path: Path) -> None:
+        """Write an empty marker (a ``.noid``) beside a cover, best-effort.
+
+        Unlike ``_write_miss`` this does not prune: the marker rides an existing
+        cover and is excluded from the file cap, so it adds no primary entry.
+        """
+        try:
+            self._lookup_dir().mkdir(parents=True, exist_ok=True)
+            _atomic_write(marker_path, b"")
+        except OSError:
+            pass
+
     def _prune(self) -> None:
         """Keep only the ``max_files`` most recent entries in the lookup dir.
 
         Covers and miss markers are content-addressed, so this is a slow-growth
         guard, not a hot path. It globs only ``lookup/``, so the AirPlay bridge's
-        covers in ``cover/`` are never touched. A podcast cover's ``.id`` sidecar
-        does not count toward the limit and is removed with its cover, so an id
-        never outlives, nor evicts, the cover it belongs to. Best-effort.
+        covers in ``cover/`` are never touched. A podcast cover's ``.id`` and
+        ``.noid`` sidecars do not count toward the limit and are removed with the
+        cover, so neither outlives, nor evicts, the cover it belongs to.
+        Best-effort.
         """
         lookup_dir = self._lookup_dir()
         try:
             entries = [
                 entry
                 for entry in lookup_dir.iterdir()
-                if entry.is_file() and entry.suffix != _ID_SUFFIX
+                if entry.is_file() and entry.suffix not in _SIDECAR_SUFFIXES
             ]
             entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         except OSError:
@@ -658,10 +760,11 @@ class ArtLookup:
                 stale.unlink()
             except OSError:
                 pass
-            try:
-                stale.with_suffix(_ID_SUFFIX).unlink()
-            except OSError:
-                pass
+            for suffix in _SIDECAR_SUFFIXES:
+                try:
+                    stale.with_suffix(suffix).unlink()
+                except OSError:
+                    pass
 
 
 def _lookup_key(chosen: str, title: str, artist: Optional[str], album: Optional[str]) -> str:
