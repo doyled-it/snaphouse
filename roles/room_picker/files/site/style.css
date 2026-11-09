@@ -1,47 +1,102 @@
-/* Room picker styling: a clean, high-contrast utility page with large tap
-   targets, meant for a phone on the wall or in the hand. No external fonts or
-   assets (privacy and offline LAN use); the system font stack only. */
+/* The room picker, redesigned as a window onto the bedside e-ink frame.
+   Grounded in the Spectra 6 panel's six inks (nightstand palette.py). The frame
+   mirror is the one loud element; everything else is quiet: space and a single
+   hairline separate sections, rooms are rows rather than boxes. One bundled OFL
+   family (Hanken Grotesk), served by the hub so the page loads nothing off the
+   LAN. Follows the phone's light or dark setting. */
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/hanken-grotesk-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/hanken-grotesk-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF,
+    U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
 :root {
   color-scheme: light dark;
-  --bg: #111417;
-  --surface: #1b1f24;
-  --surface-off: #15181c;
-  --text: #f2f4f6;
-  --muted: #9aa4ad;
-  --line: #2c333a;
-  --accent: #4ac08a;
-  --accent-text: #06231a;
-  --warn-bg: #4a2a12;
-  --warn-text: #ffd9a8;
-  --radius: 16px;
+
+  /* The six panel inks and the roles they carry (design "Visual system"). */
+  --paper: #e9e7e0; /* page background */
+  --mat: #f4f2ec; /* the raised paper mat under the mirror */
+  --ink: #2b292a; /* text, icons */
+  --muted: #6b6762; /* secondary text */
+  --line: rgba(43, 41, 42, 0.14); /* section hairline */
+  --line-2: rgba(43, 41, 42, 0.26); /* control borders */
+
+  --blue: #3c4678; /* links, selected controls, focus ring */
+  --blue-text: #363f6e; /* link text on paper */
+  --on-blue: #f5f4f0; /* text on a blue fill */
+
+  --red: #ad443c; /* live audio and destructive fills */
+  --red-text: #983a33; /* destructive text on paper */
+  --on-red: #f8f3f0; /* text on a red fill */
+
+  --yellow: #cebc58; /* the "too tall" badge */
+  --on-yellow: #2b292a;
+
+  --green: #4a6e4b; /* success */
+  --green-text: #3c5b3d;
+
+  --focus: #3c4678;
+  --shadow: 0 10px 26px rgba(43, 41, 42, 0.16), 0 2px 5px rgba(43, 41, 42, 0.1);
+  --radius: 10px;
+  --radius-sm: 7px;
+  --page: 560px;
 }
 
-@media (prefers-color-scheme: light) {
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg: #f4f6f8;
-    --surface: #ffffff;
-    --surface-off: #eef1f4;
-    --text: #15181c;
-    --muted: #5b646d;
-    --line: #d7dde3;
-    --accent: #1f8f5f;
-    --accent-text: #ffffff;
-    --warn-bg: #fde7cf;
-    --warn-text: #7a3d00;
+    /* Ink becomes the background and Paper the text, dimmed for a bedroom at
+       night: no pure white, body text near 85% paper. Accents keep their hue
+       with lightness raised for AA contrast. No pure or tinted-near black. */
+    --paper: #2b292a;
+    --mat: #383536;
+    --ink: #dcd8cf;
+    --muted: #a8a399;
+    --line: rgba(233, 231, 224, 0.16);
+    --line-2: rgba(233, 231, 224, 0.28);
+
+    --blue: #5160a0;
+    --blue-text: #9fa9e0;
+    --on-blue: #f4f3ef;
+
+    --red: #a8433b;
+    --red-text: #e8958b;
+    --on-red: #f8f3f0;
+
+    --yellow: #d8c766;
+    --on-yellow: #2b292a;
+
+    --green: #5f855f;
+    --green-text: #9cc19c;
+
+    --focus: #9fa9e0;
+    --shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.45);
   }
+}
+
+/* The hidden attribute must beat an element's own display (grid/flex/block). */
+[hidden] {
+  display: none !important;
 }
 
 * {
   box-sizing: border-box;
-}
-
-/* The hidden attribute must win over an element's own display. Several elements
-   the page toggles (the now-playing card, its progress block, the cover and its
-   placeholder) set display: grid/flex/block, which would otherwise override the
-   attribute's display: none and leave them visible when hidden. */
-[hidden] {
-  display: none !important;
 }
 
 html {
@@ -49,72 +104,340 @@ html {
 }
 
 body {
-  margin: 0;
-  padding: max(16px, env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
-  background: var(--bg);
-  color: var(--text);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  line-height: 1.3;
-  max-width: 720px;
-  margin-inline: auto;
+  margin: 0 auto;
+  padding: 0 16px calc(32px + env(safe-area-inset-bottom));
+  max-width: var(--page);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
 }
 
-.top {
+a {
+  color: var(--blue-text);
+}
+
+/* --- Top bar and the section drawer -------------------------------------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 16px;
-  padding-bottom: 12px;
+  align-items: center;
+  gap: 12px;
+  padding: max(10px, env(safe-area-inset-top)) 0 10px;
+  margin-bottom: 8px;
+  background: var(--paper);
   border-bottom: 1px solid var(--line);
-  margin-bottom: 16px;
+}
+
+.menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-left: -10px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.menu-button svg {
+  width: 24px;
+  height: 24px;
+}
+
+.menu-button:hover {
+  background: var(--mat);
 }
 
 .house {
-  font-size: 1.5rem;
   margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
   letter-spacing: 0.01em;
 }
 
-/* The now-playing card at the top: a cover (or a plain placeholder) beside the
-   title, artist, album, and a live progress bar. Same surface, border, and
-   radius as the room cards. */
-.np-card {
-  display: grid;
-  grid-template-columns: 96px 1fr;
-  gap: 16px;
-  align-items: center;
-  background: var(--surface);
+.drawer {
+  margin: 0;
+  padding: 0;
+  border: none;
+  width: min(84vw, 300px);
+  max-width: 300px;
+  height: 100dvh;
+  max-height: 100dvh;
+  inset: 0 auto 0 0; /* pinned to the left edge */
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.drawer::backdrop {
+  background: rgba(43, 41, 42, 0.42);
+}
+
+.drawer-nav {
+  display: flex;
+  flex-direction: column;
+  padding: max(16px, env(safe-area-inset-top)) 12px 16px;
+  gap: 2px;
+}
+
+.drawer-title {
+  margin: 0 0 8px;
+  padding: 0 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.drawer-link {
+  appearance: none;
+  text-align: left;
+  min-height: 48px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 1.05rem;
+  cursor: pointer;
+}
+
+.drawer-link:hover {
+  background: var(--mat);
+}
+
+/* --- Banners ------------------------------------------------------------- */
+
+.banner {
+  margin: 10px 0;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem;
+}
+
+.health {
+  background: color-mix(in srgb, var(--yellow) 24%, var(--paper));
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--yellow) 55%, transparent);
+  font-weight: 600;
+}
+
+.connection {
+  background: var(--mat);
+  color: var(--muted);
+}
+
+/* --- Sections ------------------------------------------------------------ */
+
+.section {
+  padding: 22px 0;
+  border-top: 1px solid var(--line);
+}
+
+#frame {
+  border-top: none;
+  padding-top: 6px;
+}
+
+.section-h {
+  margin: 0 0 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.empty {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+/* --- The frame mirror (the one memorable element) ------------------------ */
+
+.mat {
+  padding: 14px;
+  background: var(--mat);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 16px;
-  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+
+.mirror-img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 5 / 3; /* the frame's true ratio */
+  object-fit: cover;
+  border-radius: 3px;
+  background: var(--paper);
+}
+
+.mirror-updated {
+  margin: 8px 2px 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.frame-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin-top: 12px;
+}
+
+.frame-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+a.frame-title {
+  color: var(--blue-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.frame-artist {
+  color: var(--muted);
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.frame-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.frame-controls .btn {
+  flex: 1 1 auto;
+}
+
+.hint {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* --- Buttons, selects, text fields --------------------------------------- */
+
+.btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--mat);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn:hover {
+  border-color: var(--ink);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.btn-small {
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 0.9rem;
+}
+
+.select,
+.text {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.field-label {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+:where(button, a, summary, input, select, .drawer-link):focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.danger {
+  color: var(--red-text);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
+}
+
+/* --- Now playing --------------------------------------------------------- */
+
+.np {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 16px;
+  align-items: center;
 }
 
 .np-art-img,
 .np-art-ph {
   display: block;
-  width: 96px;
-  height: 96px;
-  border-radius: 12px;
+  width: 88px;
+  height: 88px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
-  background: var(--surface-off);
+  background: var(--mat);
 }
 
-/* The placeholder when a track has no cover: a quiet note glyph on the empty
-   surface, so the card keeps its shape. */
-.np-art-ph {
+.np-art-ph,
+.thumb-ph,
+.row-thumb-ph {
   position: relative;
 }
 
-.np-art-ph::before {
+.np-art-ph::before,
+.thumb-ph::before,
+.row-thumb-ph::before {
   content: "\266A";
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2rem;
   color: var(--muted);
+}
+
+.np-art-ph::before {
+  font-size: 1.9rem;
 }
 
 .np-info {
@@ -126,28 +449,28 @@ body {
 
 .np-title,
 .np-artist,
-.np-album {
+.np-album,
+.np-rooms {
   margin: 0;
   overflow-wrap: anywhere;
 }
 
 .np-title {
-  color: var(--text);
-  font-weight: 700;
-  font-size: 1.15rem;
+  font-weight: 600;
+  font-size: 1.1rem;
 }
 
-.np-artist {
+.np-artist,
+.np-album {
   color: var(--muted);
 }
 
 .np-album {
-  color: var(--muted);
   font-size: 0.95rem;
 }
 
 .np-progress {
-  margin-top: 8px;
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -156,7 +479,7 @@ body {
 .np-track {
   height: 6px;
   border-radius: 999px;
-  background: var(--line);
+  background: var(--line-2);
   overflow: hidden;
 }
 
@@ -164,7 +487,7 @@ body {
   height: 100%;
   width: 0;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--red); /* live audio: red */
   transition: width 0.3s linear;
 }
 
@@ -178,95 +501,76 @@ body {
 }
 
 .np-status {
-  margin: 4px 0 0;
+  margin-top: 4px;
   color: var(--muted);
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.health,
-.connection {
-  margin: 0 0 16px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  font-size: 0.95rem;
-}
-
-.health {
-  background: var(--warn-bg);
-  color: var(--warn-text);
+  font-size: 0.9rem;
   font-weight: 600;
 }
 
-.connection {
-  background: var(--surface-off);
-  color: var(--muted);
+.np-rooms {
+  margin-top: 4px;
+  color: var(--red-text);
+  font-size: 0.9rem;
 }
 
+/* --- Rooms, as rows ------------------------------------------------------ */
+
 .rooms {
-  display: grid;
-  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .room {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 18px;
   display: grid;
   grid-template-columns: 1fr auto;
   grid-template-areas:
     "label toggle"
     "volume volume";
-  gap: 16px;
   align-items: center;
+  gap: 14px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
 }
 
-.room.off {
-  background: var(--surface-off);
+.room:first-child {
+  border-top: none;
 }
 
 .room.disconnected {
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
 .room-label {
   grid-area: label;
-  font-size: 1.25rem;
+  font-size: 1.15rem;
   font-weight: 600;
 }
 
 .toggle {
   grid-area: toggle;
-  min-width: 96px;
-  min-height: 56px;
+  min-width: 92px;
+  min-height: 44px;
   padding: 0 20px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-2);
   border-radius: 999px;
-  background: var(--surface-off);
+  background: var(--mat);
   color: var(--muted);
-  font-size: 1.1rem;
-  font-weight: 700;
+  font: inherit;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 
+/* An audible room is live audio: red (design). */
 .toggle[aria-checked="true"] {
-  background: var(--accent);
-  color: var(--accent-text);
-  border-color: var(--accent);
+  background: var(--red);
+  color: var(--on-red);
+  border-color: var(--red);
 }
 
 .toggle:disabled {
   cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.toggle:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
+  opacity: 0.55;
 }
 
 .volume {
@@ -282,475 +586,204 @@ body {
 
 .volume:disabled {
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
-/* A tall, finger-sized track and thumb, drawn the same in both engines. */
 .volume::-webkit-slider-runnable-track {
-  height: 10px;
+  height: 8px;
   border-radius: 999px;
-  background: var(--line);
+  background: var(--line-2);
 }
 
 .volume::-moz-range-track {
-  height: 10px;
+  height: 8px;
   border-radius: 999px;
-  background: var(--line);
+  background: var(--line-2);
 }
 
 .volume::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   margin-top: -11px;
   border-radius: 50%;
-  background: var(--accent);
-  border: 3px solid var(--bg);
+  background: var(--blue);
+  border: 3px solid var(--paper);
 }
 
 .volume::-moz-range-thumb {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
-  background: var(--accent);
-  border: 3px solid var(--bg);
+  background: var(--blue);
+  border: 3px solid var(--paper);
 }
 
 .volume:focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--focus);
   outline-offset: 4px;
   border-radius: 999px;
 }
 
-/* On the frame: the current piece as a card, then a compact list of what was
-   shown before it. Same surface, border, and radius as the room cards. */
-.art {
-  margin-top: 24px;
-}
+/* --- Library: collapsed, paged grid -------------------------------------- */
 
-.art-heading {
-  font-size: 1.25rem;
-  font-weight: 600;
-  margin: 0 0 12px;
-}
-
-.art-figure {
-  margin: 0;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.art-image {
-  display: block;
-  width: 100%;
-  height: auto;
-  background: var(--surface-off);
-}
-
-.art-caption {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  padding: 14px 16px;
-}
-
-.art-title {
-  color: var(--text);
-  font-weight: 600;
-  font-size: 1.1rem;
-}
-
-.art-artist {
-  color: var(--muted);
-}
-
-.art-recent-heading {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--muted);
-  margin: 20px 0 10px;
-}
-
-.art-history {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.art-item {
-  display: grid;
-  grid-template-columns: 56px 1fr;
-  gap: 14px;
-  align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px 14px;
-}
-
-.art-thumb {
-  width: 56px;
-  height: 56px;
-  object-fit: cover;
-  border-radius: 8px;
-  background: var(--surface-off);
-}
-
-.art-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 10px;
-  min-width: 0;
-}
-
-.art-item-title {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.art-item-artist {
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-.art-when {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-/* The title link keeps the body colors; the frame, not the browser default blue,
-   is the look. The focus ring still marks it for keyboard use. */
-.art-title,
-.art-item-title {
-  color: var(--text);
-}
-
-a.art-title,
-a.art-item-title {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  text-decoration-color: var(--line);
-}
-
-a.art-title:focus-visible,
-a.art-item-title:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-/* Play history: the same row as the art history, with a note placeholder when a
-   play has no cover and the track length pushed to the end of the row. */
-.np-thumb-ph {
-  position: relative;
-}
-
-.np-thumb-ph::before {
-  content: "\266A";
-  position: absolute;
-  inset: 0;
+.library-summary {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 1.4rem;
-  color: var(--muted);
-}
-
-.np-item-len {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 0.85rem;
-  font-variant-numeric: tabular-nums;
-}
-
-/* The art manager: the frame rotation controls and the library, grown out of
-   the "On the frame" section. The same surface, border, and radius as the rest
-   of the page, with large tap targets for a phone. */
-
-.art-btn {
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface-off);
-  color: var(--text);
-  font-size: 1rem;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   gap: 8px;
-}
-
-.art-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.art-btn:focus-visible,
-.art-chip:focus-visible,
-.art-select:focus-visible,
-.art-text:focus-visible,
-.art-menu-summary:focus-visible,
-.art-menu-item:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.art-btn-small {
-  min-height: 38px;
-  font-size: 0.9rem;
-  padding: 0 14px;
-}
-
-.art-nowshowing {
-  margin-top: 12px;
-}
-
-.art-nav {
-  display: flex;
-  gap: 10px;
-}
-
-.art-nav .art-btn {
-  flex: 1;
-}
-
-.art-redraw-note {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.art-message {
-  margin: 12px 0 0;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background: var(--warn-bg);
-  color: var(--warn-text);
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
-.art-manager {
-  margin-top: 20px;
-  display: grid;
-  gap: 24px;
-}
-
-.art-subheading {
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
   font-size: 1.05rem;
   font-weight: 600;
-  margin: 0 0 10px;
 }
 
-.art-select,
-.art-text {
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 1rem;
-  font-family: inherit;
+.library-summary::-webkit-details-marker {
+  display: none;
 }
 
-.art-text {
-  min-width: 0;
+.library-summary::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
 }
 
-/* Rotation: the summary line, the interval selector, and the folder chips. */
-.art-rotation {
+.library[open] .library-summary::before {
+  transform: rotate(45deg);
+}
+
+.library-body {
+  margin-top: 14px;
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
-.art-rotation-summary {
-  margin: 0;
-  font-weight: 600;
-}
-
-.art-rotation-summary.empty {
-  color: var(--muted);
-  font-weight: 400;
-}
-
-.art-interval-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-}
-
-.art-chips-wrap {
-  display: grid;
-  gap: 8px;
-}
-
-.art-chips-label {
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.art-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.art-chip {
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface-off);
-  color: var(--muted);
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.art-chip.on {
-  background: var(--accent);
-  color: var(--accent-text);
-  border-color: var(--accent);
-}
-
-/* Library: a filterable thumbnail grid, each piece with a per-piece menu. */
-.art-library-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.art-library-head .art-subheading {
-  margin: 0;
-}
-
-.art-filter-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.art-grid {
+.grid {
   list-style: none;
-  margin: 12px 0 0;
+  margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
 }
 
-.art-tile {
+.tile {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px;
+  gap: 6px;
 }
 
-.art-tile-thumb-wrap {
+.tile-thumb-wrap {
   position: relative;
 }
 
-.art-tile-thumb {
+.tile-thumb {
   width: 100%;
-  height: 110px;
+  aspect-ratio: 1 / 1;
   object-fit: cover;
-  border-radius: 8px;
-  background: var(--surface-off);
+  border-radius: var(--radius-sm);
+  background: var(--mat);
   display: block;
 }
 
-.art-badge {
+.badge {
   position: absolute;
-  top: 6px;
-  left: 6px;
-  padding: 2px 8px;
+  top: 7px;
+  left: 7px;
+  padding: 2px 9px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.65);
-  color: #fff;
-  font-size: 0.7rem;
+  background: var(--yellow);
+  color: var(--on-yellow);
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
-.art-tile-title {
-  font-size: 0.9rem;
+.tile-title {
+  font-size: 0.92rem;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
-/* The thumbnail placeholder, shown while the hub has not written a thumb yet (a
-   fresh upload) or when a thumb path fails to load. It carries the same sizing
-   classes as the image it stands in for, with a quiet picture glyph. */
-.art-thumb-ph {
-  position: relative;
+.tile-artist {
+  color: var(--muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 
-.art-thumb-ph::before {
+.thumb-ph::before {
   content: "\1F5BC";
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   font-size: 1.6rem;
-  color: var(--muted);
   opacity: 0.8;
 }
 
 /* The per-piece menu, a disclosure so the grid stays compact. */
-.art-menu-summary {
-  cursor: pointer;
-  list-style: none;
-  color: var(--accent);
-  font-size: 0.9rem;
-  font-weight: 600;
-  padding: 4px 0;
+.menu {
+  position: relative;
 }
 
-.art-menu-summary::-webkit-details-marker {
+.menu-summary {
+  list-style: none;
+}
+
+.menu-summary::-webkit-details-marker {
   display: none;
 }
 
-.art-menu-body {
+.tile .menu-summary {
+  min-height: 36px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--blue-text);
+  font-size: 0.88rem;
+  font-weight: 600;
+  justify-content: flex-start;
+}
+
+.menu-body {
   display: grid;
   gap: 8px;
   margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
 }
 
-.art-menu-item {
-  min-height: 40px;
+.frame-menu-wrap .menu-body,
+.frame-controls .menu-body {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 210px;
+  box-shadow: var(--shadow);
+  z-index: 3;
+}
+
+.frame-controls .menu {
+  flex: 0 0 auto;
+}
+
+.menu-item {
+  min-height: 42px;
   padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-off);
-  color: var(--text);
-  font-size: 0.9rem;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--mat);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
   font-weight: 600;
-  cursor: pointer;
   text-align: left;
+  cursor: pointer;
 }
 
-.art-menu-move {
+.menu-move {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -758,49 +791,163 @@ a.art-item-title:focus-visible {
   font-size: 0.9rem;
 }
 
-.art-menu-move .art-select {
+.menu-move .select {
   flex: 1;
   min-width: 0;
 }
 
-.art-menu-danger {
-  color: #ff9a8a;
-  border-color: #5a2a22;
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-@media (prefers-color-scheme: light) {
-  .art-menu-danger {
-    color: #a12a16;
-    border-color: #e0b4ab;
-  }
+.pager .btn {
+  flex: 0 0 auto;
 }
 
-.art-empty {
-  margin: 12px 0 0;
+.pager-label {
   color: var(--muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
 }
 
-/* Upload: a folder choice, a file button, and a per-file progress list. */
-.art-upload-row {
+/* --- Rows (art history, play history, trash) ----------------------------- */
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 54px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.row:first-child {
+  border-top: none;
+}
+
+.row-tappable {
+  width: 100%;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 12px 0;
+}
+
+.row-thumb {
+  width: 54px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--mat);
+}
+
+.row-thumb-ph::before {
+  font-size: 1.3rem;
+}
+
+.row-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.row-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+a.row-title {
+  color: var(--blue-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--line-2);
+}
+
+.row-sub {
+  color: var(--muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.row-when {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.row-action {
+  justify-self: end;
+}
+
+/* --- Rotation ------------------------------------------------------------ */
+
+.rotation-summary {
+  margin: 0 0 14px;
+  font-weight: 600;
+}
+
+.rotation-summary.empty {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.chips-field {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--mat);
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* An enabled folder is a selected control: blue (design). */
+.chip.on {
+  background: var(--blue);
+  color: var(--on-blue);
+  border-color: var(--blue);
+}
+
+/* --- Upload and folders -------------------------------------------------- */
+
+.upload-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
 
-.art-upload-folder-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.art-upload-btn {
+.file-btn {
   cursor: pointer;
 }
 
-.art-upload-input {
+.file-input {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -808,68 +955,72 @@ a.art-item-title:focus-visible {
   overflow: hidden;
 }
 
-.art-upload-progress {
+.upload-progress {
   list-style: none;
-  margin: 12px 0 0;
+  margin: 14px 0 0;
   padding: 0;
   display: grid;
   gap: 8px;
 }
 
-.art-upload-item {
+.upload-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-size: 0.9rem;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  font-size: 0.92rem;
 }
 
-.art-upload-name {
+.upload-name {
   overflow-wrap: anywhere;
   min-width: 0;
 }
 
-.art-upload-status {
+.upload-status {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.art-upload-item.ok .art-upload-status {
-  color: var(--accent);
+.upload-item.ok .upload-status {
+  color: var(--green-text);
 }
 
-.art-upload-item.err .art-upload-status {
-  color: var(--warn-text);
+.upload-item.err .upload-status {
+  color: var(--red-text);
 }
 
-/* Folders and trash: compact disclosures. */
-.art-folders > summary,
-.art-trash > summary {
+.folders {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.sub-h {
   cursor: pointer;
   list-style: none;
+  font-size: 1rem;
+  font-weight: 600;
 }
 
-.art-folders > summary::-webkit-details-marker,
-.art-trash > summary::-webkit-details-marker {
+.sub-h::-webkit-details-marker {
   display: none;
 }
 
-.art-folder-create {
+.folder-create {
   display: flex;
   gap: 10px;
-  margin: 12px 0;
+  margin: 14px 0;
 }
 
-.art-folder-create .art-text {
+.folder-create .text {
   flex: 1;
+  min-width: 0;
 }
 
-.art-folder-list {
+.folder-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -877,31 +1028,127 @@ a.art-item-title:focus-visible {
   gap: 10px;
 }
 
-.art-folder-row {
+.folder-row {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.art-folder-rename {
+.folder-rename {
   display: flex;
   flex: 1;
   gap: 8px;
   min-width: 0;
 }
 
-.art-folder-rename .art-text {
+.folder-rename .text {
   flex: 1;
+  min-width: 0;
 }
 
-.art-trash-list {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
+/* --- The "Open in" sheet ------------------------------------------------- */
+
+.sheet {
+  width: 100%;
+  max-width: var(--page);
+  margin: auto auto 0;
+  padding: 0 16px calc(20px + env(safe-area-inset-bottom));
+  border: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.sheet::backdrop {
+  background: rgba(43, 41, 42, 0.42);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet-title {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sheet-close {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 12px;
+  border: none;
+  background: none;
+  color: var(--blue-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sheet-links {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+  padding: 14px 0 4px;
 }
 
-.art-trash-item {
-  grid-template-columns: 56px 1fr auto;
+.sheet-link {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--mat);
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* --- Toast with an Undo action ------------------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: calc(100vw - 32px);
+  padding: 12px 16px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: var(--shadow);
+  font-size: 0.95rem;
+}
+
+.toast-text {
+  overflow-wrap: anywhere;
+}
+
+.toast-undo {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--yellow);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .np-fill,
+  .library-summary::before {
+    transition: none;
+  }
 }

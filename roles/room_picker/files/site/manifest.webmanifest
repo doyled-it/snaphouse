@@ -1,13 +1,13 @@
 {
   "name": "House",
   "short_name": "House",
-  "description": "Turn each room on or off and set its volume.",
+  "description": "See what the frame and the house are playing, and tune each room.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#111417",
-  "theme_color": "#111417",
+  "background_color": "#E9E7E0",
+  "theme_color": "#2B292A",
   "icons": [
     {
       "src": "icon.svg",

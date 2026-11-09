@@ -1,11 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="House">
-  <!-- Generated in-repo, no third-party assets. A house with a speaker dot,
-       drawn inside the maskable safe zone so home-screen crops keep it whole. -->
-  <rect width="512" height="512" rx="104" fill="#111417" />
-  <g fill="none" stroke="#4ac08a" stroke-width="26" stroke-linejoin="round" stroke-linecap="round">
-    <path d="M152 236 256 152 360 236" />
-    <path d="M176 224 V352 H336 V224" />
-  </g>
-  <circle cx="256" cy="300" r="34" fill="#4ac08a" />
-  <circle cx="256" cy="300" r="12" fill="#111417" />
+  <!-- Generated in-repo, no third-party assets. A framed picture with a speaker
+       dot, in the Spectra 6 panel inks, drawn inside the maskable safe zone so
+       home-screen crops keep it whole. -->
+  <rect width="512" height="512" rx="104" fill="#2B292A" />
+  <rect x="148" y="140" width="216" height="168" rx="12" fill="none" stroke="#3C4678" stroke-width="26" />
+  <path d="M176 272 228 224 268 260 316 212 336 232" fill="none" stroke="#CEBC58" stroke-width="20" stroke-linejoin="round" stroke-linecap="round" />
+  <circle cx="256" cy="372" r="30" fill="#AD443C" />
 </svg>
