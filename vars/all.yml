@@ -44,6 +44,14 @@ stream_priority:
 # meta member agree. The hub_input verify check asserts snapserver reports it.
 house_sample_format: "44100:16:2"
 
+# Idle threshold for the two alsa inputs, in milliseconds. snapserver's default
+# (100 ms) treats the digital silence between spoken sentences as the stream
+# stopping, which flaps the House meta stream and chops every room during
+# audiobooks and podcasts (issue #90). Ten seconds keeps speech pauses as
+# playing while a real stop still goes idle. The hub_input template applies this
+# to both the AirPlay and Bluetooth sources.
+snapserver_idle_threshold_ms: 10000
+
 # Pinned Snapcast release. Chosen as the newest release (v0.35.0, 2026-03-10) that
 # supports everything the hub needs: the meta stream (meta:// priority/merge
 # source), the airplay source with track metadata and cover art, and stream

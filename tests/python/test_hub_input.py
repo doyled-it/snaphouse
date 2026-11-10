@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parents[2]
 SNAPSERVER_CONF = "roles/hub_input/templates/snapserver.conf.j2"
 HOUSE_STREAM_NAME = "House"
 SAMPLE_FORMAT = "44100:16:2"
+IDLE_THRESHOLD_MS = 10000
 
 _DEFAULT_SOURCE = re.compile(r"^\s*default_source\s*=\s*(\S+)\s*$", re.MULTILINE)
 _SOURCE_NAME = re.compile(r"^\s*source\s*=.*?[?&]name=([^&\s]+)", re.MULTILINE)
@@ -35,8 +36,16 @@ def render_snapserver_conf() -> str:
     return env.get_template(SNAPSERVER_CONF).render(
         house_stream_name=HOUSE_STREAM_NAME,
         house_sample_format=SAMPLE_FORMAT,
+        snapserver_idle_threshold_ms=IDLE_THRESHOLD_MS,
         snaphouse_host="house",
     )
+
+
+def _alsa_source_line(conf: str, name: str) -> str:
+    for line in conf.splitlines():
+        if line.startswith("source = alsa:") and f"name={name}" in line:
+            return line
+    raise AssertionError(f"no alsa source named {name!r} in snapserver.conf")
 
 
 def test_default_source_is_the_house_meta_stream():
@@ -63,6 +72,27 @@ def test_house_meta_stream_is_defined_and_lists_airplay_first():
     assert meta_line.index("AirPlay") < meta_line.index("Bluetooth"), (
         "the meta stream must list AirPlay before Bluetooth"
     )
+
+
+def test_both_alsa_sources_pin_idle_threshold():
+    # snapserver's default idle_threshold (100 ms) treats the digital silence
+    # between spoken sentences as the stream stopping, which flaps the House meta
+    # stream and chops every room during audiobooks and podcasts (issue #90).
+    # Both alsa sources must carry a 10 s threshold so speech pauses stay
+    # playing while a real stop still goes idle.
+    conf = render_snapserver_conf()
+    for name in ("AirPlay", "Bluetooth"):
+        line = _alsa_source_line(conf, name)
+        assert f"idle_threshold={IDLE_THRESHOLD_MS}" in line, (
+            f"the {name} source must set idle_threshold={IDLE_THRESHOLD_MS}, "
+            f"got: {line}"
+        )
+        # It must sit between the sampleformat and the controlscript, matching
+        # the live hand fix on the hub.
+        assert re.search(
+            rf"sampleformat=[^&]+&idle_threshold={IDLE_THRESHOLD_MS}&controlscript=",
+            line,
+        ), f"the {name} source has idle_threshold out of place: {line}"
 
 
 # --------------------------------------------------------------------------- #

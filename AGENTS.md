@@ -69,6 +69,16 @@ another name (the ZimaBlade shipped as `casaos`) is named with
 `bootstrap.sh --host <key>`, which validates the key against `vars/hosts.yml`
 and sets the hostname before applying.
 
+## Snapserver inputs hold through speech pauses
+
+The two alsa sources in `roles/hub_input/templates/snapserver.conf.j2` (AirPlay
+and Bluetooth) set `idle_threshold` from `snapserver_idle_threshold_ms` in
+`vars/all.yml` (10000 ms). snapserver's 100 ms default reads the digital silence
+between spoken sentences as the stream stopping, which flaps the House meta
+stream and chops every room during audiobooks and podcasts (issue #90). Ten
+seconds keeps speech pauses as playing while a real stop still goes idle;
+`tests/python/test_hub_input.py` pins the parameter on both sources.
+
 ## mDNS advertises IPv4 only
 
 The `common` role sets `use-ipv6=no` ([server]) and `publish-aaaa-on-ipv4=no`
