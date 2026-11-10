@@ -8,6 +8,13 @@
 # by default, so the house attenuates at the source and every room keeps its
 # relative level. The old --volume=software flag that asked for this is gone:
 # 4.0 rejects it and the daemon already does it. Installed by roles/hub_input.
+#
+# --pcm-buffer-time and --pcm-period-time size the loopback playback buffer (in
+# microseconds, from bt_input_buffer_time_us and bt_input_period_time_us in
+# vars/all.yml). A phone pauses its A2DP sender when it buffers ahead, and the
+# default 500 ms buffer ran dry during those stalls: underruns every 10 to 40
+# seconds and skips in every room while the link was strong (issue #92). A 1.5 s
+# buffer rides the stalls out; the cost is about 1 s more phone-to-speaker delay.
 [Unit]
 Description=snaphouse Bluetooth input (A2DP to the Snapcast loopback)
 # bluealsa exposes the A2DP PCMs; snd-aloop provides the loopback sink.
@@ -16,7 +23,7 @@ Wants=bluealsa.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/bluealsa-aplay --pcm=snaphouse_bt_input --profile-a2dp 00:00:00:00:00:00
+ExecStart=/usr/bin/bluealsa-aplay --pcm-buffer-time={{ bt_input_buffer_time_us }} --pcm-period-time={{ bt_input_period_time_us }} --pcm=snaphouse_bt_input --profile-a2dp 00:00:00:00:00:00
 Restart=on-failure
 RestartSec=2
 
