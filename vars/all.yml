@@ -52,6 +52,18 @@ house_sample_format: "44100:16:2"
 # to both the AirPlay and Bluetooth sources.
 snapserver_idle_threshold_ms: 10000
 
+# Bluetooth input receive buffer (hub_input role, snaphouse-bt-in.service). A
+# phone streaming A2DP briefly pauses its sender when it buffers ahead (seen on a
+# downloaded audiobook), and bluealsa-aplay's default 500 ms loopback playback
+# buffer ran dry during those stalls: it logged underruns every 10 to 40 seconds
+# with the link signal still strong, and the house skipped in every room
+# (issue #92). A 1.5 s buffer with a 100 ms period rides out the stalls; a 10
+# minute watch on the hub logged zero underruns. Times are in microseconds, the
+# units bluealsa-aplay expects. Cost: about 1 s more delay between the phone and
+# the speakers.
+bt_input_buffer_time_us: 1500000
+bt_input_period_time_us: 100000
+
 # Pinned Snapcast release. Chosen as the newest release (v0.35.0, 2026-03-10) that
 # supports everything the hub needs: the meta stream (meta:// priority/merge
 # source), the airplay source with track metadata and cover art, and stream

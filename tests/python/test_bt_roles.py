@@ -20,10 +20,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+from jinja2 import Environment, FileSystemLoader
 
 REPO = Path(__file__).resolve().parents[2]
 
-BT_IN_SERVICE = REPO / "roles/hub_input/files/snaphouse-bt-in.service"
+BT_IN_SERVICE_TEMPLATE = "roles/hub_input/templates/snaphouse-bt-in.service.j2"
+BT_INPUT_BUFFER_TIME_US = 1500000
+BT_INPUT_PERIOD_TIME_US = 100000
 BT_TASKS = REPO / "roles/bluetooth/tasks/main.yml"
 BT_HANDLERS = REPO / "roles/bluetooth/handlers/main.yml"
 LOCKDOWN = REPO / "roles/bluetooth/files/snaphouse-bt-lockdown.sh"
@@ -38,8 +41,18 @@ def _exec_start(service_text: str) -> str:
     raise AssertionError("no ExecStart line in the unit")
 
 
+def render_bt_in_service() -> str:
+    env = Environment(
+        loader=FileSystemLoader(str(REPO)), keep_trailing_newline=True
+    )
+    return env.get_template(BT_IN_SERVICE_TEMPLATE).render(
+        bt_input_buffer_time_us=BT_INPUT_BUFFER_TIME_US,
+        bt_input_period_time_us=BT_INPUT_PERIOD_TIME_US,
+    )
+
+
 def test_bt_input_service_drops_the_software_volume_flag():
-    text = BT_IN_SERVICE.read_text()
+    text = render_bt_in_service()
     exec_start = _exec_start(text)
     # bluealsa 4.0 rejects --volume=software and applies software volume itself.
     assert "--volume=software" not in exec_start
@@ -48,6 +61,22 @@ def test_bt_input_service_drops_the_software_volume_flag():
     assert "--pcm=snaphouse_bt_input" in exec_start
     assert "--profile-a2dp" in exec_start
     assert "00:00:00:00:00:00" in exec_start
+
+
+def test_bt_input_service_sizes_the_receive_buffer_to_ride_phone_stalls():
+    # A phone pauses its A2DP sender when it buffers ahead; the default 500 ms
+    # loopback buffer ran dry and the house skipped (issue #92). A 1.5 s buffer
+    # with a 100 ms period, placed right after the binary, matches the hand test
+    # drop-in that logged zero underruns on the hub.
+    text = render_bt_in_service()
+    exec_start = _exec_start(text)
+    assert f"--pcm-buffer-time={BT_INPUT_BUFFER_TIME_US}" in exec_start
+    assert f"--pcm-period-time={BT_INPUT_PERIOD_TIME_US}" in exec_start
+    # The buffer sizing flags come before the --pcm the device is played into.
+    binary = "/usr/bin/bluealsa-aplay"
+    assert exec_start.index(binary) < exec_start.index("--pcm-buffer-time")
+    assert exec_start.index("--pcm-buffer-time") < exec_start.index("--pcm=")
+    assert exec_start.index("--pcm-period-time") < exec_start.index("--pcm=")
 
 
 def _tasks() -> list[dict]:
