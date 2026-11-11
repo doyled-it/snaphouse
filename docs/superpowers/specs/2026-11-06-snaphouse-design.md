@@ -120,8 +120,10 @@ cancels it. Tuning those offsets is what makes three rooms sound like one.
     CDN (podcasts), `musicbrainz.org` and `coverartarchive.org` (music, plus the
     `archive.org` hosts the Cover Art Archive redirects to), and `openlibrary.org` and
     `covers.openlibrary.org` (audiobooks, whose covers redirect to `archive.org`).
-    Requests carry only track, show, book, or artist names and a User-Agent naming the
-    public repo; nothing identifying goes out.
+    It also reaches `geocoding-api.open-meteo.com`, Open-Meteo's keyless geocoding API,
+    to resolve a typed weather city (the frame's weather location) to its coordinates and
+    IANA timezone. Requests carry only track, show, book, artist, or typed place names and
+    a User-Agent naming the public repo; nothing identifying goes out.
   - `nightstand`: the same, plus what `nightstand` lists in its design (MLB Stats API,
     MLB's logo CDN, Open-Meteo, MusicBrainz and the Cover Art Archive).
 - Bluetooth that stays open to pairing. Pairing happens only inside a short window the

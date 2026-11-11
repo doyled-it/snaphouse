@@ -21,6 +21,9 @@ import {
   validateFrameSettings,
   framePinBody,
   frameUnpinBody,
+  weatherLocationLabel,
+  weatherSaveBody,
+  weatherClearBody,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // --------------------------------------------------------------------------- #
@@ -74,6 +77,7 @@ test("parseFrameControl fills documented defaults for a present but empty settin
       weekday: ["06:00", "08:30"],
       weekend: ["07:00", "09:00"],
     },
+    weather_location: null,
   });
   assert.equal(result.pin, null);
 });
@@ -294,4 +298,56 @@ test("framePinBody returns null for an unknown what or duration", () => {
 
 test("frameUnpinBody is an empty object the guarded POST carries", () => {
   assert.deepEqual(frameUnpinBody(), {});
+});
+
+// --------------------------------------------------------------------------- #
+// Weather location: the Settings screen's "Weather city" field
+// --------------------------------------------------------------------------- #
+
+const SAN_DIEGO = {
+  name: "San Diego, California, United States",
+  latitude: 32.72,
+  longitude: -117.16,
+  timezone: "America/Los_Angeles",
+};
+
+test("parseFrameControl defaults weather_location to null", () => {
+  const result = parseFrameControl({ settings: {}, pin: null });
+  assert.equal(result.settings.weather_location, null);
+});
+
+test("parseFrameControl keeps a valid stored weather location", () => {
+  const result = parseFrameControl({ settings: { weather_location: SAN_DIEGO }, pin: null });
+  assert.deepEqual(result.settings.weather_location, SAN_DIEGO);
+});
+
+test("parseFrameControl reads a malformed weather location as null", () => {
+  for (const bad of [{ name: "X" }, { name: "X", latitude: "nope", longitude: 1, timezone: "Z" }, 42, []]) {
+    const result = parseFrameControl({ settings: { weather_location: bad }, pin: null });
+    assert.equal(result.settings.weather_location, null, JSON.stringify(bad));
+  }
+});
+
+test("weatherLocationLabel shows the stored name or Not set", () => {
+  assert.equal(weatherLocationLabel(SAN_DIEGO), "San Diego, California, United States");
+  assert.equal(weatherLocationLabel(null), "Not set");
+  assert.equal(weatherLocationLabel(undefined), "Not set");
+  assert.equal(weatherLocationLabel({ latitude: 1 }), "Not set");
+});
+
+test("weatherSaveBody wraps a trimmed query, or null when blank", () => {
+  assert.deepEqual(weatherSaveBody("San Diego, CA"), {
+    weather_location: { query: "San Diego, CA" },
+  });
+  assert.deepEqual(weatherSaveBody("  Portland, OR  "), {
+    weather_location: { query: "Portland, OR" },
+  });
+  assert.equal(weatherSaveBody("   "), null);
+  assert.equal(weatherSaveBody(""), null);
+  assert.equal(weatherSaveBody(null), null);
+  assert.equal(weatherSaveBody(42), null);
+});
+
+test("weatherClearBody clears the location", () => {
+  assert.deepEqual(weatherClearBody(), { weather_location: null });
 });

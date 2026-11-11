@@ -23,10 +23,17 @@ The published document is::
         "quiet_hours": {"start": "22:00", "end": "06:00"},
         "morning_weather": {"enabled": true,
                             "weekday": ["06:00", "08:30"],
-                            "weekend": ["07:00", "09:00"]}
+                            "weekend": ["07:00", "09:00"]},
+        "weather_location": null
       },
       "pin": null
     }
+
+``weather_location`` is ``null`` or ``{"name", "latitude", "longitude",
+"timezone"}``: the display name, city-centre coordinates rounded to two decimals,
+and the IANA timezone the hub resolved from a typed city via Open-Meteo's keyless
+geocoding API. The frame uses it for the forecast and falls back to its own local
+config when it is ``null``.
 
 ``pin`` is ``null`` or ``{"what", "piece", "until", "seq", "set_at"}``; the design
 and the pinned contract are in
@@ -41,6 +48,9 @@ import os
 import re
 import tempfile
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
@@ -81,6 +91,93 @@ DEFAULT_MORNING_WEATHER = {
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 
+# --------------------------------------------------------------------------- #
+# Geocoding (Open-Meteo, keyless)
+# --------------------------------------------------------------------------- #
+
+#: Open-Meteo's keyless geocoding search. Only the typed city name is sent, with
+#: a fixed count, language, and format; the qualifier (state or country) stays on
+#: the hub and is used to pick among the results. Nothing identifying goes out.
+_GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
+
+#: A geocoding response is small JSON; refuse a larger body so a broken or hostile
+#: source cannot stream an unbounded response into memory on the appliance.
+_GEOCODE_MAX_BYTES = 1 * 1024 * 1024
+_GEOCODE_TIMEOUT = 10.0
+
+#: The longest typed city query accepted. A city name is short; a longer string
+#: is a mistake or abuse, refused with a 400 before anything is geocoded rather
+#: than sent on to the geocoder as the search term.
+_MAX_QUERY_LENGTH = 100
+
+#: Shown when the geocoder could not be reached or returned something unusable
+#: (a transient condition the owner can retry), distinct from a clean no-match.
+_GEOCODER_UNREACHABLE = "Could not look up places right now. Try again in a minute."
+
+#: US state and territory postal codes, so a "City, CA" style qualifier matches a
+#: result whose ``admin1`` is the full state name. Open-Meteo returns the full
+#: name ("California"), not the code, so the hub maps the two together.
+_US_STATE_CODES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia",
+}
+#: The reverse map (full name -> postal code), case-folded for comparison.
+_US_STATE_NAME_TO_CODE = {
+    name.casefold(): code for code, name in _US_STATE_CODES.items()
+}
+
+#: A fetch gets a URL and returns the response body, or None on any failure (a bad
+#: status, a timeout, a transport error, or an oversized body). The caller tells a
+#: failed fetch apart from a parsed no-match, so the two map to different errors.
+Fetch = Callable[[str], Optional[bytes]]
+
+_user_agent_cache: Optional[str] = None
+
+
+def _user_agent() -> str:
+    """A User-Agent naming the public repository, nothing identifying."""
+    global _user_agent_cache
+    if _user_agent_cache is None:
+        _user_agent_cache = "snaphouse (+https://github.com/doyled-it/snaphouse)"
+    return _user_agent_cache
+
+
+def urllib_geocode(url: str) -> Optional[bytes]:
+    """GET ``url`` with a short timeout, returning the body or None on failure.
+
+    The body is capped and compression refused so a small compressed response
+    cannot amplify past the cap. Any error (bad status, timeout, transport
+    failure, oversize body) resolves to None, so the geocode call never raises
+    into the request handler; a None body becomes a 502 the owner can retry.
+    """
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": _user_agent(),
+            "Accept-Encoding": "identity",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_GEOCODE_TIMEOUT) as response:
+            data = response.read(_GEOCODE_MAX_BYTES + 1)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    if len(data) > _GEOCODE_MAX_BYTES:
+        return None
+    return data
+
+
 class FrameControl:
     """Frame settings and the pin, persisted to ``state`` and published as a
     ``{settings, pin}`` document.
@@ -97,10 +194,16 @@ class FrameControl:
         *,
         art_history: Optional[Path] = None,
         clock: Callable[[], float] = time.time,
+        geocode: Optional[Fetch] = None,
     ) -> None:
         self.state = Path(state)
         self.art_history = Path(art_history) if art_history is not None else None
         self._clock = clock
+        # The geocoder fetch (url -> body bytes or None) is injected so tests use
+        # recorded or synthetic responses and no test touches the network. The
+        # module stays HTTP-free; ``urllib_geocode`` is the real one, wired in by
+        # the service. A weather_location write with no geocoder set is a 502.
+        self._geocode = geocode
 
     # -- published document ------------------------------------------------- #
 
@@ -138,6 +241,10 @@ class FrameControl:
         if "morning_weather" in subset:
             settings["morning_weather"] = self._clean_morning_weather(
                 settings["morning_weather"], subset["morning_weather"]
+            )
+        if "weather_location" in subset:
+            settings["weather_location"] = self._clean_weather_location(
+                subset["weather_location"]
             )
 
         state["settings"] = settings
@@ -202,6 +309,104 @@ class FrameControl:
     def _minutes(hhmm: str) -> int:
         hour, minute = hhmm.split(":")
         return int(hour) * 60 + int(minute)
+
+    # -- weather location --------------------------------------------------- #
+
+    def prepare_settings(self, subset: dict) -> dict:
+        """Resolve a settings subset's network-bound parts before it is stored.
+
+        The weather geocode is the only slow, network-bound step in a settings
+        write, and the service must run it outside its library write lock (so a
+        slow geocoder never stalls the thumbnail pass or another write). This does
+        that resolution: it returns a shallow copy of ``subset`` in which a
+        ``weather_location`` write of the form ``{"query": "<city>"}`` is replaced
+        by the resolved location (the geocode happens here) and ``None`` is left
+        as ``None``. Every other key is passed through untouched for
+        :meth:`update_settings` to validate and store under the lock. A write with
+        no ``weather_location`` key needs no network and is returned as-is.
+        """
+        if not isinstance(subset, dict):
+            raise ArtError(400, "That is not a valid settings object.")
+        if "weather_location" not in subset:
+            return dict(subset)
+        prepared = dict(subset)
+        prepared["weather_location"] = self._resolve_weather_location(
+            subset["weather_location"]
+        )
+        return prepared
+
+    def _resolve_weather_location(self, value):
+        """Resolve a weather-location write to its stored form (the geocode).
+
+        ``None`` clears the location; ``{"query": "<city>"}`` is geocoded to the
+        stored location dict. Any other shape is a 400, matching what
+        :meth:`update_settings` would reject, so a client posting a pre-resolved
+        location (not via ``query``) is refused rather than trusted.
+        """
+        if value is None:
+            return None
+        if not isinstance(value, dict) or "query" not in value:
+            raise ArtError(400, "That is not a valid weather location.")
+        return self._geocode_query(self._clean_query(value["query"]))
+
+    def _clean_weather_location(self, value):
+        """Validate a weather-location value and return its stored form.
+
+        ``None`` clears it. A ``{"query": "<city>"}`` is geocoded (a direct call;
+        the service resolves it in :meth:`prepare_settings` outside the lock, so
+        this path does no network there). An already-resolved location dict is
+        validated to the stored shape and kept. Anything else is a 400.
+        """
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ArtError(400, "That is not a valid weather location.")
+        if "query" in value:
+            return self._geocode_query(self._clean_query(value["query"]))
+        resolved = _normalize_weather_location(value)
+        if resolved is None:
+            raise ArtError(400, "That is not a valid weather location.")
+        return resolved
+
+    @staticmethod
+    def _clean_query(query) -> str:
+        """A typed city query, trimmed, non-blank, and within the length cap."""
+        if not isinstance(query, str) or not query.strip():
+            raise ArtError(400, 'Enter a city, like "San Diego, CA".')
+        trimmed = query.strip()
+        if len(trimmed) > _MAX_QUERY_LENGTH:
+            raise ArtError(400, "That city name is too long. Use a shorter city name.")
+        return trimmed
+
+    def _geocode_query(self, query: str) -> dict:
+        """Geocode a typed ``City`` or ``City, Qualifier`` to a stored location.
+
+        The query is split at the first comma: the city part is the only thing
+        that leaves the LAN (the search term), and the qualifier (a state or
+        country) stays on the hub to pick among the results. A failed or
+        unparseable fetch is a 502 (retryable); a search that parsed but matched
+        nothing is a 400 naming the query.
+        """
+        if self._geocode is None:
+            raise ArtError(502, _GEOCODER_UNREACHABLE)
+        city, qualifier = _split_query(query)
+        if not city:
+            raise ArtError(400, _no_place_message(query))
+        url = _GEOCODE_URL + "?" + urllib.parse.urlencode(
+            {"name": city, "count": 10, "language": "en", "format": "json"}
+        )
+        results = _geocode_results(self._geocode(url))
+        if results is None:
+            raise ArtError(502, _GEOCODER_UNREACHABLE)
+        chosen = _choose_place(results, qualifier)
+        if chosen is None:
+            raise ArtError(400, _no_place_message(query))
+        location = _build_location(chosen)
+        if location is None:
+            # The geocoder matched a result but it lacked a usable name,
+            # coordinates, or timezone: treat it as an unusable response.
+            raise ArtError(502, _GEOCODER_UNREACHABLE)
+        return location
 
     # -- pin ---------------------------------------------------------------- #
 
@@ -315,6 +520,7 @@ class FrameControl:
                     "weekday": list(DEFAULT_MORNING_WEATHER["weekday"]),
                     "weekend": list(DEFAULT_MORNING_WEATHER["weekend"]),
                 },
+                "weather_location": None,
             },
             "pin": None,
             "seq": 0,
@@ -351,6 +557,9 @@ class FrameControl:
             )
             state["settings"]["morning_weather"] = self._normalize_morning_weather(
                 settings.get("morning_weather")
+            )
+            state["settings"]["weather_location"] = _normalize_weather_location(
+                settings.get("weather_location")
             )
         pin = data.get("pin")
         if isinstance(pin, dict) and pin.get("what") in WHATS:
@@ -425,3 +634,172 @@ class FrameControl:
     @staticmethod
     def _iso(moment: datetime) -> str:
         return moment.astimezone().isoformat()
+
+
+# --------------------------------------------------------------------------- #
+# Geocoding helpers (module-level, pure except for the injected fetch)
+# --------------------------------------------------------------------------- #
+
+
+def _split_query(query: str) -> tuple[str, Optional[str]]:
+    """Split ``City, Qualifier`` at the first comma into city and qualifier.
+
+    The city is the only part that is searched for (the term that leaves the
+    LAN); the qualifier, when present and non-blank, narrows the results on the
+    hub. No comma, or a blank qualifier, yields ``(city, None)``.
+    """
+    city, sep, rest = query.partition(",")
+    city = city.strip()
+    if not sep:
+        return city, None
+    qualifier = rest.strip()
+    return city, (qualifier or None)
+
+
+def _no_place_message(query: str) -> str:
+    return f'No place found for "{query}". Try "City, State".'
+
+
+def _geocode_results(body: Optional[bytes]) -> Optional[list]:
+    """The results list from a geocoder body, distinguishing failure from no-match.
+
+    Returns ``None`` when the fetch failed (no body) or the body did not parse as
+    a JSON object or carried a non-list ``results`` (a bad response the caller
+    turns into a 502). A parsed object with no ``results`` key, or an empty list,
+    is a clean search that matched nothing, returned as ``[]`` (a 400 no-match).
+    """
+    if body is None:
+        return None
+    try:
+        parsed = json.loads(body)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    results = parsed.get("results")
+    if results is None:
+        return []
+    if not isinstance(results, list):
+        return None
+    return results
+
+
+def _choose_place(results: list, qualifier: Optional[str]):
+    """Pick one place from the results, preferring a qualifier match.
+
+    With a qualifier, results whose state or country matches it are preferred and
+    the most populous of those wins; with no qualifier, or when none match, the
+    most populous result overall wins. Returns ``None`` only when there is no
+    usable result at all.
+    """
+    places = [r for r in results if isinstance(r, dict)]
+    if not places:
+        return None
+    if qualifier:
+        matched = [r for r in places if _matches_qualifier(r, qualifier)]
+        if matched:
+            return _most_populous(matched)
+    return _most_populous(places)
+
+
+def _most_populous(places: list) -> dict:
+    """The most populous place, keeping input order as the tie-break."""
+    return max(places, key=_population)
+
+
+def _population(place: dict) -> int:
+    value = place.get("population")
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
+def _matches_qualifier(place: dict, qualifier: str) -> bool:
+    """Whether a place's state or country matches a typed qualifier.
+
+    Matches case-insensitively against the admin1 (state or region) name, the
+    country name, the ISO country code, and, for a US state, its postal code
+    (Open-Meteo returns the full state name, so the hub maps "CA" to
+    "California").
+    """
+    wanted = qualifier.strip().casefold()
+    if not wanted:
+        return False
+    candidates: list[str] = []
+    admin1 = place.get("admin1")
+    if isinstance(admin1, str) and admin1:
+        candidates.append(admin1)
+        code = _US_STATE_NAME_TO_CODE.get(admin1.casefold())
+        if code:
+            candidates.append(code)
+    for key in ("country", "country_code"):
+        value = place.get(key)
+        if isinstance(value, str) and value:
+            candidates.append(value)
+    return any(candidate.casefold() == wanted for candidate in candidates)
+
+
+def _build_location(place: dict) -> Optional[dict]:
+    """The stored location for a chosen place, or ``None`` if it is unusable.
+
+    The display name is the place name with its state and country appended
+    ("San Diego, California, United States"); coordinates are rounded to two
+    decimals (city level); the timezone is the result's IANA name. A result that
+    lacks a usable name, coordinates, or timezone yields ``None``.
+    """
+    name = place.get("name")
+    latitude = place.get("latitude")
+    longitude = place.get("longitude")
+    timezone = place.get("timezone")
+    if not isinstance(name, str) or not name:
+        return None
+    if not _is_number(latitude) or not _is_number(longitude):
+        return None
+    if not isinstance(timezone, str) or not timezone:
+        return None
+    parts = [name]
+    for key in ("admin1", "country"):
+        value = place.get(key)
+        if isinstance(value, str) and value:
+            parts.append(value)
+    return {
+        "name": ", ".join(parts),
+        "latitude": round(float(latitude), 2),
+        "longitude": round(float(longitude), 2),
+        "timezone": timezone,
+    }
+
+
+def _normalize_weather_location(value) -> Optional[dict]:
+    """Coerce a stored weather location into a trusted value, or ``None``.
+
+    The value was validated on the way in, but the file could be hand-edited or
+    written by an older version, so a stored location is accepted only when it
+    carries a non-empty name, numeric coordinates, and a non-empty timezone;
+    anything else reads as no location set.
+    """
+    if not isinstance(value, dict):
+        return None
+    name = value.get("name")
+    latitude = value.get("latitude")
+    longitude = value.get("longitude")
+    timezone = value.get("timezone")
+    if not isinstance(name, str) or not name:
+        return None
+    if not _is_number(latitude) or not _is_number(longitude):
+        return None
+    if not isinstance(timezone, str) or not timezone:
+        return None
+    return {
+        "name": name,
+        "latitude": round(float(latitude), 2),
+        "longitude": round(float(longitude), 2),
+        "timezone": timezone,
+    }
+
+
+def _is_number(value) -> bool:
+    """A real number, excluding ``bool`` (an ``int`` subclass)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)

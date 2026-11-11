@@ -51,6 +51,9 @@ import {
   validateFrameSettings,
   framePinBody,
   frameUnpinBody,
+  weatherLocationLabel,
+  weatherSaveBody,
+  weatherClearBody,
 } from "./rooms-model.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -136,6 +139,11 @@ const els = {
   fsWeekendEnd: document.getElementById("fs-weekend-end"),
   fsSave: document.getElementById("fs-save"),
   fsError: document.getElementById("fs-error"),
+  fsWeatherCurrent: document.getElementById("fs-weather-current"),
+  fsWeatherInput: document.getElementById("fs-weather-input"),
+  fsWeatherSave: document.getElementById("fs-weather-save"),
+  fsWeatherClear: document.getElementById("fs-weather-clear"),
+  fsWeatherError: document.getElementById("fs-weather-error"),
 
   npSection: document.getElementById("now-playing"),
   npArtImg: document.getElementById("np-art-img"),
@@ -704,6 +712,14 @@ function wireFrameControl() {
   els.pinSet.addEventListener("click", pinCurrent);
   els.pinUnpin.addEventListener("click", unpinFrame);
   els.fsSave.addEventListener("click", saveFrameTimes);
+  els.fsWeatherSave.addEventListener("click", saveWeatherCity);
+  els.fsWeatherClear.addEventListener("click", clearWeatherCity);
+  els.fsWeatherInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      saveWeatherCity();
+    }
+  });
   els.fsMorningEnabled.addEventListener("change", () => {
     els.fsMorningTimes.classList.toggle("disabled", !els.fsMorningEnabled.checked);
   });
@@ -788,6 +804,11 @@ function renderFrameSettings(settings) {
   els.fsWeekdayEnd.value = settings.morning_weather.weekday[1];
   els.fsWeekendStart.value = settings.morning_weather.weekend[0];
   els.fsWeekendEnd.value = settings.morning_weather.weekend[1];
+
+  // The weather city shows the hub's resolved display name (or "Not set"). The
+  // input is left as the owner typed it, so a refresh after an unrelated change
+  // never clears a half-typed city.
+  els.fsWeatherCurrent.textContent = weatherLocationLabel(settings.weather_location);
 }
 
 // Toggle one now-playing kind and save, like the rotation folder chips: the
@@ -878,6 +899,51 @@ function showFsError(message) {
 function clearFsError() {
   els.fsError.hidden = true;
   els.fsError.textContent = "";
+}
+
+// Geocode and save the typed weather city. The body goes straight to
+// /api/frame/settings (not through the times validator, which only knows the
+// other keys): the hub geocodes the city, and on a bad city or an unreachable
+// geocoder its own error text is shown in place. Only the typed city name leaves
+// the network; the hub sends just the city part to the geocoder.
+async function saveWeatherCity() {
+  clearWeatherError();
+  const body = weatherSaveBody(els.fsWeatherInput.value);
+  if (!body) {
+    showWeatherError('Enter a city, like "San Diego, CA".');
+    return;
+  }
+  const result = await postApi("/api/frame/settings", body);
+  if (!result.ok) {
+    showWeatherError(result.error);
+    return;
+  }
+  els.fsWeatherInput.value = "";
+  showToast("Weather city saved.");
+  await refreshFrameControl();
+}
+
+// Clear the weather city, so the frame falls back to its own local config.
+async function clearWeatherCity() {
+  clearWeatherError();
+  const result = await postApi("/api/frame/settings", weatherClearBody());
+  if (!result.ok) {
+    showWeatherError(result.error);
+    return;
+  }
+  els.fsWeatherInput.value = "";
+  showToast("Weather city cleared.");
+  await refreshFrameControl();
+}
+
+function showWeatherError(message) {
+  els.fsWeatherError.textContent = message;
+  els.fsWeatherError.hidden = false;
+}
+
+function clearWeatherError() {
+  els.fsWeatherError.hidden = true;
+  els.fsWeatherError.textContent = "";
 }
 
 // --------------------------------------------------------------------------- //

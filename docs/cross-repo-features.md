@@ -229,8 +229,9 @@ is whatever is on the House stream right now, from either input. Shape:
 paused (or the House stream idle) for 10 minutes; before that it stays with
 `status: "paused"`. `status` is `"playing"` or `"paused"`; `source` is `"airplay"` or
 `"bluetooth"`; `kind` is `"music"` or `"long_form"`. `genre` is a list of strings from
-the stream metadata (the hub's additive field), or `null` when unknown; it is additive and
-the nightstand frame ignores it (the room-picker page uses it to route the "Open in" sheet).
+the stream metadata (the hub's additive field), or `null` when unknown; it is additive, and the
+nightstand frame uses it with `kind` to derive the now-playing category for the kinds filter (the
+room-picker page uses it to route the "Open in" sheet).
 `artist`, `album`, `duration`, `position`, `position_at`, and `art_url` may each be `null`. `art_url` is always a
 same-origin `/cover/...` path on the hub (or `null`), never an absolute or off-origin URL.
 `podcast_id` is the matched show's iTunes `collectionId` (a positive integer), filled in
@@ -354,7 +355,10 @@ it is rebuilt from persists at `/var/lib/snaphouse/artadmin/frame-control.json` 
     "quiet_hours": {"start": "22:00", "end": "06:00"},
     "morning_weather": {"enabled": true,
                         "weekday": ["06:00", "08:30"],
-                        "weekend": ["07:00", "09:00"]}
+                        "weekend": ["07:00", "09:00"]},
+    "weather_location": {"name": "San Diego, California, United States",
+                         "latitude": 32.72, "longitude": -117.16,
+                         "timezone": "America/Los_Angeles"}
   },
   "pin": null
 }
@@ -364,7 +368,14 @@ it is rebuilt from persists at `/var/lib/snaphouse/artadmin/frame-control.json` 
 now-playing screen takes the frame only when the derived category is in it. `quiet_hours.start`
 and `.end` are `HH:MM` and may wrap past midnight (22:00 to 06:00). `morning_weather` carries an
 `enabled` flag and a `weekday` and `weekend` window, each `[start, end]` in `HH:MM` with start
-before end. `pin` is `null` or
+before end. `weather_location` is `null` (no city set) or
+`{"name", "latitude", "longitude", "timezone"}`: a display name, city-centre coordinates rounded
+to two decimals (city level), and an IANA timezone name, resolved on the hub from a typed city
+through Open-Meteo's keyless geocoding API (`geocoding-api.open-meteo.com`). The write takes
+`{"weather_location": {"query": "San Diego, CA"}}` (the hub geocodes it) or
+`{"weather_location": null}` (clears it); only the typed place name leaves the LAN. A bad city is a
+400 and an unreachable geocoder a 502, each a JSON error. When it is present and valid the frame
+uses it for the forecast; otherwise the frame falls back to its own local config. `pin` is `null` or
 `{"what": "art" | "weather" | "now_playing", "piece": id | null, "until": iso | null, "seq": n,
 "set_at": iso}`. `piece` is the art id captured when an `art` pin was set (the piece then on the
 frame, read from the republished `art-history.json`), or `null`; `until` is an ISO-8601 stamp with

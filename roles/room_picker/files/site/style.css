@@ -1305,6 +1305,35 @@ a.row-title {
   gap: 10px 14px;
 }
 
+.weather-current {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.weather-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.weather-row .text {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+
+/* A secondary action (Clear) that reads as lighter than the primary Save. */
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.btn-ghost:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+
 .fs-error {
   margin: 0;
   color: var(--red-text);
