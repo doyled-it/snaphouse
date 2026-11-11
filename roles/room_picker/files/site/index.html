@@ -17,15 +17,16 @@
   </head>
   <body>
     <header class="topbar">
-      <button id="menu-button" class="menu-button" type="button" aria-haspopup="dialog" aria-label="Open sections">
+      <button id="menu-button" class="menu-button" type="button" aria-haspopup="dialog" aria-label="Open the menu">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
         </svg>
       </button>
       <h1 class="house">House</h1>
+      <span id="screen-title" class="screen-title" aria-hidden="true">Listen</span>
     </header>
 
-    <dialog id="drawer" class="drawer" aria-label="Jump to a section">
+    <dialog id="drawer" class="drawer" aria-label="Screens">
       <nav id="drawer-nav" class="drawer-nav"></nav>
     </dialog>
 
@@ -33,142 +34,233 @@
     <p id="connection" class="banner connection" role="status" hidden></p>
 
     <main>
-      <!-- 1. The frame mirror: a live copy of what the bedside e-ink frame shows. -->
-      <section id="frame" class="section" aria-labelledby="frame-h" hidden>
-        <h2 id="frame-h" class="section-h">Frame</h2>
-
-        <div id="mirror" class="mirror" hidden>
-          <div class="mat">
-            <img id="mirror-img" class="mirror-img" alt="What the frame is showing now" />
-          </div>
-          <p id="mirror-updated" class="mirror-updated" hidden></p>
-          <p id="mirror-caption" class="mirror-caption" hidden></p>
-        </div>
-
-        <div id="frame-caption" class="frame-caption" hidden></div>
-
-        <div id="frame-controls" class="frame-controls" hidden>
-          <button id="frame-back" class="btn" type="button">Back</button>
-          <button id="frame-next" class="btn" type="button">Next piece</button>
-          <details id="frame-menu" class="menu">
-            <summary class="btn menu-summary">More</summary>
-            <div class="menu-body">
-              <button id="frame-show" class="menu-item" type="button">Show in library</button>
-              <button id="frame-delete" class="menu-item danger" type="button">Delete this piece</button>
+      <!-- Listen: what is playing on the House stream, the rooms, and the plays. -->
+      <section class="screen" id="screen-listen" aria-label="Listen">
+        <!-- Now playing on the House stream. -->
+        <section id="now-playing" class="section" aria-labelledby="np-h" hidden>
+          <h2 id="np-h" class="section-h">Now playing</h2>
+          <div class="np">
+            <div class="np-cover">
+              <img id="np-art-img" class="np-art-img" alt="" hidden />
+              <div id="np-art-ph" class="np-art-ph" aria-hidden="true"></div>
             </div>
-          </details>
-        </div>
-        <p id="frame-hint" class="hint" hidden>The frame takes about 30 seconds to change.</p>
+            <div class="np-info">
+              <p id="np-title" class="np-title"></p>
+              <p id="np-artist" class="np-artist" hidden></p>
+              <p id="np-album" class="np-album" hidden></p>
+              <div id="np-progress" class="np-progress" hidden>
+                <div class="np-track"><div id="np-fill" class="np-fill"></div></div>
+                <div class="np-times">
+                  <span id="np-elapsed" class="np-elapsed"></span>
+                  <span id="np-ends" class="np-ends" hidden></span>
+                </div>
+              </div>
+              <p id="np-status" class="np-status" hidden>Paused</p>
+              <p id="np-rooms" class="np-rooms" hidden></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- The rooms, a plain list of rows. -->
+        <section id="rooms-section" class="section" aria-labelledby="rooms-h">
+          <h2 id="rooms-h" class="section-h">Rooms</h2>
+          <ul id="rooms" class="rooms"></ul>
+        </section>
+
+        <!-- The play history; a tap opens the "Open in" sheet. -->
+        <section id="play-history-section" class="section" aria-labelledby="ph-h" hidden>
+          <h2 id="ph-h" class="section-h">Play history</h2>
+          <ul id="np-history-list" class="rows"></ul>
+        </section>
       </section>
 
-      <!-- 2. Now playing on the House stream. -->
-      <section id="now-playing" class="section" aria-labelledby="np-h" hidden>
-        <h2 id="np-h" class="section-h">Now playing</h2>
-        <div class="np">
-          <div class="np-cover">
-            <img id="np-art-img" class="np-art-img" alt="" hidden />
-            <div id="np-art-ph" class="np-art-ph" aria-hidden="true"></div>
+      <!-- Frame: the live mirror, the controls, pinning, and what the frame has shown. -->
+      <section class="screen" id="screen-frame" aria-label="Frame" hidden>
+        <section id="frame" class="section" aria-labelledby="frame-h">
+          <h2 id="frame-h" class="section-h">Frame</h2>
+
+          <div id="mirror" class="mirror" hidden>
+            <div class="mat">
+              <img id="mirror-img" class="mirror-img" alt="What the frame is showing now" />
+            </div>
+            <p id="mirror-updated" class="mirror-updated" hidden></p>
+            <p id="mirror-caption" class="mirror-caption" hidden></p>
           </div>
-          <div class="np-info">
-            <p id="np-title" class="np-title"></p>
-            <p id="np-artist" class="np-artist" hidden></p>
-            <p id="np-album" class="np-album" hidden></p>
-            <div id="np-progress" class="np-progress" hidden>
-              <div class="np-track"><div id="np-fill" class="np-fill"></div></div>
-              <div class="np-times">
-                <span id="np-elapsed" class="np-elapsed"></span>
-                <span id="np-ends" class="np-ends" hidden></span>
+
+          <div id="frame-caption" class="frame-caption" hidden></div>
+
+          <div id="frame-controls" class="frame-controls" hidden>
+            <button id="frame-back" class="btn" type="button">Back</button>
+            <button id="frame-next" class="btn" type="button">Next piece</button>
+            <details id="frame-menu" class="menu">
+              <summary class="btn menu-summary">More</summary>
+              <div class="menu-body">
+                <button id="frame-show" class="menu-item" type="button">Show in library</button>
+                <button id="frame-delete" class="menu-item danger" type="button">Delete this piece</button>
+              </div>
+            </details>
+          </div>
+          <p id="frame-hint" class="hint" hidden>The frame takes about 30 seconds to change.</p>
+        </section>
+
+        <!-- Pinning: keep one thing on the frame for a while, or until unpinned. -->
+        <section id="pin" class="section" aria-labelledby="pin-h" hidden>
+          <h2 id="pin-h" class="section-h">Pin</h2>
+          <p id="pin-status" class="pin-status" role="status" hidden></p>
+          <div id="pin-current" class="pin-current" hidden>
+            <button id="pin-unpin" class="btn danger" type="button">Unpin</button>
+          </div>
+          <div id="pin-form" class="pin-form">
+            <label class="field">Keep
+              <select id="pin-what" class="select">
+                <option value="art">this art piece</option>
+                <option value="weather">the weather</option>
+                <option value="now_playing">now playing</option>
+              </select>
+            </label>
+            <label class="field">for
+              <select id="pin-duration" class="select">
+                <option value="1h">1 hour</option>
+                <option value="4h">4 hours</option>
+                <option value="morning">until morning</option>
+                <option value="forever">until I unpin</option>
+              </select>
+            </label>
+            <button id="pin-set" class="btn" type="button">Pin</button>
+          </div>
+          <p id="pin-unavailable" class="empty" hidden>
+            Frame settings are not available right now. The frame is running on its own.
+          </p>
+        </section>
+
+        <!-- The frame's art history, each entry deletable. -->
+        <section id="art-history-section" class="section" aria-labelledby="ah-h" hidden>
+          <h2 id="ah-h" class="section-h">Art history</h2>
+          <ul id="art-history" class="rows"></ul>
+        </section>
+      </section>
+
+      <!-- Art: the library, folders, upload, and trash. -->
+      <section class="screen" id="screen-art" aria-label="Art" hidden>
+        <!-- The library, collapsed and paged. -->
+        <section id="library" class="section" aria-labelledby="lib-h" hidden>
+          <h2 id="lib-h" class="section-h">Library</h2>
+          <details id="library-details" class="library">
+            <summary class="library-summary">
+              <span id="library-count" class="library-count">Library</span>
+            </summary>
+            <div class="library-body">
+              <label class="field">Show
+                <select id="art-folder-filter" class="select"></select>
+              </label>
+              <ul id="art-grid" class="grid"></ul>
+              <p id="art-grid-empty" class="empty" hidden>No pieces here yet.</p>
+              <div id="library-pager" class="pager" hidden>
+                <button id="lib-prev" class="btn" type="button">Previous</button>
+                <span id="lib-page" class="pager-label" role="status"></span>
+                <button id="lib-next" class="btn" type="button">Next</button>
               </div>
             </div>
-            <p id="np-status" class="np-status" hidden>Paused</p>
-            <p id="np-rooms" class="np-rooms" hidden></p>
-          </div>
-        </div>
-      </section>
+          </details>
+        </section>
 
-      <!-- 3. The rooms, a plain list of rows. -->
-      <section id="rooms-section" class="section" aria-labelledby="rooms-h">
-        <h2 id="rooms-h" class="section-h">Rooms</h2>
-        <ul id="rooms" class="rooms"></ul>
-      </section>
-
-      <!-- 4. The library, collapsed and paged. -->
-      <section id="library" class="section" aria-labelledby="lib-h" hidden>
-        <h2 id="lib-h" class="section-h">Library</h2>
-        <details id="library-details" class="library">
-          <summary class="library-summary">
-            <span id="library-count" class="library-count">Library</span>
-          </summary>
-          <div class="library-body">
-            <label class="field">Show
-              <select id="art-folder-filter" class="select"></select>
+        <!-- Upload, with folder management. -->
+        <section id="upload" class="section" aria-labelledby="up-h" hidden>
+          <h2 id="up-h" class="section-h">Upload</h2>
+          <div class="upload-row">
+            <label class="field">Add to
+              <select id="art-upload-folder" class="select"></select>
             </label>
-            <ul id="art-grid" class="grid"></ul>
-            <p id="art-grid-empty" class="empty" hidden>No pieces here yet.</p>
-            <div id="library-pager" class="pager" hidden>
-              <button id="lib-prev" class="btn" type="button">Previous</button>
-              <span id="lib-page" class="pager-label" role="status"></span>
-              <button id="lib-next" class="btn" type="button">Next</button>
+            <label class="btn file-btn">
+              Choose images
+              <input id="art-upload-input" class="file-input" type="file" accept="image/*" multiple />
+            </label>
+          </div>
+          <ul id="art-upload-progress" class="upload-progress"></ul>
+
+          <details id="art-folders" class="folders">
+            <summary class="sub-h">Folders</summary>
+            <form id="art-folder-create" class="folder-create">
+              <input id="art-folder-name" class="text" type="text" placeholder="New folder name"
+                     maxlength="40" aria-label="New folder name" />
+              <button class="btn" type="submit">Create</button>
+            </form>
+            <ul id="art-folder-list" class="folder-list"></ul>
+          </details>
+        </section>
+
+        <!-- Trash, restorable for 30 days. -->
+        <section id="trash" class="section" aria-labelledby="tr-h" hidden>
+          <h2 id="tr-h" class="section-h">Trash</h2>
+          <ul id="art-trash-list" class="rows"></ul>
+          <p id="art-trash-empty" class="empty" hidden>Trash is empty.</p>
+        </section>
+      </section>
+
+      <!-- Settings: what takes the frame, rotation, quiet hours, morning weather. -->
+      <section class="screen" id="screen-settings" aria-label="Settings" hidden>
+        <!-- Now playing on the frame: one toggle per kind of audio. -->
+        <section id="frame-settings" class="section" aria-labelledby="fs-h">
+          <h2 id="fs-h" class="section-h">Now playing on the frame</h2>
+          <p id="fs-unavailable" class="empty" hidden>
+            Frame settings are not available right now. The frame is running on its own.
+          </p>
+          <div id="fs-body" class="fs-body" hidden>
+            <p class="settings-note">Choose which kinds of audio take over the frame while they play.</p>
+            <div id="fs-kinds" class="chips" role="group" aria-label="Kinds that take the frame"></div>
+
+            <div class="settings-group">
+              <span class="field-label">Quiet hours</span>
+              <div class="time-row">
+                <label class="field">From
+                  <input id="fs-quiet-start" class="text time-input" type="time" />
+                </label>
+                <label class="field">to
+                  <input id="fs-quiet-end" class="text time-input" type="time" />
+                </label>
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <label class="switch-field">
+                <input id="fs-morning-enabled" type="checkbox" class="switch-input" />
+                <span class="field-label">Morning weather</span>
+              </label>
+              <div id="fs-morning-times" class="morning-times">
+                <div class="time-row">
+                  <span class="time-row-label">Weekdays</span>
+                  <input id="fs-weekday-start" class="text time-input" type="time" aria-label="Weekday morning start" />
+                  <span class="time-row-to">to</span>
+                  <input id="fs-weekday-end" class="text time-input" type="time" aria-label="Weekday morning end" />
+                </div>
+                <div class="time-row">
+                  <span class="time-row-label">Weekends</span>
+                  <input id="fs-weekend-start" class="text time-input" type="time" aria-label="Weekend morning start" />
+                  <span class="time-row-to">to</span>
+                  <input id="fs-weekend-end" class="text time-input" type="time" aria-label="Weekend morning end" />
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-actions">
+              <button id="fs-save" class="btn" type="button">Save frame settings</button>
+              <p id="fs-error" class="fs-error" role="alert" hidden></p>
             </div>
           </div>
-        </details>
-      </section>
+        </section>
 
-      <!-- 5. The frame's art history, each entry deletable. -->
-      <section id="art-history-section" class="section" aria-labelledby="ah-h" hidden>
-        <h2 id="ah-h" class="section-h">Art history</h2>
-        <ul id="art-history" class="rows"></ul>
-      </section>
-
-      <!-- 6. The play history; a tap opens the "Open in" sheet. -->
-      <section id="play-history-section" class="section" aria-labelledby="ph-h" hidden>
-        <h2 id="ph-h" class="section-h">Play history</h2>
-        <ul id="np-history-list" class="rows"></ul>
-      </section>
-
-      <!-- 7. Rotation settings. -->
-      <section id="rotation" class="section" aria-labelledby="rot-h" hidden>
-        <h2 id="rot-h" class="section-h">Rotation</h2>
-        <p id="art-rotation-summary" class="rotation-summary"></p>
-        <label class="field">Change every
-          <select id="art-interval" class="select"></select>
-        </label>
-        <div class="chips-field">
-          <span class="field-label">In rotation</span>
-          <div id="art-folder-chips" class="chips" role="group" aria-label="Folders in rotation"></div>
-        </div>
-      </section>
-
-      <!-- 8. Upload, with folder management. -->
-      <section id="upload" class="section" aria-labelledby="up-h" hidden>
-        <h2 id="up-h" class="section-h">Upload</h2>
-        <div class="upload-row">
-          <label class="field">Add to
-            <select id="art-upload-folder" class="select"></select>
+        <!-- Rotation: how often the frame changes art, and which folders rotate. -->
+        <section id="rotation" class="section" aria-labelledby="rot-h" hidden>
+          <h2 id="rot-h" class="section-h">Rotation</h2>
+          <p id="art-rotation-summary" class="rotation-summary"></p>
+          <label class="field">Change every
+            <select id="art-interval" class="select"></select>
           </label>
-          <label class="btn file-btn">
-            Choose images
-            <input id="art-upload-input" class="file-input" type="file" accept="image/*" multiple />
-          </label>
-        </div>
-        <ul id="art-upload-progress" class="upload-progress"></ul>
-
-        <details id="art-folders" class="folders">
-          <summary class="sub-h">Folders</summary>
-          <form id="art-folder-create" class="folder-create">
-            <input id="art-folder-name" class="text" type="text" placeholder="New folder name"
-                   maxlength="40" aria-label="New folder name" />
-            <button class="btn" type="submit">Create</button>
-          </form>
-          <ul id="art-folder-list" class="folder-list"></ul>
-        </details>
-      </section>
-
-      <!-- 9. Trash, restorable for 30 days. -->
-      <section id="trash" class="section" aria-labelledby="tr-h" hidden>
-        <h2 id="tr-h" class="section-h">Trash</h2>
-        <ul id="art-trash-list" class="rows"></ul>
-        <p id="art-trash-empty" class="empty" hidden>Trash is empty.</p>
+          <div class="chips-field">
+            <span class="field-label">In rotation</span>
+            <div id="art-folder-chips" class="chips" role="group" aria-label="Folders in rotation"></div>
+          </div>
+        </section>
       </section>
     </main>
 
