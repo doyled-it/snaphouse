@@ -54,6 +54,12 @@ import {
   weatherLocationLabel,
   weatherSaveBody,
   weatherClearBody,
+  selectedFrameFrom,
+  frameIdsFrom,
+  frameList,
+  frameUrls,
+  artCommandBody,
+  frameQuietHoursBody,
 } from "./rooms-model.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -102,6 +108,7 @@ const els = {
   connection: document.getElementById("connection"),
 
   frame: document.getElementById("frame"),
+  frameSwitcher: document.getElementById("frame-switcher"),
   mirror: document.getElementById("mirror"),
   mirrorImg: document.getElementById("mirror-img"),
   mirrorUpdated: document.getElementById("mirror-updated"),
@@ -144,6 +151,16 @@ const els = {
   fsWeatherSave: document.getElementById("fs-weather-save"),
   fsWeatherClear: document.getElementById("fs-weather-clear"),
   fsWeatherError: document.getElementById("fs-weather-error"),
+
+  frameQuiet: document.getElementById("frame-quiet"),
+  fqFrameField: document.getElementById("fq-frame-field"),
+  fqFrame: document.getElementById("fq-frame"),
+  fqMode: document.getElementById("fq-mode"),
+  fqCustom: document.getElementById("fq-custom"),
+  fqStart: document.getElementById("fq-start"),
+  fqEnd: document.getElementById("fq-end"),
+  fqSave: document.getElementById("fq-save"),
+  fqError: document.getElementById("fq-error"),
 
   npSection: document.getElementById("now-playing"),
   npArtImg: document.getElementById("np-art-img"),
@@ -216,9 +233,15 @@ const state = {
   nowTrack: null,
   npArtSrc: null,
 
-  // The frame mirror state (mirrorState result) and the cover-busting src set.
+  // The frame mirror state (mirrorState result) for the chosen frame and the
+  // cover-busting src set.
   mirror: { visible: false, updatedLabel: "" },
   mirrorSrc: null,
+  // The chosen frame (the "#frame/<id>" hash; the first frame by default) and
+  // each frame's parsed frame.json, so the switcher can mark a frame offline when
+  // its mirror is missing (its Inky not yet installed, Review Focus 1).
+  selectedFrame: "nightstand",
+  mirrors: {},
   // What the frame is actually showing (mirrorCaption result): art, or a screen
   // that has taken the panel over. When it is not art, the mirror carries a plain
   // caption and the art piece below is labelled as the next piece in rotation.
@@ -240,12 +263,18 @@ const state = {
   toastTimer: null,
 
   // The current screen (hash-routed), and the hub's parsed /frame-control.json
-  // (settings and the current pin), null until read once. `available` is false
-  // when the document is missing or malformed, so the page shows the frame
-  // settings as unknown rather than wrong.
+  // (shared settings plus each frame's quiet hours and pin), null until read
+  // once. `available` is false when the document is missing or malformed, so the
+  // page shows the frame settings as unknown rather than wrong.
   screen: "listen",
   frameControl: null,
   fsKindsBuilt: false,
+  // A fingerprint of the frame context the mirror and history were last fetched
+  // for (the legacy flag, the known frame ids, and the chosen frame). When it
+  // changes, the per-frame URLs changed, so those must be re-fetched even if the
+  // chosen frame id did not: on first load the document arrives after the first
+  // fetch, flipping legacy off and switching to the /frames/<id>/ paths.
+  frameContextKey: null,
 };
 
 // The JSON-RPC endpoint and its WebSocket twin, both relative to this page so
@@ -266,11 +295,14 @@ async function start() {
   wireChrome();
   wireArtManager();
   wireFrameControl();
+  resolveSelectedFrame();
   showScreen(screenFromHash(window.location.hash));
   refreshHealth();
-  refreshFrame();
-  refreshFrameControl();
-  refreshArt();
+  // Read the frame-control document first (it sets the legacy flag and the frame
+  // list), then fetch the mirror and history with the right per-frame URLs. The
+  // control load kicks its own frame/art refresh when the context first resolves,
+  // so this is the single initial fetch, with no legacy-then-per-frame flip.
+  await refreshFrameControl();
   refreshLibrary();
   refreshNowPlaying();
   refreshHistory();
@@ -283,9 +315,9 @@ async function start() {
   setInterval(refreshHistory, HISTORY_MS);
   setInterval(tickNowPlaying, TICK_MS);
 
-  // The URL hash is the screen: Back, forward, and a shared link all land on
-  // the right one.
-  window.addEventListener("hashchange", () => showScreen(screenFromHash(window.location.hash)));
+  // The URL hash is the screen and the chosen frame: Back, forward, and a shared
+  // link all land on the right one.
+  window.addEventListener("hashchange", onHashChange);
 
   // A phone that was asleep comes back with a dead socket and stale cards. On
   // return to the foreground, reconnect if needed, re-read the status, and
@@ -364,6 +396,61 @@ function showScreen(name) {
   }
   els.screenTitle.textContent = SCREEN_LABELS[screen];
   window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+// The known frame ids (from the parsed frame-control document), and whether the
+// page is on the old single-frame contract (legacy): both default to a
+// nightstand-only view until the document is read once, so the page works before
+// the first fetch and if the hub has not shipped the feature.
+function frameIds() {
+  return frameIdsFrom(state.frameControl);
+}
+
+function controlLegacy() {
+  return state.frameControl ? state.frameControl.legacy : true;
+}
+
+// Resolve the chosen frame from the hash, the known frames, and the current
+// selection, and keep it on state. Returns true when the selection changed, so
+// a caller can re-render and re-fetch for the new frame. An unknown id in the
+// hash never selects an arbitrary frame (Review Focus 5).
+function resolveSelectedFrame() {
+  const next = selectedFrameFrom(window.location.hash, frameIds(), state.selectedFrame);
+  const resolved = next || frameIds()[0];
+  const changed = resolved !== state.selectedFrame;
+  state.selectedFrame = resolved;
+  return changed;
+}
+
+// Pick a frame in place (not through the hash), for a selector on a screen other
+// than the Frame screen. The id comes from a control the page built from the
+// known frames, but it is checked anyway so an unexpected value never selects an
+// arbitrary frame. The choice persists and every per-frame view follows it.
+function selectFrame(id) {
+  if (!frameIds().includes(id) || id === state.selectedFrame) {
+    return;
+  }
+  state.selectedFrame = id;
+  renderFrameSwitcher();
+  renderFrameControl();
+  if (frameContextChanged()) {
+    refreshFrame();
+    refreshArt();
+  }
+}
+
+// The hash drives both the screen and the chosen frame. When the frame changes,
+// re-render the switcher and the frame-scoped controls and re-fetch that frame's
+// mirror and history, so every per-frame view follows the chosen frame.
+function onHashChange() {
+  showScreen(screenFromHash(window.location.hash));
+  resolveSelectedFrame();
+  renderFrameSwitcher();
+  renderFrameControl();
+  if (frameContextChanged()) {
+    refreshFrame();
+    refreshArt();
+  }
 }
 
 function openDrawer() {
@@ -627,32 +714,93 @@ async function refreshHealth() {
 }
 
 // --------------------------------------------------------------------------- //
-// The frame mirror: a live copy of the bedside e-ink frame, from the hub's
-// same-origin /frame.json (timestamp) and /frame.png (the image it sent). A
-// missing or malformed document (a 404 until the hub republishes, or a bad body)
-// hides the mirror; a transient hub error leaves the last render in place.
+// The frame mirror: a live copy of a frame, from the hub's same-origin
+// /frames/<id>/frame.json (timestamp) and frame.png (the image it sent). Each
+// frame's mirror is fetched so the switcher can mark a frame offline when its
+// mirror is missing (its Inky not yet installed, Review Focus 1); the chosen
+// frame's mirror is shown. A missing or malformed document (a 404 until the hub
+// republishes, or a bad body) hides that frame's mirror and marks it offline; a
+// transient hub error leaves the last reading in place. On the old single-frame
+// contract (legacy) the nightstand's mirror is read from the old single paths.
 // --------------------------------------------------------------------------- //
 
 async function refreshFrame() {
-  let json = null;
-  try {
-    const response = await fetch("frame.json", { cache: "no-store" });
-    if (response.ok) {
-      json = safeJsonParse(await response.text());
-    }
-  } catch (err) {
-    return;
-  }
-  state.mirror = mirrorState(json, Date.now());
-  state.frameShowing = mirrorCaption(json);
-  renderMirror(json);
+  const ids = frameIds();
+  const legacy = controlLegacy();
+  const mirrors = { ...state.mirrors };
+  await Promise.all(
+    ids.map(async (id) => {
+      const urls = frameUrls(id, legacy);
+      if (!urls) {
+        mirrors[id] = null;
+        return;
+      }
+      try {
+        const response = await fetch(urls.meta, { cache: "no-store" });
+        // A 404 (the frame is offline or not yet installed) reads as no mirror;
+        // a transient network throw keeps the last-good reading below.
+        mirrors[id] = response.ok ? safeJsonParse(await response.text()) : null;
+      } catch (err) {
+        // Keep the last-good mirror for this frame on a transient error.
+      }
+    })
+  );
+  // Keep only the current frames, so a removed frame does not linger offline.
+  state.mirrors = Object.fromEntries(ids.map((id) => [id, mirrors[id] ?? null]));
+  renderFrameSwitcher();
+
+  const selMeta = state.mirrors[state.selectedFrame] ?? null;
+  state.mirror = mirrorState(selMeta, Date.now());
+  state.frameShowing = mirrorCaption(selMeta);
+  renderMirror(selMeta, legacy, state.selectedFrame);
   // The art piece and its label depend on what the frame is showing, so re-render
   // the caption with the latest reading (the piece itself comes from refreshArt).
   renderFrameCaption(state.artCurrent);
   updateSections();
 }
 
-function renderMirror(json) {
+// The frame switcher: one button per known frame, in published order, the chosen
+// one marked, an offline one flagged. Hidden while there is only one frame, so a
+// single-frame house (or the old contract) shows no needless control. A tap sets
+// the hash, which routes through onHashChange so the history entry and the
+// chosen frame stay in step.
+function renderFrameSwitcher() {
+  const rows = frameList(state.frameControl, state.mirrors);
+  if (rows.length <= 1) {
+    els.frameSwitcher.hidden = true;
+    els.frameSwitcher.replaceChildren();
+    return;
+  }
+  els.frameSwitcher.replaceChildren();
+  for (const row of rows) {
+    const button = document.createElement("button");
+    button.className = "frame-tab";
+    button.type = "button";
+    const chosen = row.id === state.selectedFrame;
+    button.classList.toggle("current", chosen);
+    if (chosen) {
+      button.setAttribute("aria-current", "true");
+    }
+    const name = document.createElement("span");
+    name.className = "frame-tab-name";
+    name.textContent = row.label;
+    button.append(name);
+    if (row.offline) {
+      button.classList.add("offline");
+      const flag = document.createElement("span");
+      flag.className = "frame-tab-flag";
+      flag.textContent = "Offline";
+      button.append(flag);
+    }
+    button.addEventListener("click", () => {
+      window.location.hash = `#frame/${row.id}`;
+    });
+    els.frameSwitcher.append(button);
+  }
+  els.frameSwitcher.hidden = false;
+}
+
+function renderMirror(json, legacy, frameId) {
   if (!state.mirror.visible) {
     els.mirror.hidden = true;
     els.mirrorCaption.hidden = true;
@@ -663,12 +811,15 @@ function renderMirror(json) {
   // Bust the cache only when the frame reports a new timestamp, so the mirror
   // follows the frame without reloading the image on every poll.
   const stamp = json && typeof json.updated_at === "string" ? json.updated_at : state.mirror.updatedLabel;
-  const src = `frame.png?v=${encodeURIComponent(stamp)}`;
+  const urls = frameUrls(frameId, legacy);
+  const imageBase = urls ? urls.image : "frame.png";
+  const src = `${imageBase}?v=${encodeURIComponent(stamp)}`;
   if (state.mirrorSrc !== src) {
     els.mirrorImg.src = src;
     state.mirrorSrc = src;
   }
-  // If the image itself 404s (the json landed before the png), hide the mirror.
+  // If the image itself 404s (the json landed before the png), hide the mirror
+  // and mark this frame offline in the switcher.
   els.mirrorImg.onerror = () => {
     els.mirror.hidden = true;
     els.mirrorCaption.hidden = true;
@@ -676,6 +827,8 @@ function renderMirror(json) {
     state.mirror = { visible: false, updatedLabel: "" };
     state.frameShowing = { isArt: true, caption: "", nextLabel: null };
     state.mirrorSrc = null;
+    state.mirrors = { ...state.mirrors, [frameId]: null };
+    renderFrameSwitcher();
     renderFrameCaption(state.artCurrent);
     updateSections();
   };
@@ -723,6 +876,19 @@ function wireFrameControl() {
   els.fsMorningEnabled.addEventListener("change", () => {
     els.fsMorningTimes.classList.toggle("disabled", !els.fsMorningEnabled.checked);
   });
+
+  // Per-frame quiet hours: the mode selector shows the custom times only when
+  // "custom" is chosen, and the frame selector routes through the hash so the
+  // chosen frame stays in step with the Frame screen switcher.
+  els.fqMode.addEventListener("change", () => {
+    els.fqCustom.hidden = els.fqMode.value !== "custom";
+  });
+  // The Settings frame selector changes which frame's quiet hours are edited
+  // without leaving the Settings screen (setting the "#frame/<id>" hash would
+  // route to the Frame screen). It picks the frame in place; the choice persists
+  // and the Frame screen switcher follows it.
+  els.fqFrame.addEventListener("change", () => selectFrame(els.fqFrame.value));
+  els.fqSave.addEventListener("click", saveFrameQuietHours);
 }
 
 async function refreshFrameControl() {
@@ -740,18 +906,54 @@ async function refreshFrameControl() {
   // state rather than the HTML form defaults; a throw over a good render keeps
   // the last-good document. See frameControlAfterFetch.
   state.frameControl = frameControlAfterFetch(state.frameControl, { threw, json });
+  // The frame list and the legacy flag come from this document, so re-resolve the
+  // chosen frame once it is read (the hash may have named a frame the page did not
+  // know yet) and re-fetch the mirror and history when the frame context changed:
+  // the first document flips legacy off and switches the per-frame URLs, even when
+  // the chosen frame id is unchanged (so a stale offline flag does not stick).
+  resolveSelectedFrame();
   renderFrameControl();
+  renderFrameSwitcher();
+  if (frameContextChanged()) {
+    refreshFrame();
+    refreshArt();
+  }
+}
+
+// Whether the frame context (the legacy flag, the known frame ids, and the chosen
+// frame) changed since the mirror and history were last fetched, updating the
+// stored fingerprint. A change means the per-frame URLs changed and must be
+// re-fetched.
+function frameContextChanged() {
+  const key = `${controlLegacy()}|${frameIds().join(",")}|${state.selectedFrame}`;
+  if (key === state.frameContextKey) {
+    return false;
+  }
+  state.frameContextKey = key;
+  return true;
+}
+
+// The per-frame pin for the chosen frame, or null when the document is
+// unavailable or the frame is not in it (the selection is always resolved
+// against the known frames, so this guards only a race).
+function selectedFramePin() {
+  const fc = state.frameControl;
+  if (!fc || !fc.frames) {
+    return null;
+  }
+  const entry = fc.frames[state.selectedFrame];
+  return entry ? entry.pin : null;
 }
 
 function renderFrameControl() {
   const fc = state.frameControl;
   const available = Boolean(fc && fc.available);
 
-  // Pin control (Frame screen).
+  // Pin control (Frame screen): the chosen frame's own pin.
   els.pinForm.hidden = !available;
   els.pinUnavailable.hidden = available;
   if (available) {
-    const summary = pinSummary(fc.pin, Date.now());
+    const summary = pinSummary(selectedFramePin(), Date.now());
     if (summary) {
       els.pinStatus.textContent = summary;
       els.pinStatus.hidden = false;
@@ -773,6 +975,47 @@ function renderFrameControl() {
   if (available) {
     renderFrameSettings(fc.settings);
   }
+
+  renderFrameQuiet();
+}
+
+// The per-frame quiet-hours section (Settings). It only applies on the new
+// multi-frame contract, where each frame carries its own quiet-hours override;
+// on the old single-frame contract (legacy) or while the document is
+// unavailable, the shared quiet hours above still work and this section is
+// hidden. The frame selector appears only when there is more than one frame.
+function renderFrameQuiet() {
+  const fc = state.frameControl;
+  const show = Boolean(fc && fc.available && !fc.legacy);
+  els.frameQuiet.hidden = !show;
+  if (!show) {
+    return;
+  }
+
+  const rows = frameList(fc, state.mirrors);
+  if (rows.length > 1) {
+    fillSelect(
+      els.fqFrame,
+      rows.map((row) => ({ value: row.id, label: row.label })),
+      state.selectedFrame
+    );
+    els.fqFrameField.hidden = false;
+  } else {
+    els.fqFrameField.hidden = true;
+  }
+
+  const entry = fc.frames[state.selectedFrame];
+  const override = entry ? entry.quietHours : null;
+  if (override && override.start && override.end) {
+    els.fqMode.value = "custom";
+    els.fqStart.value = override.start;
+    els.fqEnd.value = override.end;
+  } else if (override && override.enabled === false) {
+    els.fqMode.value = "off";
+  } else {
+    els.fqMode.value = "shared";
+  }
+  els.fqCustom.hidden = els.fqMode.value !== "custom";
 }
 
 function renderFrameSettings(settings) {
@@ -870,7 +1113,9 @@ async function postFrameSettings(subset) {
 }
 
 async function pinCurrent() {
-  const body = framePinBody(els.pinWhat.value, els.pinDuration.value);
+  // The pin is scoped to the chosen frame, so pinning one never moves another
+  // (Review Focus 2).
+  const body = framePinBody(state.selectedFrame, els.pinWhat.value, els.pinDuration.value);
   if (!body) {
     return;
   }
@@ -883,12 +1128,58 @@ async function pinCurrent() {
 }
 
 async function unpinFrame() {
-  const result = await postApi("/api/frame/unpin", frameUnpinBody());
+  const body = frameUnpinBody(state.selectedFrame);
+  if (!body) {
+    return;
+  }
+  const result = await postApi("/api/frame/unpin", body);
   if (!result.ok) {
     showToast(result.error);
   }
   await refreshFrameControl();
   refreshFrame();
+}
+
+// Save the chosen frame's quiet-hours override: follow the shared hours
+// (null), keep none ({enabled:false}), or a custom window. A bad custom time is
+// caught by frameQuietHoursBody and shown in place rather than posted.
+async function saveFrameQuietHours() {
+  clearFqError();
+  const override = frameQuietOverrideFromForm();
+  const built = frameQuietHoursBody(state.selectedFrame, override);
+  if (!built.ok) {
+    showFqError(built.error);
+    return;
+  }
+  const result = await postApi("/api/frame/settings", built.value);
+  if (!result.ok) {
+    showFqError(result.error);
+    return;
+  }
+  showToast("Quiet hours saved.");
+  await refreshFrameControl();
+}
+
+// The quiet-hours override the per-frame form describes: null for "follow the
+// shared hours", {enabled:false} for "no quiet hours", or the custom window.
+function frameQuietOverrideFromForm() {
+  if (els.fqMode.value === "off") {
+    return { enabled: false };
+  }
+  if (els.fqMode.value === "custom") {
+    return { start: els.fqStart.value, end: els.fqEnd.value };
+  }
+  return null;
+}
+
+function showFqError(message) {
+  els.fqError.textContent = message;
+  els.fqError.hidden = false;
+}
+
+function clearFqError() {
+  els.fqError.hidden = true;
+  els.fqError.textContent = "";
 }
 
 function showFsError(message) {
@@ -952,9 +1243,14 @@ function clearWeatherError() {
 // --------------------------------------------------------------------------- //
 
 async function refreshArt() {
+  // The chosen frame's own history (its /frames/<id>/art-history.json, or the old
+  // single path on the legacy contract). A missing file reads as no history,
+  // which hides the section rather than showing another frame's pieces.
+  const urls = frameUrls(state.selectedFrame, controlLegacy());
+  const historyUrl = urls ? urls.history : "art-history.json";
   let art;
   try {
-    const response = await fetch("art-history.json", { cache: "no-store" });
+    const response = await fetch(historyUrl, { cache: "no-store" });
     if (!response.ok) {
       art = { current: null, history: [] };
     } else {
@@ -1330,8 +1626,8 @@ function formatStartTime(iso) {
 // --------------------------------------------------------------------------- //
 
 function wireArtManager() {
-  els.frameBack.addEventListener("click", () => runAction("/api/art/command", { action: "previous" }));
-  els.frameNext.addEventListener("click", () => runAction("/api/art/command", { action: "next" }));
+  els.frameBack.addEventListener("click", () => runArtCommand("previous"));
+  els.frameNext.addEventListener("click", () => runArtCommand("next"));
   els.frameShow.addEventListener("click", () => {
     els.frameMenu.open = false;
     showInLibrary(state.artCurrent);
@@ -1579,7 +1875,7 @@ function tileMenu(piece, index) {
   body.className = "menu-body";
 
   if (piece.landscape) {
-    body.append(menuButton("Show now", () => runAction("/api/art/command", { action: "show", piece: piece.id })));
+    body.append(menuButton("Show now", () => runArtCommand("show", piece.id)));
   }
 
   const others = index.folders.map((f) => f.name).filter((n) => n !== piece.folder);
@@ -1711,9 +2007,12 @@ async function frameDeleteCurrent() {
     showToast("This piece can't be deleted from here.");
     return;
   }
-  // Advance the frame first so the deleted piece is gone from the panel in one
-  // redraw and cannot come back from a stale state (Review Focus 2).
-  await postApi("/api/art/command", { action: "next" });
+  // Advance the chosen frame first so the deleted piece is gone from its panel in
+  // one redraw and cannot come back from a stale state (Review Focus 2).
+  const command = artCommandBody(state.selectedFrame, "next");
+  if (command) {
+    await postApi("/api/art/command", command);
+  }
   await moveToTrash(target);
 }
 
@@ -1867,6 +2166,17 @@ async function postApi(path, body) {
   } catch (err) {
     return { ok: false, error: "Could not reach the art service." };
   }
+}
+
+// Send a rotation command for the chosen frame. The command always carries the
+// frame id (the design: the page always sends a frame id), so Back, Next, and
+// Show act only on the chosen frame and never move another (Review Focus 2).
+function runArtCommand(action, piece) {
+  const body = artCommandBody(state.selectedFrame, action, piece);
+  if (!body) {
+    return;
+  }
+  runAction("/api/art/command", body);
 }
 
 // Send a write and refresh, showing the server's error text as a toast on

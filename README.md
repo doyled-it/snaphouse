@@ -27,11 +27,17 @@ idempotent: run it again and a matching hostname is left untouched. Without
 ## The room picker
 
 The hub serves a room-picker page on the LAN: one on/off toggle and a volume
-slider per room, what is playing, and a per-machine health line. It also has an
-"On the frame" section showing the piece currently on the nightstand frame and a
-"Recently shown" list of what came before it; the hub republishes the frame's
-art history same-origin, so the section appears only when the frame has shown
-something. Open it in any browser on the home network.
+slider per room, what is playing, and a per-machine health line. It also has a
+Frame screen that mirrors the piece a frame is showing and lists what came before
+it. With more than one frame (the nightstand and the office), a switcher at the
+top of the Frame screen chooses which frame to look at and control; a frame whose
+mirror is missing (offline, or not yet installed) is marked, and the other frame
+is unaffected. Its Back, Next, pin, and art history all act on the chosen frame,
+and Settings carries a per-frame quiet-hours section alongside the shared
+settings. The hub republishes each frame's art history same-origin, so a frame's
+section appears only once it has shown something. On the 7-inch touch panel the
+same page lays out in two columns in landscape (now playing beside the rooms),
+chosen by a media query. Open it in any browser on the home network.
 
 Open it at `http://house.local/`. On Android this works once the browser has the
 local network permission (see below); if a phone or app still cannot resolve

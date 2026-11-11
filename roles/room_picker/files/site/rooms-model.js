@@ -1030,13 +1030,182 @@ const DEFAULT_SCREEN = "listen";
 
 // Which screen a URL hash selects. A leading "#" is optional and case is
 // ignored; an empty, bare, or unknown hash falls back to the default so a
-// hand-typed or stale fragment never lands on a blank page.
+// hand-typed or stale fragment never lands on a blank page. The chosen frame
+// rides in the hash as "#frame/<id>", so only the first segment (before any
+// "/") names the screen: "#frame/office" is still the Frame screen.
 export function screenFromHash(hash) {
   if (typeof hash !== "string") {
     return DEFAULT_SCREEN;
   }
-  const name = hash.replace(/^#/, "").toLowerCase();
+  const name = hash.replace(/^#/, "").split("/")[0].toLowerCase();
   return SCREENS.includes(name) ? name : DEFAULT_SCREEN;
+}
+
+// A frame id is an inventory key: a lowercase letter then up to 31 lowercase
+// letters, digits, or hyphens (global constraints; the hub validates the same
+// pattern). The page checks it before building any per-frame path or request,
+// so a malformed or hostile id from the hash or a tampered document can never
+// name an arbitrary frame (Review Focus 5).
+const FRAME_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
+
+// The frame the page falls back to when the hub publishes the old single-frame
+// contract (no "frames" map) or no document at all: the nightstand was the only
+// frame then, and the old single mirror and history paths still serve its copies
+// for this release.
+const DEFAULT_FRAME = "nightstand";
+
+function isValidFrameId(value) {
+  return typeof value === "string" && FRAME_ID_RE.test(value);
+}
+
+// The known frame ids from a parseFrameControl result, in published order. There
+// is always at least the nightstand, so the switcher and the per-frame requests
+// always have a frame to act on.
+export function frameIdsFrom(control) {
+  if (!control || typeof control !== "object" || !control.frames) {
+    return [DEFAULT_FRAME];
+  }
+  return Object.keys(control.frames);
+}
+
+// Which frame the hash selects, defaulting to the first frame. The chosen frame
+// rides in the hash as "#frame/<id>"; a hash that names no frame (another
+// screen, or a bare "#frame") keeps the current selection when it is still a
+// known frame, else takes the first. An id that is not one of the known frames
+// is never selected, so the page never builds a request for an arbitrary frame
+// (Review Focus 5). With no frames at all, there is nothing to select.
+export function selectedFrameFrom(hash, frameIds, current) {
+  const ids = Array.isArray(frameIds) ? frameIds : [];
+  if (ids.length === 0) {
+    return null;
+  }
+  const named = frameIdFromHash(hash);
+  if (named !== null && ids.includes(named)) {
+    return named;
+  }
+  if (typeof current === "string" && ids.includes(current)) {
+    return current;
+  }
+  return ids[0];
+}
+
+// The frame id named in a "#frame/<id>" hash, lowercased, or null when the hash
+// is not a frame hash or carries no second segment. Pure string parsing: the
+// caller validates the id against the known frames.
+function frameIdFromHash(hash) {
+  if (typeof hash !== "string") {
+    return null;
+  }
+  const parts = hash.replace(/^#/, "").toLowerCase().split("/");
+  if (parts[0] !== "frame" || parts.length < 2 || parts[1].length === 0) {
+    return null;
+  }
+  return parts[1];
+}
+
+// The switcher rows for the Frame screen: one per known frame, in published
+// order, each { id, label, offline }. A frame is offline when its mirror is
+// missing (its frame.json 404s, or has not been republished): the office before
+// its Inky arrives shows offline while the nightstand is unaffected (Review
+// Focus 1). `mirrors` maps a frame id to its parsed frame.json (or null).
+export function frameList(control, mirrors) {
+  const have = mirrors && typeof mirrors === "object" ? mirrors : {};
+  return frameIdsFrom(control).map((id) => ({
+    id,
+    label: frameLabel(id),
+    offline: !isUsableMirror(have[id]),
+  }));
+}
+
+// A parsed frame.json is usable when it is a plain object (the "Frame mirror
+// file" contract is validated further by mirrorState); anything else, including
+// a missing entry, reads as offline.
+function isUsableMirror(meta) {
+  return Boolean(meta) && typeof meta === "object" && !Array.isArray(meta);
+}
+
+// A human label for a frame id: the inventory key titlecased, hyphens as spaces
+// ("guest-room" becomes "Guest room"). Nothing identifying: the id is an
+// inventory key, not a person or place.
+function frameLabel(id) {
+  const spaced = String(id).replace(/-/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+// The same-origin URLs for one frame's mirror and history. On the new contract
+// each frame is republished under "/frames/<id>/"; on the old single-frame
+// contract (legacy) the hub serves only the nightstand's copies at the old
+// single paths, so the fallback view reads those (Review Focus 3). A malformed
+// id yields null so no arbitrary path is ever built (Review Focus 5). The paths
+// are relative, like the rest of the page's fetches, so the proxy decides the
+// origin.
+export function frameUrls(frameId, legacy) {
+  if (legacy) {
+    return { history: "art-history.json", image: "frame.png", meta: "frame.json" };
+  }
+  if (!isValidFrameId(frameId)) {
+    return null;
+  }
+  const base = `frames/${frameId}/`;
+  return { history: `${base}art-history.json`, image: `${base}frame.png`, meta: `${base}frame.json` };
+}
+
+// The body for POST /api/art/command, always carrying the chosen frame id so a
+// rotation command reaches only that frame (the compatible "every frame"
+// default is never used by the page; the design: the page always sends a frame
+// id). `piece` is required for "show" and omitted otherwise. A bad frame or
+// action yields null so the view posts nothing rather than an arbitrary path.
+export function artCommandBody(frame, action, piece) {
+  if (!isValidFrameId(frame)) {
+    return null;
+  }
+  if (action !== "next" && action !== "previous" && action !== "show") {
+    return null;
+  }
+  if (action === "show") {
+    if (typeof piece !== "string" || piece.length === 0) {
+      return null;
+    }
+    return { action, piece, frame };
+  }
+  return { action, frame };
+}
+
+// The per-frame quiet-hours override the Settings screen posts to
+// /api/frame/settings. The override is null (fall back to the shared quiet
+// hours), { enabled: false } (this frame keeps no quiet hours), or a window
+// { start, end } of valid HH:MM times. Returns { ok: true, value } with the
+// body (carrying the frame), or { ok: false, error } with a short message, so a
+// bad custom time is caught here and explained in place rather than posted.
+export function frameQuietHoursBody(frame, override) {
+  if (!isValidFrameId(frame)) {
+    return { ok: false, error: "That frame is not one the page knows." };
+  }
+  const quiet = normalizeQuietOverride(override);
+  if (quiet === INVALID) {
+    return { ok: false, error: "Use 24-hour times like 07:30 for quiet hours." };
+  }
+  return { ok: true, value: { frame, quiet_hours: quiet } };
+}
+
+// A sentinel distinct from null so "fall back to shared" (null) never collides
+// with "the value could not be validated" (INVALID).
+const INVALID = Symbol("invalid");
+
+function normalizeQuietOverride(override) {
+  if (override === null || override === undefined) {
+    return null;
+  }
+  if (typeof override !== "object" || Array.isArray(override)) {
+    return INVALID;
+  }
+  if (override.enabled === false && override.start === undefined && override.end === undefined) {
+    return { enabled: false };
+  }
+  if (isClock(override.start) && isClock(override.end)) {
+    return { start: override.start, end: override.end };
+  }
+  return INVALID;
 }
 
 // The three kinds of audio the now-playing toggle covers, in display order
@@ -1059,25 +1228,81 @@ const DEFAULT_MORNING = {
   weekend: ["07:00", "09:00"],
 };
 
-// Parse the hub's /frame-control.json into the settings and pin the page shows.
-// The hub owns this document and may not have published it yet (it 404s until
-// deployed), so a missing or malformed body reads as unavailable: the Settings
-// screen then shows the frame settings as unknown rather than inventing values,
-// and the frame keeps running on its own local config (Review Focus 1).
+// Parse the hub's /frame-control.json into the shared settings and the per-frame
+// quiet hours and pins the page shows. The hub owns this document and may not
+// have published it yet (it 404s until deployed), so a missing or malformed body
+// reads as unavailable: the Settings screen then shows the frame settings as
+// unknown rather than inventing values, and the frame keeps running on its own
+// local config (Review Focus 1).
 //
-// Returns { available, settings, pin }. When available, every settings field is
-// filled with the documented default if the stored value is missing or
-// malformed, so the form always has something to show; pin is a validated pin or
-// null.
+// Returns { available, legacy, settings, frames }:
+//   - `settings` is the shared settings (every field filled with its documented
+//     default when missing), or null when unavailable.
+//   - `frames` maps each known frame id to { quietHours, pin }: the per-frame
+//     quiet-hours override (null means fall back to the shared quiet hours) and
+//     the per-frame pin. It always has at least the nightstand, so the switcher
+//     and the per-frame requests always have a frame to act on.
+//   - `legacy` is true when the document is unavailable or carries the old
+//     single-frame contract (no "frames" map). The page then shows only the
+//     nightstand and reads the old single mirror and history paths, so a page
+//     loaded mid-rollout on the old contract keeps working (Review Focus 3).
 export function parseFrameControl(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { available: false, settings: null, pin: null };
+    return {
+      available: false,
+      legacy: true,
+      settings: null,
+      frames: { [DEFAULT_FRAME]: { quietHours: null, pin: null } },
+    };
+  }
+  const settings = parseFrameSettings(raw.settings);
+  // The new contract carries a "frames" map keyed by inventory frame ids. The
+  // old single-frame contract has a top-level "pin" and no map; fold it into the
+  // nightstand so the page shows exactly that frame, keeping the old pin.
+  if (raw.frames && typeof raw.frames === "object" && !Array.isArray(raw.frames)) {
+    const frames = parseFramesMap(raw.frames);
+    if (Object.keys(frames).length > 0) {
+      return { available: true, legacy: false, settings, frames };
+    }
   }
   return {
     available: true,
-    settings: parseFrameSettings(raw.settings),
-    pin: parsePin(raw.pin),
+    legacy: true,
+    settings,
+    frames: { [DEFAULT_FRAME]: { quietHours: null, pin: parsePin(raw.pin) } },
   };
+}
+
+// The "frames" map, keeping only well-formed inventory ids (a malformed or
+// hostile key is skipped, never built into a path: Review Focus 5) and parsing
+// each entry's per-frame quiet-hours override and pin.
+function parseFramesMap(raw) {
+  const frames = {};
+  for (const [id, entry] of Object.entries(raw)) {
+    if (!isValidFrameId(id)) {
+      continue;
+    }
+    const e = entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {};
+    frames[id] = { quietHours: parseQuietOverride(e.quiet_hours), pin: parsePin(e.pin) };
+  }
+  return frames;
+}
+
+// A per-frame quiet-hours override, validated into one of its three shapes, or
+// null when it should fall back to the shared quiet hours. `{ enabled: false }`
+// means the frame keeps no quiet hours; a valid { start, end } is an override; a
+// missing or malformed value reads as null (fall back), never as wrong.
+function parseQuietOverride(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  if (raw.enabled === false && raw.start === undefined && raw.end === undefined) {
+    return { enabled: false };
+  }
+  if (isClock(raw.start) && isClock(raw.end)) {
+    return { start: raw.start, end: raw.end };
+  }
+  return null;
 }
 
 // Decide the frame-control state to render after a refresh fetch, from the prior
@@ -1318,20 +1543,26 @@ export function validateFrameSettings(input) {
   return { ok: true, value };
 }
 
-// The body the /api/frame/pin endpoint takes, or null when the target or
-// duration is not one the API accepts (the view then does nothing rather than
-// post garbage). The guard header is added by apiRequest, as for every write.
-export function framePinBody(what, duration) {
-  if (!PIN_WHATS.includes(what) || !PIN_DURATIONS.includes(duration)) {
+// The body the /api/frame/pin endpoint takes: the chosen frame plus the pin
+// target and duration, or null when any of the three is not one the API accepts
+// (the view then does nothing rather than post garbage). The required frame
+// scopes the pin to one frame, so pinning the office never moves the nightstand
+// (Review Focus 2). The guard header is added by apiRequest, as for every write.
+export function framePinBody(frame, what, duration) {
+  if (!isValidFrameId(frame) || !PIN_WHATS.includes(what) || !PIN_DURATIONS.includes(duration)) {
     return null;
   }
-  return { what, duration };
+  return { frame, what, duration };
 }
 
-// The body the /api/frame/unpin endpoint takes: an empty object the guarded
-// POST still carries so the service sees the X-Snaphouse header.
-export function frameUnpinBody() {
-  return {};
+// The body the /api/frame/unpin endpoint takes: the chosen frame the guarded
+// POST unpins, or null for a malformed frame id. Unpinning is scoped to one
+// frame, so it never clears another frame's pin (Review Focus 2).
+export function frameUnpinBody(frame) {
+  if (!isValidFrameId(frame)) {
+    return null;
+  }
+  return { frame };
 }
 
 // A 24-hour HH:MM clock string (00:00 to 23:59), the format the hub stores and
