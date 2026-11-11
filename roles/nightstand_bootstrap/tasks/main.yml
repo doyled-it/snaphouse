@@ -7,43 +7,65 @@
 # a nightstand-owned path again. Both the clone and the installer are guarded by
 # creates for exactly that reason; the git module is deliberately not used, since
 # it would reach into the checkout on every apply.
+#
+# This runs only where the frame hardware is actually attached, gated on the
+# per-host inventory flag snaphouse_hosts[<host>].frame_hardware (vars/hosts.yml).
+# A host that carries the nightstand_bootstrap role but has no display wired yet
+# (the office Pi 5 before its Inky arrives) still appears in the hub's frame list,
+# so the room-picker page shows it as a frame, offline until installed; but this
+# role installs nothing there: no clone, no installer, no service, no verify
+# check. That keeps the office self-update from running nightstand's installer
+# before the panel exists. Flip frame_hardware to true in vars/hosts.yml in a
+# one-line PR once the display is attached (AGENTS.md, "frame_hardware").
 
-- name: Ensure git is present for the clone
-  ansible.builtin.apt:
-    name: git
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+- name: Note that the frame hardware is not attached on this host
+  ansible.builtin.debug:
+    msg: >-
+      nightstand_bootstrap: frame_hardware is false for {{ snaphouse_host }}, so
+      the nightstand frame app is not installed here. The host still appears as a
+      frame on the hub (offline until installed). Set frame_hardware to true in
+      vars/hosts.yml once the display is attached.
+  when: not (snaphouse_hosts[snaphouse_host].frame_hardware | default(false) | bool)
 
-- name: Clone nightstand on first boot only
-  ansible.builtin.command:
-    cmd: "git clone {{ nightstand_bootstrap_repo_url }} /opt/nightstand"
-    creates: /opt/nightstand
-  # Deliberately the command module with a creates guard, not ansible.builtin.git:
-  # snaphouse clones once and must never re-touch nightstand-owned paths after.
-  # noqa command-instead-of-module
+- name: Install the nightstand frame app where the hardware is attached
+  when: snaphouse_hosts[snaphouse_host].frame_hardware | default(false) | bool
+  block:
+    - name: Ensure git is present for the clone
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
 
-- name: Run the nightstand installer once
-  # nightstand's installer is idempotent, runs as root, and creates
-  # /etc/nightstand/local.toml from its example on first run. The creates guard
-  # means snaphouse runs it exactly once; nightstand self-updates from then on.
-  ansible.builtin.command:
-    cmd: ./deploy/install.sh
-    chdir: /opt/nightstand
-    creates: /etc/nightstand/local.toml
+    - name: Clone nightstand on first boot only
+      ansible.builtin.command:
+        cmd: "git clone {{ nightstand_bootstrap_repo_url }} /opt/nightstand"
+        creates: /opt/nightstand
+      # Deliberately the command module with a creates guard, not ansible.builtin.git:
+      # snaphouse clones once and must never re-touch nightstand-owned paths after.
+      # noqa command-instead-of-module
 
-- name: Ensure the verify.d dir exists for on-device check scripts
-  ansible.builtin.file:
-    path: /etc/snaphouse/verify.d
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
+    - name: Run the nightstand installer once
+      # nightstand's installer is idempotent, runs as root, and creates
+      # /etc/nightstand/local.toml from its example on first run. The creates guard
+      # means snaphouse runs it exactly once; nightstand self-updates from then on.
+      ansible.builtin.command:
+        cmd: ./deploy/install.sh
+        chdir: /opt/nightstand
+        creates: /etc/nightstand/local.toml
 
-- name: Install the nightstand verify check
-  ansible.builtin.copy:
-    src: verify.d/nightstand.sh
-    dest: /etc/snaphouse/verify.d/nightstand.sh
-    owner: root
-    group: root
-    mode: "0755"
+    - name: Ensure the verify.d dir exists for on-device check scripts
+      ansible.builtin.file:
+        path: /etc/snaphouse/verify.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the nightstand verify check
+      ansible.builtin.copy:
+        src: verify.d/nightstand.sh
+        dest: /etc/snaphouse/verify.d/nightstand.sh
+        owner: root
+        group: root
+        mode: "0755"

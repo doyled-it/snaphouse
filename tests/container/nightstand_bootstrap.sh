@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # nightstand bootstrap container check (Task 9).
 #
-# Applies site.yml for the nightstand host inside a debian:bookworm container,
+# Applies site.yml for the frame host inside a debian:bookworm container,
 # pointing the bootstrap at a local stub repo instead of the real nightstand
-# (the repo URL is a role variable for exactly this). It proves two things:
-#   1. On first apply the bootstrap clones the repo to /opt/nightstand and runs
-#      its installer once, which creates /etc/nightstand/local.toml.
-#   2. A second apply changes nothing (the clone and installer are guarded by
-#      creates), so the role never re-touches nightstand-owned paths.
+# (the repo URL is a role variable for exactly this). It proves three things:
+#   1. A host that carries nightstand_bootstrap but has frame_hardware false (the
+#      office before its Inky is wired) installs nothing from nightstand: no
+#      clone, no installer, no verify check. It still appears as a frame on the
+#      hub, but the role is a no-op there.
+#   2. On the frame host (frame_hardware true) the first apply clones the repo to
+#      /opt/nightstand and runs its installer once, creating /etc/nightstand/local.toml.
+#   3. A second apply of the frame host changes nothing (the clone and installer
+#      are guarded by creates), so the role never re-touches nightstand-owned paths.
 #
 # This is a focused feature gate; the broad clean-apply gate is run.sh. It runs
 # in its own CI job.
@@ -56,9 +60,30 @@ git -C "${stub}" init -q
 git -C "${stub}" -c user.email=ci@example.invalid -c user.name=ci add -A
 git -C "${stub}" -c user.email=ci@example.invalid -c user.name=ci commit -q -m "stub nightstand"
 
-# The nightstand host is whichever host carries the nightstand_bootstrap role;
-# read it from the inventory rather than hardcoding a hostname.
-host="$(python3 -c "import yaml; h=yaml.safe_load(open('/repo/vars/hosts.yml'))['snaphouse_hosts']; print(next(k for k, v in h.items() if 'nightstand_bootstrap' in v['roles']))")"
+# The frame host is one that carries nightstand_bootstrap AND has the frame
+# hardware attached (frame_hardware true); read it from the inventory rather than
+# hardcoding a hostname. A host with the role but frame_hardware false is a frame
+# with no display yet, where the role must be a no-op.
+host="$(python3 -c "import yaml; h=yaml.safe_load(open('/repo/vars/hosts.yml'))['snaphouse_hosts']; print(next(k for k, v in h.items() if 'nightstand_bootstrap' in v['roles'] and v.get('frame_hardware')))")"
+nohw="$(python3 -c "import yaml; h=yaml.safe_load(open('/repo/vars/hosts.yml'))['snaphouse_hosts']; print(next((k for k, v in h.items() if 'nightstand_bootstrap' in v['roles'] and not v.get('frame_hardware')), ''))")"
+
+# Prove the no-op first, while /opt/nightstand still does not exist. A
+# frame_hardware-false host must install nothing from nightstand even though it
+# carries the role (so the office self-update never runs nightstand's installer
+# before the Inky is wired).
+if [ -n "${nohw}" ]; then
+    echo "==> Applying site.yml for ${nohw} (frame_hardware false: expect a nightstand no-op)"
+    ansible-playbook site.yml -e "snaphouse_host=${nohw}" -e "nightstand_bootstrap_repo_url=${stub}" \
+        --skip-tags hardware,service
+    echo "==> Checking the frame_hardware-false host installed nothing from nightstand"
+    test ! -e /opt/nightstand
+    test ! -e /etc/nightstand
+    test ! -e /etc/snaphouse/verify.d/nightstand.sh
+    echo "==> ${nohw} is a nightstand no-op (role present, hardware absent)"
+else
+    echo "==> No frame_hardware-false host in the inventory; skipping the no-op check"
+fi
+
 echo "==> Applying site.yml for ${host} (first apply)"
 ansible-playbook site.yml -e "snaphouse_host=${host}" -e "nightstand_bootstrap_repo_url=${stub}" \
     --skip-tags hardware,service
