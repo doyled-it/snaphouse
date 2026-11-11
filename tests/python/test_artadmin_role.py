@@ -275,6 +275,21 @@ def test_nginx_proxies_the_api_with_the_upload_cap():
     assert "client_max_body_size 26m;" in conf
 
 
+def test_nginx_proxies_both_api_prefixes_to_the_art_admin_service():
+    # Both /api/art/ (upload) and /api/frame/ (the room picker's settings and
+    # pin controls) are proxied to the art admin service on loopback. Without the
+    # /api/frame/ block the room picker's POSTs fall through to the `location /`
+    # prefix and nginx answers 404 (issue #102).
+    conf = ART_CONF.read_text()
+    for prefix in ("/api/art/", "/api/frame/"):
+        marker = f"location {prefix} {{"
+        assert marker in conf, f"no proxy location for {prefix}"
+        block = conf.split(marker, 1)[1].split("}", 1)[0]
+        assert "proxy_pass http://127.0.0.1:8781;" in block, (
+            f"{prefix} must proxy to the art admin service on 127.0.0.1:8781"
+        )
+
+
 def test_nginx_serves_the_two_documents_as_exact_match():
     conf = ART_CONF.read_text()
     for name in ("/art-index.json", "/art-control.json"):
