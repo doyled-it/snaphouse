@@ -4,9 +4,10 @@
 # It is the one hub service that writes the art library: a loopback HTTP API
 # (127.0.0.1:8781) the room-picker page calls through nginx (/api/art/) to
 # upload, delete, move, and reorganise pieces, change the rotation interval, and
-# issue next/previous/show commands. It also publishes art-index.json and
-# art-control.json and the thumbnails every page and the frame read, rewriting
-# them after each change and on a 60 s rescan so SMB edits show up too.
+# issue next/previous/show commands. It also owns the frame settings and pin, and
+# publishes art-index.json, art-control.json, frame-control.json, and the
+# thumbnails every page and the frame read, rewriting them after each change and
+# on a 60 s rescan so SMB edits show up too.
 #
 # It runs from the on-device uv venv, which carries Pillow (the hub-only extra)
 # for decode, strip, and thumbnailing, and as the art account that owns the
@@ -25,7 +26,7 @@ User=art
 Group=art
 Environment=PYTHONPATH=/opt/snaphouse/lib
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.artadmin --root /srv/snaphouse/art --public-root /var/lib/snaphouse/public --state /var/lib/snaphouse/artadmin/art-control.json --port 8781 --host 127.0.0.1
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.artadmin --root /srv/snaphouse/art --public-root /var/lib/snaphouse/public --state /var/lib/snaphouse/artadmin/art-control.json --frame-state /var/lib/snaphouse/artadmin/frame-control.json --art-history /var/lib/snaphouse/public/art-history.json --port 8781 --host 127.0.0.1
 Restart=always
 RestartSec=5
 

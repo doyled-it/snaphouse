@@ -73,6 +73,14 @@ def test_unit_passes_every_path_and_the_loopback_port():
     assert "--host 127.0.0.1" in unit
 
 
+def test_unit_passes_the_frame_control_paths():
+    # Frame control persists beside the art state and reads the republished art
+    # history for the art pin; both are passed explicitly, like --state.
+    unit = _unit()
+    assert "--frame-state /var/lib/snaphouse/artadmin/frame-control.json" in unit
+    assert "--art-history /var/lib/snaphouse/public/art-history.json" in unit
+
+
 def test_unit_runs_as_the_art_user():
     unit = _unit()
     # It owns the library (so SMB keeps working) and writes the public docs; it
@@ -213,6 +221,9 @@ def test_role_records_module_digests_for_restart_on_change():
     flattened = [item for loop in digest_loops if loop for item in loop]
     assert "artadmin.py" in flattened
     assert "artlib.py" in flattened
+    # Frame control is part of the same service, so a change to it must restart
+    # the service on a self-update too.
+    assert "framecontrol.py" in flattened
 
 
 def test_handlers_restart_the_service_and_are_gated_on_systemd():
@@ -233,6 +244,8 @@ def test_verify_check_asserts_active_and_a_parsed_index():
     assert "is-active" in text
     assert "snaphouse-artadmin.service" in text
     assert "art-index.json" in text
+    # The same service publishes frame-control.json; the check proves it too.
+    assert "frame-control.json" in text
 
 
 def test_verify_check_retries_before_failing():
@@ -272,6 +285,18 @@ def test_nginx_serves_the_two_documents_as_exact_match():
         # URI to root), so the files leave the root-owned public root untouched.
         assert f"root {PUBLIC_DOCS_DIR};" in block
         assert "application/json" in block
+
+
+def test_nginx_serves_frame_control_as_exact_match():
+    # frame-control.json is published into the same art-owned docs subdir and
+    # served same-origin by an exact-match location, so it outranks the
+    # room-picker `location /` prefix and never chowns the shared public root.
+    conf = ART_CONF.read_text()
+    marker = "location = /frame-control.json {"
+    assert marker in conf, "no exact-match location for /frame-control.json"
+    block = conf.split(marker, 1)[1].split("}", 1)[0]
+    assert f"root {PUBLIC_DOCS_DIR};" in block
+    assert "application/json" in block
 
 
 def test_nginx_serves_thumbs_from_the_public_root():

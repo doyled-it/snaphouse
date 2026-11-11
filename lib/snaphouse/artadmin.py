@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 from snaphouse.artlib import THUMBNAIL_BATCH, ArtError, Library
+from snaphouse.framecontrol import FrameControl
 
 
 # --------------------------------------------------------------------------- #
@@ -173,11 +174,19 @@ class ArtAdmin:
         *,
         index_path: Path,
         control_path: Path,
+        frame: FrameControl,
+        frame_control_path: Path,
         log: Optional[logging.Logger] = None,
     ) -> None:
         self.library = library
         self.index_path = Path(index_path)
         self.control_path = Path(control_path)
+        # Frame control (now-playing kinds, quiet hours, morning weather, and the
+        # pin) rides along with the library in this one service: it publishes
+        # frame-control.json next to the two art documents and exposes the small
+        # /api/frame/ write API with the same header guard.
+        self.frame = frame
+        self.frame_control_path = Path(frame_control_path)
         self.log = log or logging.getLogger("snaphouse.artadmin")
         self._lock = threading.Lock()
         # Ends the background maintenance loop; `_wake` nudges it to run a pass
@@ -197,6 +206,9 @@ class ArtAdmin:
             "/api/art/folder/enable": self._folder_enable,
             "/api/art/settings": self._settings,
             "/api/art/command": self._command,
+            "/api/frame/settings": self._frame_settings,
+            "/api/frame/pin": self._frame_pin,
+            "/api/frame/unpin": self._frame_unpin,
         }
 
     # -- publishing -------------------------------------------------------- #
@@ -214,6 +226,7 @@ class ArtAdmin:
         _atomic_write_json(self.index_path, index)
         control = self.library.control()
         _atomic_write_json(self.control_path, control)
+        _atomic_write_json(self.frame_control_path, self.frame.document())
 
     def _locked_publish(self) -> None:
         with self._lock:
@@ -384,6 +397,22 @@ class ArtAdmin:
             raise ArtError(400, "That is not a valid piece id.")
         return {"command": self.library.command(action, piece)}
 
+    # -- frame control endpoints ------------------------------------------- #
+
+    def _frame_settings(self, handler: "_Handler", body: bytes) -> dict:
+        data = _json_body(body)
+        return {"settings": self.frame.update_settings(data)}
+
+    def _frame_pin(self, handler: "_Handler", body: bytes) -> dict:
+        data = _json_body(body)
+        what = _require_str(data, "what")
+        duration = _require_str(data, "duration")
+        return {"pin": self.frame.pin(what, duration)}
+
+    def _frame_unpin(self, handler: "_Handler", body: bytes) -> dict:
+        _json_body(body)
+        return {"pin": self.frame.unpin()}
+
 
 # --------------------------------------------------------------------------- #
 # Request parsing helpers
@@ -544,6 +573,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--root", default="/srv/snaphouse/art")
     parser.add_argument("--public-root", default="/var/lib/snaphouse/public")
     parser.add_argument("--state", default="/var/lib/snaphouse/art-control.json")
+    parser.add_argument(
+        "--frame-state", default="/var/lib/snaphouse/artadmin/frame-control.json"
+    )
+    # The republished art history (the house-status timer writes it same-origin);
+    # pinning the art piece reads the current piece from it. Read-only.
+    parser.add_argument(
+        "--art-history", default="/var/lib/snaphouse/public/art-history.json"
+    )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args(argv)
@@ -557,10 +594,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         thumbs=public_root / "art-thumbs",
         state=Path(args.state),
     )
+    frame = FrameControl(
+        Path(args.frame_state), art_history=Path(args.art_history)
+    )
     app = ArtAdmin(
         library,
         index_path=public_root / "art" / "art-index.json",
         control_path=public_root / "art" / "art-control.json",
+        frame=frame,
+        frame_control_path=public_root / "art" / "frame-control.json",
         log=log,
     )
     # make_server publishes both documents (metadata-only, fast) before the
