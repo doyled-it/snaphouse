@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 from snaphouse.artlib import THUMBNAIL_BATCH, ArtError, Library
-from snaphouse.framecontrol import FrameControl, urllib_geocode
+from snaphouse.framecontrol import DEFAULT_LEGACY_FRAME, FrameControl, urllib_geocode
 
 
 # --------------------------------------------------------------------------- #
@@ -348,7 +348,18 @@ class ArtAdmin:
         under the lock, or ``None`` for a route with no pre-lock work.
         """
         if path == "/api/frame/settings":
-            return self.frame.prepare_settings(_json_body(body))
+            data = _json_body(body)
+            # ``frame`` is optional and selects the scope: a per-frame write (a
+            # known frame id) sets that frame's quiet hours, and a shared write
+            # (no frame) sets the shared settings. Validate the frame here, before
+            # the lock, so an unknown (404) or malformed (400) id is rejected
+            # without any work; the shared path geocodes a weather city here too.
+            frame = data.get("frame")
+            if frame is not None:
+                self.frame.require_frame(frame)
+            subset = {key: value for key, value in data.items() if key != "frame"}
+            prepared = self.frame.prepare_settings(subset, frame=frame)
+            return {"frame": frame, "subset": prepared}
         return None
 
     # -- endpoint handlers ------------------------------------------------- #
@@ -424,25 +435,40 @@ class ArtAdmin:
         piece = data.get("piece")
         if piece is not None and not isinstance(piece, str):
             raise ArtError(400, "That is not a valid piece id.")
-        return {"command": self.library.command(action, piece)}
+        # ``frame`` scopes the command to one frame: a known frame id, or absent
+        # (null) for every frame. A malformed id is a 400 and an unknown frame a
+        # 404, so a command never names an arbitrary frame (Review Focus 5).
+        frame = data.get("frame")
+        if frame is not None:
+            self.frame.require_frame(frame)
+        return {"command": self.library.command(action, piece, frame)}
 
     # -- frame control endpoints ------------------------------------------- #
 
     def _frame_settings(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
-        # The subset was parsed and its weather-city query geocoded in _prepare,
-        # outside the write lock; here, under the lock, it is only merged and
-        # stored, so no network call runs while the lock is held.
-        return {"settings": self.frame.update_settings(prepared)}
+        # The subset was parsed, its frame validated, and any weather-city query
+        # geocoded in _prepare, outside the write lock; here, under the lock, it is
+        # only merged and stored, so no network call runs while the lock is held. A
+        # shared write (no frame) returns the full settings; a per-frame write
+        # returns that frame's stored quiet hours.
+        frame = prepared["frame"]
+        result = self.frame.update_settings(prepared["subset"], frame=frame)
+        if frame is None:
+            return {"settings": result}
+        return {"frame": frame, "quiet_hours": result}
 
     def _frame_pin(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
+        frame = _require_str(data, "frame")
         what = _require_str(data, "what")
         duration = _require_str(data, "duration")
-        return {"pin": self.frame.pin(what, duration)}
+        return {"pin": self.frame.pin(frame, what, duration)}
 
     def _frame_unpin(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
-        _json_body(body)
-        return {"pin": self.frame.unpin()}
+        data = _json_body(body)
+        frame = _require_str(data, "frame")
+        self.frame.unpin(frame)
+        return {"pin": None}
 
 
 # --------------------------------------------------------------------------- #
@@ -607,11 +633,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--frame-state", default="/var/lib/snaphouse/artadmin/frame-control.json"
     )
-    # The republished art history (the house-status timer writes it same-origin);
-    # pinning the art piece reads the current piece from it. Read-only.
-    parser.add_argument(
-        "--art-history", default="/var/lib/snaphouse/public/art-history.json"
-    )
+    # The inventory frame ids (repeatable), one per frame host. The published
+    # frame-control.json lists exactly these, each with its own quiet hours and
+    # pin. The service reads each frame's own republished art history (written by
+    # the house-status timer under /frames/<id>/) for that frame's art pin.
+    parser.add_argument("--frame", action="append", dest="frames", metavar="ID")
+    # The frame the pre-per-frame state migrates into: the old single top-level pin
+    # becomes this frame's on first load under the new shape.
+    parser.add_argument("--legacy-frame", default=DEFAULT_LEGACY_FRAME)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args(argv)
@@ -625,12 +654,21 @@ def main(argv: Optional[list[str]] = None) -> int:
         thumbs=public_root / "art-thumbs",
         state=Path(args.state),
     )
-    # The geocoder fetch is injected so a weather-city write resolves a typed
+    # The frame list comes from the inventory (one --frame per frame host); fall
+    # back to the single original frame if none was passed. Each frame reads its
+    # own republished art history under /frames/<id>/art-history.json for its art
+    # pin. The geocoder fetch is injected so a weather-city write resolves a typed
     # place through Open-Meteo's keyless geocoding API. Only the city name leaves
     # the LAN; the module holds the URL, the selection, and the error handling.
+    frame_ids = args.frames if args.frames else [DEFAULT_LEGACY_FRAME]
+    art_history = {
+        fid: public_root / "frames" / fid / "art-history.json" for fid in frame_ids
+    }
     frame = FrameControl(
         Path(args.frame_state),
-        art_history=Path(args.art_history),
+        frames=frame_ids,
+        legacy_frame=args.legacy_frame,
+        art_history=art_history,
         geocode=urllib_geocode,
     )
     app = ArtAdmin(

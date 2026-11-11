@@ -46,7 +46,19 @@ def _write_image(path: Path, size=(400, 200), color=(120, 160, 200), fmt="JPEG")
     path.write_bytes(_image_bytes(size=size, color=color, fmt=fmt))
 
 
-def _make_app(tmp_path: Path, *, art_history: Path = None, geocode=None) -> artadmin.ArtAdmin:
+# The frames most tests exercise: the original single frame plus a second frame,
+# so a scoped command or pin can be checked against another frame.
+FRAME = "nightstand"
+OTHER = "office"
+
+
+def _make_app(
+    tmp_path: Path,
+    *,
+    art_history: Path = None,
+    geocode=None,
+    frames=(FRAME, OTHER),
+) -> artadmin.ArtAdmin:
     root = tmp_path / "art"
     thumbs = tmp_path / "public" / "art-thumbs"
     state = tmp_path / "state" / "art-control.json"
@@ -56,7 +68,17 @@ def _make_app(tmp_path: Path, *, art_history: Path = None, geocode=None) -> arta
     frame_control_path = tmp_path / "public" / "art" / "frame-control.json"
     root.mkdir(parents=True, exist_ok=True)
     library = Library(root, thumbs, state)
-    frame = FrameControl(frame_state, art_history=art_history, geocode=geocode)
+    # art_history is accepted as a single path (the nightstand's, the common case
+    # in these tests) or a per-frame mapping.
+    if art_history is not None and not isinstance(art_history, dict):
+        art_history = {FRAME: art_history}
+    frame = FrameControl(
+        frame_state,
+        frames=list(frames),
+        legacy_frame=FRAME,
+        art_history=art_history,
+        geocode=geocode,
+    )
     return artadmin.ArtAdmin(
         library,
         index_path=index_path,
@@ -608,7 +630,7 @@ def test_frame_control_is_published_at_startup(tmp_path):
     server = artadmin.make_server(app, "127.0.0.1", 0)
     try:
         doc = _frame_doc(app)
-        assert doc["pin"] is None
+        assert doc["frames"][FRAME]["pin"] is None
         assert doc["settings"]["now_playing_kinds"] == ["music"]
     finally:
         server.server_close()
@@ -724,7 +746,7 @@ def test_slow_geocoder_does_not_block_other_writes(tmp_path):
         # A concurrent write completes without waiting out the blocked geocode.
         begin = time.monotonic()
         status, body = client.post_json(
-            "/api/frame/pin", {"what": "weather", "duration": "forever"}
+            "/api/frame/pin", {"frame": FRAME, "what": "weather", "duration": "forever"}
         )
         elapsed = time.monotonic() - begin
         assert status == 200
@@ -770,12 +792,12 @@ def test_frame_weather_location_unreachable_is_a_json_502(tmp_path):
 
 def test_frame_pin_sets_and_publishes_the_pin(client):
     status, body = client.post_json(
-        "/api/frame/pin", {"what": "weather", "duration": "forever"}
+        "/api/frame/pin", {"frame": FRAME, "what": "weather", "duration": "forever"}
     )
     assert status == 200
     assert body["pin"]["what"] == "weather"
     assert body["pin"]["until"] is None
-    assert _frame_doc(client.app)["pin"]["what"] == "weather"
+    assert _frame_doc(client.app)["frames"][FRAME]["pin"]["what"] == "weather"
 
 
 def test_frame_pin_art_captures_the_current_piece(tmp_path):
@@ -789,7 +811,7 @@ def test_frame_pin_art_captures_the_current_piece(tmp_path):
     started = Client(app)
     try:
         status, body = started.post_json(
-            "/api/frame/pin", {"what": "art", "duration": "forever"}
+            "/api/frame/pin", {"frame": FRAME, "what": "art", "duration": "forever"}
         )
         assert status == 200
         assert body["pin"]["piece"] == "Photos/a.jpg"
@@ -798,33 +820,33 @@ def test_frame_pin_art_captures_the_current_piece(tmp_path):
 
 
 def test_frame_pin_missing_field_is_a_json_400(client):
-    status, body = client.post_json("/api/frame/pin", {"what": "weather"})
+    status, body = client.post_json("/api/frame/pin", {"frame": FRAME, "what": "weather"})
     assert status == 400
     assert "error" in body
 
 
 def test_frame_pin_bad_duration_is_a_json_400(client):
     status, body = client.post_json(
-        "/api/frame/pin", {"what": "weather", "duration": "2h"}
+        "/api/frame/pin", {"frame": FRAME, "what": "weather", "duration": "2h"}
     )
     assert status == 400
     assert "error" in body
 
 
 def test_frame_unpin_clears_the_pin(client):
-    client.post_json("/api/frame/pin", {"what": "weather", "duration": "forever"})
-    status, body = client.post_json("/api/frame/unpin", {})
+    client.post_json("/api/frame/pin", {"frame": FRAME, "what": "weather", "duration": "forever"})
+    status, body = client.post_json("/api/frame/unpin", {"frame": FRAME})
     assert status == 200
     assert body["pin"] is None
-    assert _frame_doc(client.app)["pin"] is None
+    assert _frame_doc(client.app)["frames"][FRAME]["pin"] is None
 
 
 def test_frame_pin_seq_increases(client):
     _, first = client.post_json(
-        "/api/frame/pin", {"what": "weather", "duration": "forever"}
+        "/api/frame/pin", {"frame": FRAME, "what": "weather", "duration": "forever"}
     )
     _, second = client.post_json(
-        "/api/frame/pin", {"what": "art", "duration": "forever"}
+        "/api/frame/pin", {"frame": FRAME, "what": "art", "duration": "forever"}
     )
     assert second["pin"]["seq"] > first["pin"]["seq"]
 
@@ -832,11 +854,102 @@ def test_frame_pin_seq_increases(client):
 def test_frame_routes_require_the_header_guard(client):
     for path, payload in (
         ("/api/frame/settings", {"now_playing_kinds": ["music"]}),
-        ("/api/frame/pin", {"what": "weather", "duration": "forever"}),
-        ("/api/frame/unpin", {}),
+        ("/api/frame/pin", {"frame": FRAME, "what": "weather", "duration": "forever"}),
+        ("/api/frame/unpin", {"frame": FRAME}),
     ):
         status, body = client.post_json(path, payload, header=False)
         assert status == 403, path
         assert "error" in body
     # Nothing was written: the pin is still unset.
-    assert _frame_doc(client.app)["pin"] is None
+    assert _frame_doc(client.app)["frames"][FRAME]["pin"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Frame-scoped art commands and per-frame isolation over HTTP
+# --------------------------------------------------------------------------- #
+
+
+def test_art_command_without_frame_reaches_every_frame(client):
+    # A command with no frame is null-scoped: compatible with today, every frame
+    # acts on it.
+    status, body = client.post_json("/api/art/command", {"action": "next"})
+    assert status == 200
+    assert body["command"]["frame"] is None
+    assert _control(client.app)["command"]["frame"] is None
+
+
+def test_art_command_with_frame_is_scoped(client):
+    status, body = client.post_json(
+        "/api/art/command", {"action": "next", "frame": OTHER}
+    )
+    assert status == 200
+    assert body["command"]["frame"] == OTHER
+    assert _control(client.app)["command"]["frame"] == OTHER
+
+
+def test_art_command_unknown_frame_is_a_404(client):
+    status, body = client.post_json(
+        "/api/art/command", {"action": "next", "frame": "living-room"}
+    )
+    assert status == 404
+    assert "error" in body
+    # Nothing was recorded: the control document still carries no command.
+    assert _control(client.app)["command"] is None
+
+
+def test_art_command_malformed_frame_is_a_400(client):
+    status, body = client.post_json(
+        "/api/art/command", {"action": "next", "frame": "Office/.."}
+    )
+    assert status == 400
+    assert "error" in body
+
+
+def test_frame_pin_unknown_frame_is_a_404(client):
+    status, body = client.post_json(
+        "/api/frame/pin", {"frame": "living-room", "what": "weather", "duration": "forever"}
+    )
+    assert status == 404
+    assert "error" in body
+
+
+def test_frame_pin_malformed_frame_is_a_400(client):
+    status, body = client.post_json(
+        "/api/frame/pin", {"frame": "Office", "what": "weather", "duration": "forever"}
+    )
+    assert status == 400
+    assert "error" in body
+
+
+def test_frame_pin_touches_only_the_named_frame(client):
+    client.post_json(
+        "/api/frame/pin", {"frame": FRAME, "what": "weather", "duration": "forever"}
+    )
+    frames = _frame_doc(client.app)["frames"]
+    assert frames[FRAME]["pin"]["what"] == "weather"
+    assert frames[OTHER]["pin"] is None
+
+
+def test_frame_settings_per_frame_quiet_hours(client):
+    status, body = client.post_json(
+        "/api/frame/settings", {"frame": OTHER, "quiet_hours": {"enabled": False}}
+    )
+    assert status == 200
+    assert body["frame"] == OTHER
+    assert body["quiet_hours"] == {"enabled": False}
+    frames = _frame_doc(client.app)["frames"]
+    assert frames[OTHER]["quiet_hours"] == {"enabled": False}
+    # The nightstand still inherits the shared quiet hours.
+    assert frames[FRAME]["quiet_hours"] is None
+
+
+def test_frame_settings_unknown_frame_is_a_404(client):
+    status, body = client.post_json(
+        "/api/frame/settings", {"frame": "living-room", "quiet_hours": None}
+    )
+    assert status == 404
+    assert "error" in body
+
+
+def test_frame_doc_lists_every_frame(client):
+    assert set(_frame_doc(client.app)["frames"]) == {FRAME, OTHER}

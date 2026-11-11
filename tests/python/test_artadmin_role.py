@@ -47,9 +47,15 @@ def _module(task: dict) -> tuple[str, dict]:
     raise AssertionError(f"task has no module: {task.get('name')}")
 
 
+def _hosts() -> dict:
+    return yaml.safe_load((REPO / "vars/hosts.yml").read_text())["snaphouse_hosts"]
+
+
 def _unit() -> str:
+    # The unit derives its --frame list from the inventory, so it is rendered with
+    # snaphouse_hosts in scope, the way site.yml renders it on the hub.
     env = Environment(loader=FileSystemLoader(str(REPO)), keep_trailing_newline=True)
-    return env.get_template(UNIT_TEMPLATE).render()
+    return env.get_template(UNIT_TEMPLATE).render(snaphouse_hosts=_hosts())
 
 
 # --------------------------------------------------------------------------- #
@@ -74,11 +80,30 @@ def test_unit_passes_every_path_and_the_loopback_port():
 
 
 def test_unit_passes_the_frame_control_paths():
-    # Frame control persists beside the art state and reads the republished art
-    # history for the art pin; both are passed explicitly, like --state.
+    # Frame control persists beside the art state; its state file is passed
+    # explicitly, like --state.
     unit = _unit()
     assert "--frame-state /var/lib/snaphouse/artadmin/frame-control.json" in unit
-    assert "--art-history /var/lib/snaphouse/public/art-history.json" in unit
+
+
+def test_unit_passes_a_frame_id_per_inventory_frame():
+    # The frame ids are the inventory frame hosts (roles include
+    # nightstand_bootstrap). At base only the nightstand is a frame; the office
+    # joins when Task 1 adds it to that set. The legacy frame (the old single
+    # top-level pin migrates into it) is the nightstand.
+    unit = _unit()
+    frame_ids = sorted(
+        name
+        for name, host in _hosts().items()
+        if "nightstand_bootstrap" in host["roles"]
+    )
+    assert frame_ids, "no frame host in the inventory"
+    for fid in frame_ids:
+        assert f"--frame {fid}" in unit
+    assert "--legacy-frame nightstand" in unit
+    # The single-frame --art-history argument is gone: each frame now reads its own
+    # republished history under /frames/<id>/.
+    assert "--art-history" not in unit
 
 
 def test_unit_runs_as_the_art_user():

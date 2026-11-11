@@ -810,6 +810,42 @@ def test_command_rejects_unknown_action(tmp_path):
     assert excinfo.value.status == 400
 
 
+def test_command_without_frame_is_null_scoped(tmp_path):
+    # A command with no frame carries frame=null (every frame), the compatible
+    # default; the published document always carries the key.
+    library = _make_library(tmp_path)
+    command = library.command("next")
+    assert command["frame"] is None
+    assert library.control()["command"]["frame"] is None
+
+
+def test_command_records_the_frame_scope(tmp_path):
+    library = _make_library(tmp_path)
+    command = library.command("next", frame="office")
+    assert command["frame"] == "office"
+    assert library.control()["command"]["frame"] == "office"
+
+
+def test_a_command_stored_without_a_frame_key_reads_as_null(tmp_path):
+    # An older command document (written before per-frame commands) has no frame
+    # key; it reads back as null rather than missing, so a consumer reads it
+    # uniformly.
+    library = _make_library(tmp_path)
+    state = library.state
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text(
+        json.dumps(
+            {
+                "settings": {"rotate_minutes": 60, "folders_enabled": ["Collection"], "min_aspect": 1.1},
+                "command": {"seq": 3, "action": "next", "piece": None,
+                            "issued_at": "2026-11-09T07:00:00-08:00"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert library.control()["command"]["frame"] is None
+
+
 # --------------------------------------------------------------------------- #
 # trash purge
 # --------------------------------------------------------------------------- #
