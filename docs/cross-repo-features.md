@@ -70,18 +70,22 @@ git clone git@github.com:doyled-it/nightstand.git
   (the whole library: folders, pieces, trash, with thumbnails) and `art-control.json` (the
   rotation settings and the last command), rewriting both after every change and on a 60 s
   rescan so edits made over SMB show up too. The "Art index file" and "Art control file"
-  contracts below pin their shapes. For the frame's sync this supersedes the flat `/art/`
-  listing (nightstand Task 4); the listing stays until then.
+  contracts below pin their shapes. A rotation command carries an optional `frame`: with a frame
+  id it applies only to that frame, with none (the compatible default) to every frame. For the
+  frame's sync this supersedes the flat `/art/` listing (nightstand Task 4); the listing stays
+  until then.
 - **Frame control (snaphouse produces, the room-picker page and nightstand consume).** The
-  same `snaphouse-artadmin` service owns the frame settings and the pin: which kinds of audio
-  take the now-playing screen, the quiet-hours and morning-weather windows, and a pin that
-  holds the frame on the current art piece, the weather, or now playing. The page sets them
-  over three write endpoints behind the same `X-Snaphouse: 1` guard (`/api/frame/settings`,
-  `/api/frame/pin`, `/api/frame/unpin`), and the service publishes one same-origin document,
-  `frame-control.json`, rewritten after every change and at startup. The frame reads it each
-  cycle and follows it; a missing or malformed document falls back to local config and no pin
-  (the page shows the settings as unknown rather than wrong). The "Frame control file" contract
-  below pins its shape.
+  same `snaphouse-artadmin` service owns the shared frame settings and each frame's own quiet
+  hours and pin: which kinds of audio take the now-playing screen, the quiet-hours and
+  morning-weather windows (shared), and, per frame, a quiet-hours override and a pin that holds
+  that frame on the current art piece, the weather, or now playing. The page sets them over three
+  write endpoints behind the same `X-Snaphouse: 1` guard (`/api/frame/settings`, with an optional
+  `frame` for the per-frame keys; `/api/frame/pin` and `/api/frame/unpin`, each with a required
+  `frame`), and the service publishes one same-origin document, `frame-control.json`, with a
+  `frames` map keyed by the inventory frame ids, rewritten after every change and at startup. Each
+  frame reads it each cycle and follows its own entry; a missing or malformed document falls back
+  to local config and no pin (the page shows the settings as unknown rather than wrong). The
+  "Frame control file" contract below pins its shape.
 - **Art history (nightstand produces, snaphouse consumes).** Each frame host (one whose
   snaphouse roles include `nightstand_bootstrap`: `nightstand`, `office`) writes an
   art-history file each time it pushes the ART screen to the panel, served by snaphouse's
@@ -337,7 +341,7 @@ too, to show the current settings). The same service writes
 ```json
 {
   "settings": {"rotate_minutes": 60, "folders_enabled": ["Collection"], "min_aspect": 1.1},
-  "command": {"seq": 7, "action": "next", "piece": null,
+  "command": {"seq": 7, "action": "next", "piece": null, "frame": null,
               "issued_at": "2026-11-09T06:59:10-08:00"}
 }
 ```
@@ -349,9 +353,14 @@ a piece rotates only when its width/height reaches it, and the hub's `landscape`
 "Art index file" uses the same value, so the hub is the single source of truth and the frame
 follows it (its local config is only the fallback). `command` is `null` until the first
 command; `action` is `next`, `previous`, or
-`show` (`piece` is the id for `show`, otherwise `null`). `seq` only increases, so a frame acts on
-a `seq` greater than the last one it applied; a frame that starts up and sees an existing command
-records its `seq` without replaying it.
+`show` (`piece` is the id for `show`, otherwise `null`). `frame` scopes the command: a frame id
+means only that frame acts on it, and `null` means every frame (the compatible default). A frame
+acts on a command only when `frame` is absent or `null`, or equals its own id. `frame` is additive:
+a command written before per-frame commands has no `frame` key and the hub republishes it as
+`null`. The write `POST /api/art/command` takes `{"action", "piece"?, "frame"?}`, where `frame` is
+a known frame id (an unknown id is a 404, a malformed id a 400) or absent for every frame. `seq`
+only increases, so a frame acts on a `seq` greater than the last one it applied; a frame that
+starts up and sees an existing command records its `seq` without replaying it.
 
 **Frame control file.** snaphouse produces, nightstand and the room-picker page consume. The
 `snaphouse-artadmin` service writes `/var/lib/snaphouse/public/art/frame-control.json` atomically
@@ -370,9 +379,19 @@ it is rebuilt from persists at `/var/lib/snaphouse/artadmin/frame-control.json` 
                          "latitude": 32.72, "longitude": -117.16,
                          "timezone": "America/Los_Angeles"}
   },
-  "pin": null
+  "frames": {
+    "nightstand": {"quiet_hours": null, "pin": null},
+    "office": {"quiet_hours": {"enabled": false}, "pin": null}
+  }
 }
 ```
+
+`settings` is shared across every frame. `frames` lists exactly the inventory frame hosts (the
+hosts whose roles include `nightstand_bootstrap`), so the room-picker page's frame switcher reads
+the frame ids from it. Each frame carries its own `quiet_hours` override and its own `pin`, so
+pinning or silencing one frame never moves another. A frame's `quiet_hours` is `null` (fall back
+to the shared `settings.quiet_hours`), `{"enabled": false}` (that frame keeps no quiet hours), or
+a window `{"start", "end"}` (an override). A frame id matches `^[a-z][a-z0-9-]{0,31}$`.
 
 `now_playing_kinds` is a subset of `music`, `podcast`, `audiobook` (default `["music"]`): the
 now-playing screen takes the frame only when the derived category is in it. `quiet_hours.start`
@@ -385,19 +404,25 @@ through Open-Meteo's keyless geocoding API (`geocoding-api.open-meteo.com`). The
 `{"weather_location": {"query": "San Diego, CA"}}` (the hub geocodes it) or
 `{"weather_location": null}` (clears it); only the typed place name leaves the LAN. A bad city is a
 400 and an unreachable geocoder a 502, each a JSON error. When it is present and valid the frame
-uses it for the forecast; otherwise the frame falls back to its own local config. `pin` is `null` or
+uses it for the forecast; otherwise the frame falls back to its own local config. A frame's `pin`
+(in `frames[<id>]`) is `null` or
 `{"what": "art" | "weather" | "now_playing", "piece": id | null, "until": iso | null, "seq": n,
-"set_at": iso}`. `piece` is the art id captured when an `art` pin was set (the piece then on the
-frame, read from the republished `art-history.json`), or `null`; `until` is an ISO-8601 stamp with
+"set_at": iso}`. `piece` is the art id captured when an `art` pin was set (the piece then on that
+frame, read from that frame's own republished `art-history.json` under `/frames/<id>/`), or `null`;
+`until` is an ISO-8601 stamp with
 offset, or `null` for "until unpinned". The "until tomorrow morning" choice resolves on the hub to
-the next morning-window start for that day of the week. `seq` increases on every pin and unpin, so
-a frame can tell a change and redraw once (a pin change forces one redraw even in quiet hours).
-The three write endpoints (`/api/frame/settings` with any subset of `settings`; `/api/frame/pin`
-with `{"what", "duration"}` where `duration` is `1h`, `4h`, `morning`, or `forever`;
-`/api/frame/unpin` with `{}`) each carry the `X-Snaphouse: 1` guard and return JSON errors like
-the art API. A missing, stale, or malformed file means the frame keeps working on local config and
-no pin, and the page shows the settings as unknown rather than wrong. A pinned art piece deleted
-from the library while pinned makes the frame fall back to the schedule, no crash.
+the next morning-window start for that day of the week. `seq` is per frame and increases on every
+pin and unpin of that frame, so a frame can tell a change to its own pin and redraw once (a pin
+change forces one redraw even in quiet hours).
+The three write endpoints each carry the `X-Snaphouse: 1` guard, validate the frame id (an unknown
+id is a 404, a malformed one a 400, so a write never reaches an arbitrary path), and return JSON
+errors like the art API: `/api/frame/pin` with `{"frame", "what", "duration"}` (`duration` is `1h`,
+`4h`, `morning`, or `forever`) and `/api/frame/unpin` with `{"frame"}` both take a required `frame`
+and act on that frame alone; `/api/frame/settings` takes an optional `frame` (with it, a subset of
+the per-frame keys, currently `quiet_hours`; without it, a subset of the shared `settings`). A
+missing, stale, or malformed file means every frame keeps working on local config and no pin, and
+the page shows the settings as unknown rather than wrong. A pinned art piece deleted from the
+library while pinned makes that frame fall back to the schedule, no crash.
 
 **snapserver API.** `http://house.local/jsonrpc` is proxied by nginx on the hub to
 snapserver's JSON-RPC (port 1780). Port 1780 itself stays reachable on the LAN for

@@ -22,10 +22,11 @@ ready() {
     curl -fsS http://localhost/art-index.json \
         | jq -e 'type == "object" and (.folders | type == "array") and (.pieces | type == "array")' \
         >/dev/null 2>&1 || return 1
-    # The same service publishes frame-control.json (the frame settings and pin);
-    # prove it is served and parses too.
+    # The same service publishes frame-control.json (the shared frame settings and
+    # the per-frame quiet hours and pins under `frames`); prove it is served and
+    # parses too.
     curl -fsS http://localhost/frame-control.json \
-        | jq -e 'type == "object" and (.settings | type == "object") and has("pin")' \
+        | jq -e 'type == "object" and (.settings | type == "object") and (.frames | type == "object")' \
         >/dev/null 2>&1 || return 1
     return 0
 }
@@ -39,7 +40,7 @@ while ! ready; do
         curl -fsS http://localhost/art-index.json \
             | jq -e 'type == "object" and (.folders | type == "array") and (.pieces | type == "array")' >/dev/null
         curl -fsS http://localhost/frame-control.json \
-            | jq -e 'type == "object" and (.settings | type == "object") and has("pin")' >/dev/null
+            | jq -e 'type == "object" and (.settings | type == "object") and (.frames | type == "object")' >/dev/null
         exit 1
     fi
     sleep 2

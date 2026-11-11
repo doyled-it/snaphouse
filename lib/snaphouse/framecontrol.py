@@ -26,8 +26,16 @@ The published document is::
                             "weekend": ["07:00", "09:00"]},
         "weather_location": null
       },
-      "pin": null
+      "frames": {
+        "nightstand": {"quiet_hours": null, "pin": null},
+        "office": {"quiet_hours": {"enabled": false}, "pin": null}
+      }
     }
+
+``settings`` is shared across every frame. Each frame in ``frames`` carries its
+own quiet-hours override (``null`` falls back to ``settings.quiet_hours``;
+``{"enabled": false}`` means that frame keeps no quiet hours) and its own pin, so
+pinning or silencing one frame never moves another.
 
 ``weather_location`` is ``null`` or ``{"name", "latitude", "longitude",
 "timezone"}``: the display name, city-centre coordinates rounded to two decimals,
@@ -35,9 +43,9 @@ and the IANA timezone the hub resolved from a typed city via Open-Meteo's keyles
 geocoding API. The frame uses it for the forecast and falls back to its own local
 config when it is ``null``.
 
-``pin`` is ``null`` or ``{"what", "piece", "until", "seq", "set_at"}``; the design
-and the pinned contract are in
-``docs/superpowers/specs/2026-11-10-frame-control-design.md`` and
+A frame's ``pin`` is ``null`` or ``{"what", "piece", "until", "seq", "set_at"}``;
+the design and the pinned contract are in
+``docs/superpowers/specs/2026-11-11-multiframe-panel-design.md`` and
 ``docs/cross-repo-features.md``.
 """
 
@@ -89,6 +97,23 @@ DEFAULT_MORNING_WEATHER = {
 
 #: A 24-hour ``HH:MM`` time, 00:00 to 23:59.
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+#: A frame id is an inventory key: a lowercase letter then up to 31 lowercase
+#: letters, digits, or hyphens (global constraints). A request naming a frame
+#: that does not match this is malformed (400); one that matches but is not a
+#: known frame is unknown (404).
+FRAME_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
+#: The frame the pre-per-frame state migrates into. The old single-frame document
+#: carried one top-level ``pin`` (and its ``seq``); on first load under the new
+#: shape that pin becomes this frame's, since the nightstand was the only frame
+#: when it was set. Passed explicitly by the service; ``None`` disables migration.
+DEFAULT_LEGACY_FRAME = "nightstand"
+
+#: The frames assumed when a caller names none. The nightstand is the original
+#: single frame, so a bare ``FrameControl(state)`` behaves as the old single-frame
+#: control did. The service always passes the real inventory frame list.
+DEFAULT_FRAMES = ("nightstand",)
 
 
 # --------------------------------------------------------------------------- #
@@ -179,25 +204,46 @@ def urllib_geocode(url: str) -> Optional[bytes]:
 
 
 class FrameControl:
-    """Frame settings and the pin, persisted to ``state`` and published as a
-    ``{settings, pin}`` document.
+    """Frame settings and per-frame pins, persisted to ``state`` and published as
+    a ``{settings, frames}`` document.
 
-    ``state`` is the private JSON file the settings, the pin, and the monotonic
-    sequence counter persist in. ``art_history`` is the republished
-    ``art-history.json`` (the "Art history file" contract); pinning ``art`` reads
-    the current piece from it. ``clock`` is injected for deterministic tests.
+    The shared ``settings`` (now-playing kinds, the shared quiet hours and
+    morning-weather windows, the weather city) apply to every frame. Each frame in
+    ``frames`` has its own quiet-hours override and its own pin, so pinning or
+    silencing one frame never moves another. ``state`` is the private JSON file the
+    settings, each frame's pin and quiet hours, and each frame's monotonic sequence
+    counter persist in.
+
+    ``frames`` is the known frame ids (the inventory frame hosts); the published
+    document lists exactly these, so the page's frame switcher reads them from it.
+    ``legacy_frame`` is the frame the pre-per-frame state migrates into: an old
+    document's single top-level ``pin`` becomes that frame's pin on first load.
+    ``art_history`` maps a frame id to its republished ``art-history.json`` (the
+    "Art history file" contract, now republished per frame under ``/frames/<id>/``);
+    pinning ``art`` reads the current piece from that frame's own history. ``clock``
+    is injected for deterministic tests.
     """
 
     def __init__(
         self,
         state: Path,
         *,
-        art_history: Optional[Path] = None,
+        frames: "Optional[list]" = None,
+        legacy_frame: Optional[str] = None,
+        art_history: "Optional[dict]" = None,
         clock: Callable[[], float] = time.time,
         geocode: Optional[Fetch] = None,
     ) -> None:
         self.state = Path(state)
-        self.art_history = Path(art_history) if art_history is not None else None
+        self.frames = list(frames) if frames is not None else list(DEFAULT_FRAMES)
+        self.legacy_frame = legacy_frame
+        # Map a frame id to its republished art history (read-only). A frame with
+        # no entry (or a missing file) simply captures no piece on an art pin.
+        self.art_history = (
+            {fid: Path(path) for fid, path in dict(art_history).items()}
+            if art_history
+            else {}
+        )
         self._clock = clock
         # The geocoder fetch (url -> body bytes or None) is injected so tests use
         # recorded or synthetic responses and no test touches the network. The
@@ -208,27 +254,61 @@ class FrameControl:
     # -- published document ------------------------------------------------- #
 
     def document(self) -> dict:
-        """The ``/frame-control.json`` document: exactly ``settings`` and ``pin``.
+        """The ``/frame-control.json`` document: ``settings`` and ``frames``.
 
-        The private sequence counter never appears here; a frame reads only the
-        settings and the pin (the pin carries its own ``seq`` when set).
+        ``frames`` lists exactly the known frame ids (from the inventory), each as
+        ``{"quiet_hours", "pin"}``: the per-frame quiet-hours override (``null``
+        falls back to the shared ``settings.quiet_hours``) and the per-frame pin.
+        The private per-frame sequence counter never appears here; a frame reads
+        only the settings and its own quiet hours and pin (the pin carries its own
+        ``seq`` when set).
         """
         state = self._load_state()
-        return {"settings": state["settings"], "pin": state["pin"]}
+        frames = {
+            fid: {
+                "quiet_hours": state["frames"][fid]["quiet_hours"],
+                "pin": state["frames"][fid]["pin"],
+            }
+            for fid in self.frames
+        }
+        return {"settings": state["settings"], "frames": frames}
+
+    # -- frame identity ----------------------------------------------------- #
+
+    def require_frame(self, frame_id) -> str:
+        """Return ``frame_id`` if it is a known frame, else raise.
+
+        A value that is not a well-formed frame id (an inventory key) is a 400
+        (malformed); a well-formed id that is not one of this hub's frames is a 404
+        (unknown). This guards every per-frame write from touching an arbitrary
+        path (Review Focus 5).
+        """
+        if not isinstance(frame_id, str) or not FRAME_ID_RE.match(frame_id):
+            raise ArtError(400, "That is not a valid frame id.")
+        if frame_id not in self.frames:
+            raise ArtError(404, "There is no frame with that id.")
+        return frame_id
 
     # -- settings ----------------------------------------------------------- #
 
-    def update_settings(self, subset: dict) -> dict:
-        """Validate a subset of ``settings`` and merge it into the stored settings.
+    def update_settings(self, subset: dict, frame: Optional[str] = None) -> dict:
+        """Validate and store a settings subset, shared or for one frame.
 
-        ``subset`` may carry any of ``now_playing_kinds``, ``quiet_hours``, and
-        ``morning_weather``; a window sub-dict may itself be partial (just
-        ``enabled``, or just one window). The whole subset is validated before
-        anything is written, so a rejected update leaves the stored settings
-        untouched. Returns the full merged settings.
+        With no ``frame`` this updates the shared ``settings``: any of
+        ``now_playing_kinds``, ``quiet_hours`` (the shared default), and
+        ``morning_weather`` (a window sub-dict may be partial), and
+        ``weather_location``. The whole subset is validated before anything is
+        written, so a rejected update leaves the stored settings untouched. Returns
+        the full merged settings.
+
+        With a ``frame`` this updates only that frame's per-frame keys
+        (``quiet_hours``); a shared-only key with a frame is a 400, so the two
+        scopes stay separate. Returns the stored per-frame quiet-hours value.
         """
         if not isinstance(subset, dict):
             raise ArtError(400, "That is not a valid settings object.")
+        if frame is not None:
+            return self._update_frame_settings(self.require_frame(frame), subset)
         state = self._load_state()
         settings = state["settings"]
 
@@ -250,6 +330,47 @@ class FrameControl:
         state["settings"] = settings
         self._save_state(state)
         return settings
+
+    #: The settings keys that may be set per frame. Everything else is shared and
+    #: can only be set with no ``frame``.
+    _PER_FRAME_KEYS = {"quiet_hours"}
+
+    def _update_frame_settings(self, frame: str, subset: dict) -> Optional[dict]:
+        """Validate and store one frame's per-frame settings; return its quiet hours.
+
+        Only ``quiet_hours`` is a per-frame key; any other key (a shared setting)
+        with a frame is a 400, so a caller cannot set a shared value through the
+        per-frame path. The stored quiet hours is one of a window
+        ``{"start", "end"}`` (an override), ``{"enabled": false}`` (this frame has
+        no quiet hours), or ``null`` (fall back to the shared quiet hours).
+        """
+        extra = set(subset) - self._PER_FRAME_KEYS
+        if extra:
+            raise ArtError(400, "That is not a per-frame setting.")
+        state = self._load_state()
+        entry = state["frames"].setdefault(frame, self._default_frame())
+        if "quiet_hours" in subset:
+            entry["quiet_hours"] = self._clean_frame_quiet_hours(subset["quiet_hours"])
+        state["frames"][frame] = entry
+        self._save_state(state)
+        return entry["quiet_hours"]
+
+    def _clean_frame_quiet_hours(self, value) -> Optional[dict]:
+        """Validate a per-frame quiet-hours write to its stored form.
+
+        ``null`` falls back to the shared quiet hours. ``{"enabled": false}`` means
+        this frame keeps no quiet hours. Anything else must be a full window of two
+        valid ``HH:MM`` times (start and end, which may wrap past midnight).
+        """
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ArtError(400, "The quiet hours must be a start and an end time.")
+        if value.get("enabled") is False:
+            return {"enabled": False}
+        start = self._valid_time(value.get("start"))
+        end = self._valid_time(value.get("end"))
+        return {"start": start, "end": end}
 
     def _clean_kinds(self, value) -> list:
         if not isinstance(value, list):
@@ -312,7 +433,7 @@ class FrameControl:
 
     # -- weather location --------------------------------------------------- #
 
-    def prepare_settings(self, subset: dict) -> dict:
+    def prepare_settings(self, subset: dict, frame: Optional[str] = None) -> dict:
         """Resolve a settings subset's network-bound parts before it is stored.
 
         The weather geocode is the only slow, network-bound step in a settings
@@ -324,9 +445,14 @@ class FrameControl:
         as ``None``. Every other key is passed through untouched for
         :meth:`update_settings` to validate and store under the lock. A write with
         no ``weather_location`` key needs no network and is returned as-is.
+
+        A per-frame write (``frame`` set) carries no network-bound key (the weather
+        city is shared), so it is returned unchanged for the locked step.
         """
         if not isinstance(subset, dict):
             raise ArtError(400, "That is not a valid settings object.")
+        if frame is not None:
+            return dict(subset)
         if "weather_location" not in subset:
             return dict(subset)
         prepared = dict(subset)
@@ -410,23 +536,27 @@ class FrameControl:
 
     # -- pin ---------------------------------------------------------------- #
 
-    def pin(self, what, duration) -> dict:
-        """Set the pin to ``what`` for ``duration``; return the stored pin.
+    def pin(self, frame, what, duration) -> dict:
+        """Pin ``frame`` to ``what`` for ``duration``; return the stored pin.
 
-        ``what`` is one of ``art``, ``weather``, ``now_playing`` and ``duration``
-        one of ``1h``, ``4h``, ``morning``, ``forever``. Pinning ``art`` records
-        the current art piece from the republished art history (``null`` when it
-        is missing, malformed, or shows nothing). ``seq`` increases on every pin
-        and unpin, so a frame can tell a change and redraw once.
+        ``frame`` is the frame to pin (unknown is a 404, malformed a 400); the pin
+        is that frame's alone and never moves another. ``what`` is one of ``art``,
+        ``weather``, ``now_playing`` and ``duration`` one of ``1h``, ``4h``,
+        ``morning``, ``forever``. Pinning ``art`` records the current art piece from
+        that frame's own republished art history (``null`` when it is missing,
+        malformed, or shows nothing). ``seq`` increases on every pin and unpin for
+        that frame, so the frame can tell a change and redraw once.
         """
+        self.require_frame(frame)
         if what not in WHATS:
             raise ArtError(400, "That is not something the frame can be pinned to.")
         if duration not in DURATIONS:
             raise ArtError(400, "That is not one of the pin durations.")
 
         state = self._load_state()
-        piece = self._current_piece() if what == "art" else None
-        seq = state["seq"] + 1
+        entry = state["frames"].setdefault(frame, self._default_frame())
+        piece = self._current_piece(frame) if what == "art" else None
+        seq = entry["seq"] + 1
         pin = {
             "what": what,
             "piece": piece,
@@ -434,22 +564,26 @@ class FrameControl:
             "seq": seq,
             "set_at": self._now_iso(),
         }
-        state["pin"] = pin
-        state["seq"] = seq
+        entry["pin"] = pin
+        entry["seq"] = seq
+        state["frames"][frame] = entry
         self._save_state(state)
         return pin
 
-    def unpin(self) -> None:
-        """Clear the pin and advance the sequence counter; return ``None``.
+    def unpin(self, frame) -> None:
+        """Clear ``frame``'s pin and advance its sequence counter; return ``None``.
 
-        Clearing is idempotent: unpinning when nothing is pinned still advances
-        the counter, so the next pin always carries a sequence a frame has not
-        applied. A frame reads the cleared pin (``null``) as "no pin" and returns
-        to its normal schedule.
+        Clearing is idempotent: unpinning when nothing is pinned still advances the
+        counter, so the next pin always carries a sequence the frame has not
+        applied. The frame reads the cleared pin (``null``) as "no pin" and returns
+        to its normal schedule. Only this frame's pin is touched.
         """
+        self.require_frame(frame)
         state = self._load_state()
-        state["seq"] += 1
-        state["pin"] = None
+        entry = state["frames"].setdefault(frame, self._default_frame())
+        entry["seq"] += 1
+        entry["pin"] = None
+        state["frames"][frame] = entry
         self._save_state(state)
         return None
 
@@ -481,18 +615,20 @@ class FrameControl:
         # Unreachable: some day within a week always has a start after now.
         return self._iso(now)
 
-    def _current_piece(self) -> Optional[str]:
-        """The id (or file) of the piece currently on the frame, or ``None``.
+    def _current_piece(self, frame: str) -> Optional[str]:
+        """The id (or file) of the piece currently on ``frame``, or ``None``.
 
-        Reads the republished art history and returns ``current.id`` when present,
-        falling back to ``current.file``. A missing, unreadable, or malformed file,
-        or nothing current, is ``None``, so a pin set with no art showing (or with
-        the history briefly absent) still stores cleanly and the frame falls back.
+        Reads that frame's own republished art history and returns ``current.id``
+        when present, falling back to ``current.file``. A frame with no configured
+        history, or a missing, unreadable, or malformed file, or nothing current,
+        is ``None``, so a pin set with no art showing (or with the history briefly
+        absent) still stores cleanly and the frame falls back.
         """
-        if self.art_history is None:
+        path = self.art_history.get(frame)
+        if path is None:
             return None
         try:
-            data = json.loads(self.art_history.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
         if not isinstance(data, dict):
@@ -522,9 +658,14 @@ class FrameControl:
                 },
                 "weather_location": None,
             },
-            "pin": None,
-            "seq": 0,
+            "frames": {fid: self._default_frame() for fid in self.frames},
         }
+
+    @staticmethod
+    def _default_frame() -> dict:
+        """A frame with no override and no pin: inherit the shared quiet hours,
+        nothing pinned, and a fresh per-frame sequence counter."""
+        return {"quiet_hours": None, "pin": None, "seq": 0}
 
     def _load_state(self) -> dict:
         try:
@@ -561,19 +702,75 @@ class FrameControl:
             state["settings"]["weather_location"] = _normalize_weather_location(
                 settings.get("weather_location")
             )
+        frames = data.get("frames")
+        if isinstance(frames, dict):
+            for fid in self.frames:
+                state["frames"][fid] = self._normalize_frame(frames.get(fid))
+        else:
+            # Pre-per-frame document (one top-level ``pin`` and ``seq``, no
+            # ``frames`` map): migrate that pin into the legacy frame, since the
+            # nightstand was the only frame when it was set. The pin becomes that
+            # frame's; every other frame starts clean.
+            self._migrate_legacy(state, data)
+        return state
+
+    def _normalize_frame(self, entry) -> dict:
+        """Coerce one stored frame entry into a trusted ``{quiet_hours, pin, seq}``.
+
+        A hand-edited or older entry falls back to the frame default rather than
+        crashing a request. The counter is kept at or above the stored pin's seq so
+        a reissued pin never repeats a number the frame already applied.
+        """
+        frame = self._default_frame()
+        if not isinstance(entry, dict):
+            return frame
+        frame["quiet_hours"] = self._normalize_frame_quiet_hours(entry.get("quiet_hours"))
+        pin = entry.get("pin")
+        if isinstance(pin, dict) and pin.get("what") in WHATS:
+            frame["pin"] = pin
+        seq = entry.get("seq")
+        if isinstance(seq, int) and not isinstance(seq, bool) and seq >= 0:
+            frame["seq"] = seq
+        if isinstance(frame["pin"], dict):
+            pin_seq = frame["pin"].get("seq")
+            if isinstance(pin_seq, int) and not isinstance(pin_seq, bool):
+                frame["seq"] = max(frame["seq"], pin_seq)
+        return frame
+
+    def _normalize_frame_quiet_hours(self, value) -> Optional[dict]:
+        """A stored per-frame quiet-hours value, coerced: a window, the explicit
+        ``{"enabled": false}``, or ``None`` (fall back to the shared quiet hours)."""
+        if not isinstance(value, dict):
+            return None
+        if value.get("enabled") is False:
+            return {"enabled": False}
+        start = value.get("start")
+        end = value.get("end")
+        if (
+            isinstance(start, str)
+            and _TIME_RE.match(start)
+            and isinstance(end, str)
+            and _TIME_RE.match(end)
+        ):
+            return {"start": start, "end": end}
+        return None
+
+    def _migrate_legacy(self, state: dict, data: dict) -> None:
+        """Fold an old single-frame document's top-level pin into the legacy frame."""
+        if not self.legacy_frame or self.legacy_frame not in state["frames"]:
+            return
+        migrated = self._default_frame()
         pin = data.get("pin")
         if isinstance(pin, dict) and pin.get("what") in WHATS:
-            state["pin"] = pin
+            migrated["pin"] = pin
         seq = data.get("seq")
         if isinstance(seq, int) and not isinstance(seq, bool) and seq >= 0:
-            state["seq"] = seq
-        # The counter must never fall behind a stored pin's seq, or a reissued
-        # pin could repeat a number a frame already applied.
-        if isinstance(state["pin"], dict):
-            pin_seq = state["pin"].get("seq")
+            migrated["seq"] = seq
+        if isinstance(migrated["pin"], dict):
+            pin_seq = migrated["pin"].get("seq")
             if isinstance(pin_seq, int) and not isinstance(pin_seq, bool):
-                state["seq"] = max(state["seq"], pin_seq)
-        return state
+                migrated["seq"] = max(migrated["seq"], pin_seq)
+        state["frames"][self.legacy_frame] = migrated
 
     def _normalize_quiet_hours(self, value) -> dict:
         result = dict(DEFAULT_QUIET_HOURS)

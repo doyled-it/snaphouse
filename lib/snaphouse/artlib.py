@@ -605,13 +605,20 @@ class Library:
         self._save_state(control)
         return minutes
 
-    def command(self, action: str, piece: Optional[str] = None) -> dict:
+    def command(
+        self, action: str, piece: Optional[str] = None, frame: Optional[str] = None
+    ) -> dict:
         """Issue a rotation command (``next``, ``previous``, or ``show``).
 
         ``show`` requires a piece id that is a landscape image still in the
         library; a portrait piece is a 409 and nothing is recorded. The sequence
         number increases by one per accepted command, so a frame acts on a seq it
         has not applied.
+
+        ``frame`` scopes the command to one frame: a frame acts on the command only
+        when ``frame`` is absent (``null``, every frame) or equals its own id. The
+        value is a frame id (its format already checked by the caller) or ``None``;
+        it is recorded as-is so each frame can decide whether the command is for it.
         """
         if action not in ("next", "previous", "show"):
             raise ArtError(400, "That is not a valid rotation command.")
@@ -632,6 +639,7 @@ class Library:
             "seq": seq,
             "action": action,
             "piece": piece,
+            "frame": frame if isinstance(frame, str) else None,
             "issued_at": self._now_iso(),
         }
         control["command"] = command
@@ -885,6 +893,12 @@ class Library:
                 state["settings"]["min_aspect"] = min_aspect
         command = data.get("command")
         if isinstance(command, dict) and isinstance(command.get("seq"), int):
+            # ``frame`` is additive: a command stored before per-frame commands has
+            # no ``frame`` key. Default it to ``null`` (every frame) so the
+            # published document always carries the key and a consumer reads it
+            # uniformly; a non-string value is coerced to ``null`` as well.
+            frame = command.get("frame")
+            command["frame"] = frame if isinstance(frame, str) else None
             state["command"] = command
         return state
 

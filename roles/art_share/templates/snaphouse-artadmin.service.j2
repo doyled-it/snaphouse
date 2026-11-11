@@ -1,10 +1,17 @@
+{% set frame_ids = [] -%}
+{% for host_name, host in snaphouse_hosts.items() -%}
+{%   if 'nightstand_bootstrap' in host.roles -%}
+{%     set _ = frame_ids.append(host_name) -%}
+{%   endif -%}
+{% endfor -%}
 # snaphouse art admin service, managed by Ansible (roles/art_share). Do not edit
 # on the host; change the template and let self-update roll it out.
 #
 # It is the one hub service that writes the art library: a loopback HTTP API
 # (127.0.0.1:8781) the room-picker page calls through nginx (/api/art/) to
 # upload, delete, move, and reorganise pieces, change the rotation interval, and
-# issue next/previous/show commands. It also owns the frame settings and pin, and
+# issue next/previous/show commands. It also owns the shared frame settings and
+# each frame's own quiet hours and pin, and
 # publishes art-index.json, art-control.json, frame-control.json, and the
 # thumbnails every page and the frame read, rewriting them after each change and
 # on a 60 s rescan so SMB edits show up too.
@@ -26,7 +33,12 @@ User=art
 Group=art
 Environment=PYTHONPATH=/opt/snaphouse/lib
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.artadmin --root /srv/snaphouse/art --public-root /var/lib/snaphouse/public --state /var/lib/snaphouse/artadmin/art-control.json --frame-state /var/lib/snaphouse/artadmin/frame-control.json --art-history /var/lib/snaphouse/public/art-history.json --port 8781 --host 127.0.0.1
+# The frame ids are the inventory frame hosts (roles include nightstand_bootstrap),
+# sorted so the line is stable across applies (a second apply must report
+# changed=0). Each frame reads its own republished art history under
+# /frames/<id>/ for its art pin; the old single top-level pin migrates into the
+# nightstand (--legacy-frame).
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.artadmin --root /srv/snaphouse/art --public-root /var/lib/snaphouse/public --state /var/lib/snaphouse/artadmin/art-control.json --frame-state /var/lib/snaphouse/artadmin/frame-control.json {% for fid in frame_ids | sort %}--frame {{ fid }} {% endfor %}--legacy-frame nightstand --port 8781 --host 127.0.0.1
 Restart=always
 RestartSec=5
 

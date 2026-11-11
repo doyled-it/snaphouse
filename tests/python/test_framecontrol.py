@@ -39,9 +39,28 @@ def _clock_at(year, month, day, hour, minute):
     return lambda: moment.timestamp(), moment
 
 
-def _make(tmp_path: Path, *, clock=None, art_history=None, geocode=None) -> FrameControl:
+# The frame most single-frame tests act on: the original frame, the default when
+# no frame list is given. Multi-frame tests name both.
+FRAME = "nightstand"
+OTHER = "office"
+
+
+def _make(
+    tmp_path: Path,
+    *,
+    clock=None,
+    frames=None,
+    legacy_frame=None,
+    art_history=None,
+    geocode=None,
+) -> FrameControl:
     state = tmp_path / "state" / "frame-control.json"
-    kwargs = {"art_history": art_history, "geocode": geocode}
+    kwargs = {
+        "frames": frames,
+        "legacy_frame": legacy_frame,
+        "art_history": art_history,
+        "geocode": geocode,
+    }
     if clock is not None:
         kwargs["clock"] = clock
     return FrameControl(state, **kwargs)
@@ -136,7 +155,7 @@ def _local_iso(moment: datetime) -> str:
 def test_defaults_when_no_state_exists(tmp_path):
     frame = _make(tmp_path)
     doc = frame.document()
-    assert doc["pin"] is None
+    assert doc["frames"][FRAME]["pin"] is None
     settings = doc["settings"]
     assert settings["now_playing_kinds"] == ["music"]
     assert settings["quiet_hours"] == {"start": "22:00", "end": "06:00"}
@@ -151,7 +170,7 @@ def test_document_is_only_settings_and_pin(tmp_path):
     # The published shape is exactly {settings, pin}; the private seq counter must
     # not leak into the document a frame reads.
     frame = _make(tmp_path)
-    assert set(frame.document().keys()) == {"settings", "pin"}
+    assert set(frame.document().keys()) == {"settings", "frames"}
 
 
 # --------------------------------------------------------------------------- #
@@ -278,7 +297,7 @@ def test_a_bad_value_does_not_persist(tmp_path):
 def test_pin_each_what(tmp_path, what):
     clock, _ = _clock_at(2026, 11, 9, 14, 0)
     frame = _make(tmp_path, clock=clock)
-    pin = frame.pin(what, "forever")
+    pin = frame.pin(FRAME, what, "forever")
     assert pin["what"] == what
     assert pin["until"] is None
     assert pin["seq"] == 1
@@ -288,34 +307,34 @@ def test_pin_each_what(tmp_path, what):
 def test_pin_one_hour(tmp_path):
     clock, moment = _clock_at(2026, 11, 9, 14, 0)
     frame = _make(tmp_path, clock=clock)
-    pin = frame.pin("weather", "1h")
+    pin = frame.pin(FRAME, "weather", "1h")
     assert pin["until"] == _local_iso(moment + timedelta(hours=1))
 
 
 def test_pin_four_hours(tmp_path):
     clock, moment = _clock_at(2026, 11, 9, 14, 0)
     frame = _make(tmp_path, clock=clock)
-    pin = frame.pin("weather", "4h")
+    pin = frame.pin(FRAME, "weather", "4h")
     assert pin["until"] == _local_iso(moment + timedelta(hours=4))
 
 
 def test_pin_forever_has_no_expiry(tmp_path):
     clock, _ = _clock_at(2026, 11, 9, 14, 0)
     frame = _make(tmp_path, clock=clock)
-    assert frame.pin("weather", "forever")["until"] is None
+    assert frame.pin(FRAME, "weather", "forever")["until"] is None
 
 
 def test_unknown_what_is_rejected(tmp_path):
     frame = _make(tmp_path)
     with pytest.raises(ArtError) as info:
-        frame.pin("clock", "1h")
+        frame.pin(FRAME, "clock", "1h")
     assert info.value.status == 400
 
 
 def test_unknown_duration_is_rejected(tmp_path):
     frame = _make(tmp_path)
     with pytest.raises(ArtError) as info:
-        frame.pin("weather", "2h")
+        frame.pin(FRAME, "weather", "2h")
     assert info.value.status == 400
 
 
@@ -333,7 +352,7 @@ def test_morning_resolves_to_next_weekday_start(tmp_path):
     # Monday 14:00: the next morning-window start is Tuesday (a weekday) 06:00.
     clock, moment = _clock_at(2026, 11, 9, 14, 0)  # 2026-11-09 is a Monday
     frame = _make(tmp_path, clock=clock)
-    pin = frame.pin("weather", "morning")
+    pin = frame.pin(FRAME, "weather", "morning")
     assert pin["until"] == _expected_morning(moment, 6, 0, 1)
 
 
@@ -341,7 +360,7 @@ def test_morning_picks_today_when_before_the_start(tmp_path):
     # Monday 05:00, before the 06:00 weekday start: the next start is today 06:00.
     clock, moment = _clock_at(2026, 11, 9, 5, 0)
     frame = _make(tmp_path, clock=clock)
-    pin = frame.pin("weather", "morning")
+    pin = frame.pin(FRAME, "weather", "morning")
     assert pin["until"] == _expected_morning(moment, 6, 0, 0)
 
 
@@ -349,7 +368,7 @@ def test_morning_uses_the_weekend_window(tmp_path):
     # Saturday 10:00, past the 07:00 weekend start: the next start is Sunday 07:00.
     clock, moment = _clock_at(2026, 11, 14, 10, 0)  # 2026-11-14 is a Saturday
     frame = _make(tmp_path, clock=clock)
-    pin = frame.pin("weather", "morning")
+    pin = frame.pin(FRAME, "weather", "morning")
     assert pin["until"] == _expected_morning(moment, 7, 0, 1)
 
 
@@ -358,7 +377,7 @@ def test_morning_follows_a_changed_window(tmp_path):
     clock, moment = _clock_at(2026, 11, 9, 14, 0)
     frame = _make(tmp_path, clock=clock)
     frame.update_settings({"morning_weather": {"weekday": ["05:15", "07:00"]}})
-    pin = frame.pin("weather", "morning")
+    pin = frame.pin(FRAME, "weather", "morning")
     assert pin["until"] == _expected_morning(moment, 5, 15, 1)
 
 
@@ -375,8 +394,8 @@ def _write_history(path: Path, current) -> None:
 def test_pin_art_captures_the_current_piece_id(tmp_path):
     history = tmp_path / "public" / "art-history.json"
     _write_history(history, {"file": "aic-1.jpg", "id": "Photos/aic-1.jpg", "title": "X"})
-    frame = _make(tmp_path, art_history=history)
-    pin = frame.pin("art", "forever")
+    frame = _make(tmp_path, art_history={FRAME: history})
+    pin = frame.pin(FRAME, "art", "forever")
     assert pin["what"] == "art"
     assert pin["piece"] == "Photos/aic-1.jpg"
 
@@ -384,36 +403,36 @@ def test_pin_art_captures_the_current_piece_id(tmp_path):
 def test_pin_art_falls_back_to_file_when_no_id(tmp_path):
     history = tmp_path / "public" / "art-history.json"
     _write_history(history, {"file": "aic-2.jpg", "id": None, "title": "X"})
-    frame = _make(tmp_path, art_history=history)
-    assert frame.pin("art", "forever")["piece"] == "aic-2.jpg"
+    frame = _make(tmp_path, art_history={FRAME: history})
+    assert frame.pin(FRAME, "art", "forever")["piece"] == "aic-2.jpg"
 
 
 def test_pin_art_piece_is_null_when_history_missing(tmp_path):
     history = tmp_path / "public" / "art-history.json"
-    frame = _make(tmp_path, art_history=history)
-    assert frame.pin("art", "forever")["piece"] is None
+    frame = _make(tmp_path, art_history={FRAME: history})
+    assert frame.pin(FRAME, "art", "forever")["piece"] is None
 
 
 def test_pin_art_piece_is_null_when_history_is_malformed(tmp_path):
     history = tmp_path / "public" / "art-history.json"
     history.parent.mkdir(parents=True, exist_ok=True)
     history.write_text("not json", encoding="utf-8")
-    frame = _make(tmp_path, art_history=history)
-    assert frame.pin("art", "forever")["piece"] is None
+    frame = _make(tmp_path, art_history={FRAME: history})
+    assert frame.pin(FRAME, "art", "forever")["piece"] is None
 
 
 def test_pin_art_piece_is_null_when_nothing_is_current(tmp_path):
     history = tmp_path / "public" / "art-history.json"
     _write_history(history, None)
-    frame = _make(tmp_path, art_history=history)
-    assert frame.pin("art", "forever")["piece"] is None
+    frame = _make(tmp_path, art_history={FRAME: history})
+    assert frame.pin(FRAME, "art", "forever")["piece"] is None
 
 
 def test_non_art_pin_never_captures_a_piece(tmp_path):
     history = tmp_path / "public" / "art-history.json"
     _write_history(history, {"file": "aic-1.jpg", "id": "aic-1.jpg", "title": "X"})
-    frame = _make(tmp_path, art_history=history)
-    assert frame.pin("weather", "forever")["piece"] is None
+    frame = _make(tmp_path, art_history={FRAME: history})
+    assert frame.pin(FRAME, "weather", "forever")["piece"] is None
 
 
 # --------------------------------------------------------------------------- #
@@ -423,21 +442,21 @@ def test_non_art_pin_never_captures_a_piece(tmp_path):
 
 def test_unpin_clears_the_pin(tmp_path):
     frame = _make(tmp_path)
-    frame.pin("weather", "forever")
-    assert frame.unpin() is None
-    assert frame.document()["pin"] is None
+    frame.pin(FRAME, "weather", "forever")
+    assert frame.unpin(FRAME) is None
+    assert frame.document()["frames"][FRAME]["pin"] is None
 
 
 def test_unpin_with_no_pin_is_a_no_op(tmp_path):
     frame = _make(tmp_path)
-    assert frame.unpin() is None
-    assert frame.document()["pin"] is None
+    assert frame.unpin(FRAME) is None
+    assert frame.document()["frames"][FRAME]["pin"] is None
 
 
 def test_seq_increases_on_every_pin(tmp_path):
     frame = _make(tmp_path)
-    first = frame.pin("weather", "forever")
-    second = frame.pin("art", "forever")
+    first = frame.pin(FRAME, "weather", "forever")
+    second = frame.pin(FRAME, "art", "forever")
     assert second["seq"] > first["seq"]
 
 
@@ -445,9 +464,9 @@ def test_seq_keeps_climbing_across_an_unpin(tmp_path):
     # A pin, an unpin, then another pin: the last seq is strictly greater than the
     # first, so a frame always sees a change it has not applied.
     frame = _make(tmp_path)
-    first = frame.pin("weather", "forever")
-    frame.unpin()
-    third = frame.pin("art", "forever")
+    first = frame.pin(FRAME, "weather", "forever")
+    frame.unpin(FRAME)
+    third = frame.pin(FRAME, "art", "forever")
     assert third["seq"] > first["seq"]
 
 
@@ -460,22 +479,22 @@ def test_restart_reloads_settings_and_pin(tmp_path):
     state = tmp_path / "state" / "frame-control.json"
     first = FrameControl(state)
     first.update_settings({"now_playing_kinds": ["music", "audiobook"]})
-    first.pin("weather", "forever")
+    first.pin(FRAME, "weather", "forever")
 
     # A fresh instance on the same file is what a service restart gives.
     second = FrameControl(state)
     doc = second.document()
     assert doc["settings"]["now_playing_kinds"] == ["music", "audiobook"]
-    assert doc["pin"]["what"] == "weather"
+    assert doc["frames"][FRAME]["pin"]["what"] == "weather"
 
 
 def test_restart_keeps_the_seq_climbing(tmp_path):
     state = tmp_path / "state" / "frame-control.json"
     first = FrameControl(state)
-    pinned = first.pin("weather", "forever")
+    pinned = first.pin(FRAME, "weather", "forever")
 
     second = FrameControl(state)
-    after = second.pin("art", "forever")
+    after = second.pin(FRAME, "art", "forever")
     assert after["seq"] > pinned["seq"]
 
 
@@ -719,3 +738,223 @@ def test_a_malformed_stored_location_reads_as_null(tmp_path):
     )
     frame = FrameControl(state)
     assert frame.document()["settings"]["weather_location"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Frames are named: the document lists the inventory frames
+# --------------------------------------------------------------------------- #
+
+
+def test_document_lists_every_inventory_frame(tmp_path):
+    # The page's frame switcher reads the frame ids from the document, so every
+    # known frame appears (with a null quiet-hours override and a null pin) even
+    # before any per-frame write.
+    frame = _make(tmp_path, frames=[FRAME, OTHER])
+    frames = frame.document()["frames"]
+    assert set(frames) == {FRAME, OTHER}
+    for entry in frames.values():
+        assert entry == {"quiet_hours": None, "pin": None}
+
+
+def test_a_frame_entry_is_only_quiet_hours_and_pin(tmp_path):
+    # The private per-frame seq counter must not leak into the document.
+    frame = _make(tmp_path, frames=[FRAME, OTHER])
+    frame.pin(FRAME, "weather", "forever")
+    assert set(frame.document()["frames"][FRAME].keys()) == {"quiet_hours", "pin"}
+
+
+# --------------------------------------------------------------------------- #
+# Unknown or malformed frame ids (Review Focus 5)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("call", ["pin", "unpin", "settings"])
+def test_unknown_frame_is_a_404(tmp_path, call):
+    frame = _make(tmp_path, frames=[FRAME])
+    with pytest.raises(ArtError) as info:
+        if call == "pin":
+            frame.pin("living-room", "weather", "forever")
+        elif call == "unpin":
+            frame.unpin("living-room")
+        else:
+            frame.update_settings({"quiet_hours": None}, frame="living-room")
+    assert info.value.status == 404
+
+
+@pytest.mark.parametrize("bad", ["Office", "office/..", "", "a" * 33, "1frame", "no_under"])
+def test_malformed_frame_id_is_a_400(tmp_path, bad):
+    frame = _make(tmp_path, frames=[FRAME])
+    with pytest.raises(ArtError) as info:
+        frame.pin(bad, "weather", "forever")
+    assert info.value.status == 400
+
+
+# --------------------------------------------------------------------------- #
+# Per-frame pins never move another frame (Review Focus 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_pin_sets_only_the_named_frame(tmp_path):
+    frame = _make(tmp_path, frames=[FRAME, OTHER])
+    frame.pin(FRAME, "weather", "forever")
+    frames = frame.document()["frames"]
+    assert frames[FRAME]["pin"]["what"] == "weather"
+    assert frames[OTHER]["pin"] is None
+
+
+def test_unpin_clears_only_the_named_frame(tmp_path):
+    frame = _make(tmp_path, frames=[FRAME, OTHER])
+    frame.pin(FRAME, "weather", "forever")
+    frame.pin(OTHER, "art", "forever")
+    frame.unpin(FRAME)
+    frames = frame.document()["frames"]
+    assert frames[FRAME]["pin"] is None
+    assert frames[OTHER]["pin"]["what"] == "art"
+
+
+def test_each_frame_has_its_own_seq(tmp_path):
+    # One frame's pins advancing its counter does not move another frame's, so a
+    # frame only redraws on a change to its own pin.
+    frame = _make(tmp_path, frames=[FRAME, OTHER])
+    frame.pin(FRAME, "weather", "forever")
+    frame.pin(FRAME, "art", "forever")
+    other = frame.pin(OTHER, "weather", "forever")
+    assert other["seq"] == 1
+
+
+def test_art_pin_reads_that_frames_own_history(tmp_path):
+    # Review Focus 2 / requirement: an art pin captures the piece from the pinned
+    # frame's own history, not another frame's.
+    nightstand_history = tmp_path / "public" / "frames" / FRAME / "art-history.json"
+    office_history = tmp_path / "public" / "frames" / OTHER / "art-history.json"
+    _write_history(nightstand_history, {"file": "n.jpg", "id": "Collection/n.jpg"})
+    _write_history(office_history, {"file": "o.jpg", "id": "Collection/o.jpg"})
+    frame = _make(
+        tmp_path,
+        frames=[FRAME, OTHER],
+        art_history={FRAME: nightstand_history, OTHER: office_history},
+    )
+    assert frame.pin(FRAME, "art", "forever")["piece"] == "Collection/n.jpg"
+    assert frame.pin(OTHER, "art", "forever")["piece"] == "Collection/o.jpg"
+
+
+# --------------------------------------------------------------------------- #
+# Per-frame quiet hours: a window, explicit none, and fall back to shared
+# --------------------------------------------------------------------------- #
+
+
+def test_per_frame_quiet_hours_window_is_stored(tmp_path):
+    frame = _make(tmp_path, frames=[FRAME, OTHER])
+    result = frame.update_settings(
+        {"quiet_hours": {"start": "23:30", "end": "05:30"}}, frame=FRAME
+    )
+    assert result == {"start": "23:30", "end": "05:30"}
+    frames = frame.document()["frames"]
+    assert frames[FRAME]["quiet_hours"] == {"start": "23:30", "end": "05:30"}
+    # The other frame still falls back to the shared quiet hours (null override).
+    assert frames[OTHER]["quiet_hours"] is None
+
+
+def test_per_frame_quiet_hours_can_be_disabled(tmp_path):
+    # The office can set no quiet hours at all with {"enabled": false}.
+    frame = _make(tmp_path, frames=[FRAME, OTHER])
+    result = frame.update_settings({"quiet_hours": {"enabled": False}}, frame=OTHER)
+    assert result == {"enabled": False}
+    assert frame.document()["frames"][OTHER]["quiet_hours"] == {"enabled": False}
+
+
+def test_per_frame_quiet_hours_null_falls_back_to_shared(tmp_path):
+    # Setting a window then clearing it with null returns the frame to the shared
+    # quiet hours (a null override in the document).
+    frame = _make(tmp_path, frames=[FRAME])
+    frame.update_settings({"quiet_hours": {"start": "23:00", "end": "06:00"}}, frame=FRAME)
+    result = frame.update_settings({"quiet_hours": None}, frame=FRAME)
+    assert result is None
+    assert frame.document()["frames"][FRAME]["quiet_hours"] is None
+
+
+def test_per_frame_quiet_hours_window_needs_both_times(tmp_path):
+    frame = _make(tmp_path, frames=[FRAME])
+    with pytest.raises(ArtError) as info:
+        frame.update_settings({"quiet_hours": {"start": "23:00"}}, frame=FRAME)
+    assert info.value.status == 400
+
+
+def test_a_shared_key_cannot_be_set_per_frame(tmp_path):
+    # now_playing_kinds is shared; naming a frame with it is a 400, so the two
+    # scopes never cross.
+    frame = _make(tmp_path, frames=[FRAME])
+    with pytest.raises(ArtError) as info:
+        frame.update_settings({"now_playing_kinds": ["music"]}, frame=FRAME)
+    assert info.value.status == 400
+
+
+def test_a_per_frame_write_leaves_the_other_frame_untouched(tmp_path):
+    frame = _make(tmp_path, frames=[FRAME, OTHER])
+    frame.update_settings({"quiet_hours": {"enabled": False}}, frame=OTHER)
+    frame.update_settings({"quiet_hours": {"start": "22:00", "end": "07:00"}}, frame=FRAME)
+    frames = frame.document()["frames"]
+    assert frames[OTHER]["quiet_hours"] == {"enabled": False}
+    assert frames[FRAME]["quiet_hours"] == {"start": "22:00", "end": "07:00"}
+
+
+# --------------------------------------------------------------------------- #
+# Migration: the old single top-level pin becomes the nightstand's
+# --------------------------------------------------------------------------- #
+
+
+def _write_legacy_state(path: Path, *, pin, seq) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "now_playing_kinds": ["music", "podcast"],
+                    "quiet_hours": {"start": "22:00", "end": "06:00"},
+                },
+                "pin": pin,
+                "seq": seq,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_legacy_top_level_pin_migrates_to_the_nightstand(tmp_path):
+    state = tmp_path / "state" / "frame-control.json"
+    legacy_pin = {
+        "what": "art",
+        "piece": "Collection/a.jpg",
+        "until": None,
+        "seq": 4,
+        "set_at": "2026-11-09T07:00:00-08:00",
+    }
+    _write_legacy_state(state, pin=legacy_pin, seq=4)
+    frame = FrameControl(state, frames=[FRAME, OTHER], legacy_frame=FRAME)
+    frames = frame.document()["frames"]
+    # The old pin is now the nightstand's; the office starts clean.
+    assert frames[FRAME]["pin"] == legacy_pin
+    assert frames[OTHER]["pin"] is None
+    # The shared settings survive the migration.
+    assert frame.document()["settings"]["now_playing_kinds"] == ["music", "podcast"]
+
+
+def test_migration_keeps_the_seq_climbing(tmp_path):
+    # After migrating a pin at seq 4, the next pin on that frame is strictly
+    # greater, so the frame still sees a change it has not applied.
+    state = tmp_path / "state" / "frame-control.json"
+    legacy_pin = {"what": "weather", "piece": None, "until": None, "seq": 4,
+                  "set_at": "2026-11-09T07:00:00-08:00"}
+    _write_legacy_state(state, pin=legacy_pin, seq=4)
+    frame = FrameControl(state, frames=[FRAME], legacy_frame=FRAME)
+    nxt = frame.pin(FRAME, "art", "forever")
+    assert nxt["seq"] > 4
+
+
+def test_legacy_state_with_no_pin_migrates_cleanly(tmp_path):
+    state = tmp_path / "state" / "frame-control.json"
+    _write_legacy_state(state, pin=None, seq=2)
+    frame = FrameControl(state, frames=[FRAME, OTHER], legacy_frame=FRAME)
+    frames = frame.document()["frames"]
+    assert frames[FRAME]["pin"] is None
+    assert frames[OTHER]["pin"] is None
