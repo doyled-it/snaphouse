@@ -28,9 +28,11 @@ the last-good commit if the apply or verify fails.
   NTP; the hub (`house`) also reaches the now-playing cover-lookup catalogues:
   `itunes.apple.com` and the `*.mzstatic.com` artwork CDN, `musicbrainz.org`,
   `coverartarchive.org` and the `archive.org` hosts it and Open Library covers
-  redirect to, `openlibrary.org`, `covers.openlibrary.org`; plus nightstand's
-  list on the `nightstand` host). Lookup requests carry only track, show, book,
-  or artist names and a User-Agent naming the public repo.
+  redirect to, `openlibrary.org`, `covers.openlibrary.org`; the hub also reaches
+  `geocoding-api.open-meteo.com` to resolve a typed weather city to coordinates;
+  plus nightstand's list on the `nightstand` host). Lookup requests carry only
+  track, show, book, artist, or typed place names and a User-Agent naming the
+  public repo.
 - **TDD.** Write the failing test, watch it fail, implement, watch it pass. Run
   the focused test while iterating and the full suite before committing.
 

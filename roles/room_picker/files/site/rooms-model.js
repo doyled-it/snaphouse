@@ -1109,7 +1109,69 @@ function parseFrameSettings(raw) {
     now_playing_kinds: kinds,
     quiet_hours: parseWindowOrDefault(s.quiet_hours, DEFAULT_QUIET_HOURS, false),
     morning_weather: parseMorning(s.morning_weather),
+    weather_location: parseWeatherLocation(s.weather_location),
   };
+}
+
+// The hub's resolved weather location, validated into { name, latitude,
+// longitude, timezone }, or null when none is set or the stored value is
+// malformed. The hub geocodes a typed city and stores this shape; the page only
+// shows the name, but it validates the whole thing so a tampered document never
+// reaches the DOM as a half-filled location.
+function parseWeatherLocation(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  if (typeof raw.name !== "string" || raw.name.length === 0) {
+    return null;
+  }
+  if (!isFiniteNumber(raw.latitude) || !isFiniteNumber(raw.longitude)) {
+    return null;
+  }
+  if (typeof raw.timezone !== "string" || raw.timezone.length === 0) {
+    return null;
+  }
+  return {
+    name: raw.name,
+    latitude: raw.latitude,
+    longitude: raw.longitude,
+    timezone: raw.timezone,
+  };
+}
+
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+// The label the Settings screen shows for the weather city: the stored display
+// name, or "Not set" when no location is configured (a null location or one the
+// page could not validate).
+export function weatherLocationLabel(location) {
+  if (location && typeof location === "object" && typeof location.name === "string" && location.name.length > 0) {
+    return location.name;
+  }
+  return "Not set";
+}
+
+// The body the Save button posts to /api/frame/settings: a typed city for the
+// hub to geocode. The query is trimmed; a blank entry yields null so the view
+// does nothing rather than post an empty query. Only this typed place name
+// leaves the LAN (the hub sends just the city part to the geocoder).
+export function weatherSaveBody(query) {
+  if (typeof query !== "string") {
+    return null;
+  }
+  const trimmed = query.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  return { weather_location: { query: trimmed } };
+}
+
+// The body the Clear button posts: a null location the hub stores as "unset",
+// so the frame falls back to its own local config.
+export function weatherClearBody() {
+  return { weather_location: null };
 }
 
 // A { start, end } of valid HH:MM times, or the given default when either is

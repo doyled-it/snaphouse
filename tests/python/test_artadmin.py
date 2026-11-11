@@ -45,7 +45,7 @@ def _write_image(path: Path, size=(400, 200), color=(120, 160, 200), fmt="JPEG")
     path.write_bytes(_image_bytes(size=size, color=color, fmt=fmt))
 
 
-def _make_app(tmp_path: Path, *, art_history: Path = None) -> artadmin.ArtAdmin:
+def _make_app(tmp_path: Path, *, art_history: Path = None, geocode=None) -> artadmin.ArtAdmin:
     root = tmp_path / "art"
     thumbs = tmp_path / "public" / "art-thumbs"
     state = tmp_path / "state" / "art-control.json"
@@ -55,7 +55,7 @@ def _make_app(tmp_path: Path, *, art_history: Path = None) -> artadmin.ArtAdmin:
     frame_control_path = tmp_path / "public" / "art" / "frame-control.json"
     root.mkdir(parents=True, exist_ok=True)
     library = Library(root, thumbs, state)
-    frame = FrameControl(frame_state, art_history=art_history)
+    frame = FrameControl(frame_state, art_history=art_history, geocode=geocode)
     return artadmin.ArtAdmin(
         library,
         index_path=index_path,
@@ -637,6 +637,72 @@ def test_frame_settings_bad_time_is_a_json_400(client):
     )
     assert status == 400
     assert "error" in body
+
+
+def _geocoder(body):
+    """A geocoder fetch that serves one recorded body for any city (or None)."""
+    def fetch(url):
+        if body is None:
+            return None
+        return json.dumps(body).encode("utf-8")
+    return fetch
+
+
+_SAN_DIEGO_BODY = {
+    "results": [
+        {
+            "name": "San Diego", "latitude": 32.71533, "longitude": -117.15726,
+            "timezone": "America/Los_Angeles", "population": 1394928,
+            "admin1": "California", "country": "United States", "country_code": "US",
+        }
+    ]
+}
+
+
+def test_frame_weather_location_geocodes_and_publishes(tmp_path):
+    app = _make_app(tmp_path, geocode=_geocoder(_SAN_DIEGO_BODY))
+    started = Client(app)
+    try:
+        status, body = started.post_json(
+            "/api/frame/settings", {"weather_location": {"query": "San Diego, CA"}}
+        )
+        assert status == 200
+        assert body["settings"]["weather_location"] == {
+            "name": "San Diego, California, United States",
+            "latitude": 32.72,
+            "longitude": -117.16,
+            "timezone": "America/Los_Angeles",
+        }
+        published = _frame_doc(app)["settings"]["weather_location"]
+        assert published["name"] == "San Diego, California, United States"
+    finally:
+        started.close()
+
+
+def test_frame_weather_location_no_match_is_a_json_400(tmp_path):
+    app = _make_app(tmp_path, geocode=_geocoder({"generationtime_ms": 0.1}))
+    started = Client(app)
+    try:
+        status, body = started.post_json(
+            "/api/frame/settings", {"weather_location": {"query": "Nowhereville, ZZ"}}
+        )
+        assert status == 400
+        assert "Nowhereville, ZZ" in body["error"]
+    finally:
+        started.close()
+
+
+def test_frame_weather_location_unreachable_is_a_json_502(tmp_path):
+    app = _make_app(tmp_path, geocode=_geocoder(None))
+    started = Client(app)
+    try:
+        status, body = started.post_json(
+            "/api/frame/settings", {"weather_location": {"query": "San Diego, CA"}}
+        )
+        assert status == 502
+        assert "error" in body
+    finally:
+        started.close()
 
 
 def test_frame_pin_sets_and_publishes_the_pin(client):

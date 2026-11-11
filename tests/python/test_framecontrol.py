@@ -13,6 +13,7 @@ computations (and the morning-window resolution) are deterministic under test.
 from __future__ import annotations
 
 import json
+import urllib.parse
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
@@ -38,12 +39,89 @@ def _clock_at(year, month, day, hour, minute):
     return lambda: moment.timestamp(), moment
 
 
-def _make(tmp_path: Path, *, clock=None, art_history=None) -> FrameControl:
+def _make(tmp_path: Path, *, clock=None, art_history=None, geocode=None) -> FrameControl:
     state = tmp_path / "state" / "frame-control.json"
-    kwargs = {"art_history": art_history}
+    kwargs = {"art_history": art_history, "geocode": geocode}
     if clock is not None:
         kwargs["clock"] = clock
     return FrameControl(state, **kwargs)
+
+
+# A sentinel a fake geocoder returns to stand for a fetch that failed outright
+# (timeout, transport error): the real fetch returns None in that case.
+_UNREACHABLE = object()
+
+
+class FakeGeocoder:
+    """A stand-in for the injected geocoder fetch (url -> body bytes or None).
+
+    Built with a map from the searched city name (case-folded) to the body to
+    serve: a dict is encoded as JSON, raw ``bytes`` are served verbatim (a
+    malformed body), and ``_UNREACHABLE`` serves ``None`` (a failed fetch). A
+    city not in the map serves an empty-results document (a clean no-match). Every
+    URL it is called with is recorded, so a test can assert only the typed city
+    name left the LAN.
+    """
+
+    def __init__(self, bodies: dict) -> None:
+        self._bodies = bodies
+        self.calls: list[str] = []
+
+    def __call__(self, url: str):
+        self.calls.append(url)
+        params = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        name = (params.get("name", [""])[0]).casefold()
+        body = self._bodies.get(name, {"generationtime_ms": 0.1})
+        if body is _UNREACHABLE:
+            return None
+        if isinstance(body, bytes):
+            return body
+        return json.dumps(body).encode("utf-8")
+
+
+def _place(name, lat, lon, tz, population, admin1, country, country_code):
+    return {
+        "name": name,
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": tz,
+        "population": population,
+        "admin1": admin1,
+        "country": country,
+        "country_code": country_code,
+    }
+
+
+_SAN_DIEGO = {
+    "san diego": {
+        "results": [
+            _place("San Diego", 32.71533, -117.15726, "America/Los_Angeles",
+                   1394928, "California", "United States", "US"),
+        ]
+    }
+}
+
+_PORTLAND = {
+    "portland": {
+        "results": [
+            _place("Portland", 45.52345, -122.67621, "America/Los_Angeles",
+                   652503, "Oregon", "United States", "US"),
+            _place("Portland", 43.65737, -70.25893, "America/New_York",
+                   66215, "Maine", "United States", "US"),
+        ]
+    }
+}
+
+_PARIS = {
+    "paris": {
+        "results": [
+            _place("Paris", 48.85341, 2.3488, "Europe/Paris",
+                   2138551, "Île-de-France", "France", "FR"),
+            _place("Paris", 33.66094, -95.55551, "America/Chicago",
+                   25171, "Texas", "United States", "US"),
+        ]
+    }
+}
 
 
 def _local_iso(moment: datetime) -> str:
@@ -399,3 +477,196 @@ def test_restart_keeps_the_seq_climbing(tmp_path):
     second = FrameControl(state)
     after = second.pin("art", "forever")
     assert after["seq"] > pinned["seq"]
+
+
+# --------------------------------------------------------------------------- #
+# Weather location: geocoding a typed city
+# --------------------------------------------------------------------------- #
+
+
+def test_weather_location_defaults_to_null(tmp_path):
+    frame = _make(tmp_path)
+    assert frame.document()["settings"]["weather_location"] is None
+
+
+def test_weather_location_geocodes_a_city_and_stores_it(tmp_path):
+    geo = FakeGeocoder(_SAN_DIEGO)
+    frame = _make(tmp_path, geocode=geo)
+    settings = frame.update_settings({"weather_location": {"query": "San Diego, CA"}})
+    assert settings["weather_location"] == {
+        "name": "San Diego, California, United States",
+        "latitude": 32.72,
+        "longitude": -117.16,
+        "timezone": "America/Los_Angeles",
+    }
+    # It is published in the document a frame reads.
+    assert frame.document()["settings"]["weather_location"]["name"] == (
+        "San Diego, California, United States"
+    )
+
+
+def test_weather_location_rounds_coordinates_to_two_decimals(tmp_path):
+    geo = FakeGeocoder(_SAN_DIEGO)
+    frame = _make(tmp_path, geocode=geo)
+    location = frame.update_settings({"weather_location": {"query": "San Diego, CA"}})[
+        "weather_location"
+    ]
+    assert location["latitude"] == 32.72
+    assert location["longitude"] == -117.16
+
+
+def test_only_the_typed_city_leaves_the_lan(tmp_path):
+    # The qualifier stays on the hub; only the city part is sent to the geocoder,
+    # and only to the Open-Meteo geocoding host.
+    geo = FakeGeocoder(_SAN_DIEGO)
+    frame = _make(tmp_path, geocode=geo)
+    frame.update_settings({"weather_location": {"query": "San Diego, CA"}})
+    assert len(geo.calls) == 1
+    url = geo.calls[0]
+    assert url.startswith("https://geocoding-api.open-meteo.com/v1/search?")
+    params = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+    assert params["name"] == ["San Diego"]
+    assert "CA" not in url
+
+
+def test_state_code_qualifier_picks_the_right_portland(tmp_path):
+    geo = FakeGeocoder(_PORTLAND)
+    frame = _make(tmp_path, geocode=geo)
+    oregon = frame.update_settings({"weather_location": {"query": "Portland, OR"}})[
+        "weather_location"
+    ]
+    assert oregon["name"] == "Portland, Oregon, United States"
+    assert oregon["timezone"] == "America/Los_Angeles"
+
+    maine = frame.update_settings({"weather_location": {"query": "Portland, ME"}})[
+        "weather_location"
+    ]
+    assert maine["name"] == "Portland, Maine, United States"
+    assert maine["timezone"] == "America/New_York"
+
+
+def test_country_name_qualifier_picks_the_right_paris(tmp_path):
+    geo = FakeGeocoder(_PARIS)
+    frame = _make(tmp_path, geocode=geo)
+    location = frame.update_settings({"weather_location": {"query": "Paris, France"}})[
+        "weather_location"
+    ]
+    assert location["name"] == "Paris, Île-de-France, France"
+    assert location["timezone"] == "Europe/Paris"
+
+
+def test_no_qualifier_takes_the_most_populous_result(tmp_path):
+    geo = FakeGeocoder(_PORTLAND)
+    frame = _make(tmp_path, geocode=geo)
+    location = frame.update_settings({"weather_location": {"query": "Portland"}})[
+        "weather_location"
+    ]
+    assert location["name"] == "Portland, Oregon, United States"
+
+
+def test_no_place_found_is_a_400_naming_the_query(tmp_path):
+    geo = FakeGeocoder({})  # every city serves empty results
+    frame = _make(tmp_path, geocode=geo)
+    with pytest.raises(ArtError) as info:
+        frame.update_settings({"weather_location": {"query": "Nowhereville, ZZ"}})
+    assert info.value.status == 400
+    assert "Nowhereville, ZZ" in info.value.message
+    assert 'City, State' in info.value.message
+
+
+def test_unreachable_geocoder_is_a_502(tmp_path):
+    geo = FakeGeocoder({"san diego": _UNREACHABLE})
+    frame = _make(tmp_path, geocode=geo)
+    with pytest.raises(ArtError) as info:
+        frame.update_settings({"weather_location": {"query": "San Diego, CA"}})
+    assert info.value.status == 502
+    assert "Try again" in info.value.message
+
+
+def test_malformed_geocoder_body_is_a_502(tmp_path):
+    geo = FakeGeocoder({"san diego": b"not json at all"})
+    frame = _make(tmp_path, geocode=geo)
+    with pytest.raises(ArtError) as info:
+        frame.update_settings({"weather_location": {"query": "San Diego, CA"}})
+    assert info.value.status == 502
+
+
+def test_weather_location_null_clears_it(tmp_path):
+    geo = FakeGeocoder(_SAN_DIEGO)
+    frame = _make(tmp_path, geocode=geo)
+    frame.update_settings({"weather_location": {"query": "San Diego, CA"}})
+    settings = frame.update_settings({"weather_location": None})
+    assert settings["weather_location"] is None
+    assert frame.document()["settings"]["weather_location"] is None
+
+
+def test_blank_query_is_rejected_without_a_fetch(tmp_path):
+    geo = FakeGeocoder(_SAN_DIEGO)
+    frame = _make(tmp_path, geocode=geo)
+    with pytest.raises(ArtError) as info:
+        frame.update_settings({"weather_location": {"query": "   "}})
+    assert info.value.status == 400
+    assert geo.calls == []
+
+
+def test_weather_location_bad_shape_is_rejected(tmp_path):
+    frame = _make(tmp_path, geocode=FakeGeocoder(_SAN_DIEGO))
+    for bad in [42, "San Diego", {"name": "San Diego"}, []]:
+        with pytest.raises(ArtError) as info:
+            frame.update_settings({"weather_location": bad})
+        assert info.value.status == 400
+
+
+def test_weather_location_leaves_other_settings_untouched(tmp_path):
+    geo = FakeGeocoder(_SAN_DIEGO)
+    frame = _make(tmp_path, geocode=geo)
+    frame.update_settings({"now_playing_kinds": ["music", "podcast"]})
+    settings = frame.update_settings({"weather_location": {"query": "San Diego, CA"}})
+    assert settings["now_playing_kinds"] == ["music", "podcast"]
+    # And a later unrelated update keeps the weather location.
+    after = frame.update_settings({"quiet_hours": {"start": "23:00"}})
+    assert after["weather_location"]["name"] == "San Diego, California, United States"
+
+
+def test_a_failed_geocode_leaves_stored_settings_untouched(tmp_path):
+    geo = FakeGeocoder({"san diego": _UNREACHABLE})
+    frame = _make(tmp_path, geocode=geo)
+    frame.update_settings({"now_playing_kinds": ["podcast"]})
+    with pytest.raises(ArtError):
+        frame.update_settings({"weather_location": {"query": "San Diego, CA"}})
+    doc = frame.document()["settings"]
+    assert doc["now_playing_kinds"] == ["podcast"]
+    assert doc["weather_location"] is None
+
+
+def test_stored_location_survives_a_restart(tmp_path):
+    state = tmp_path / "state" / "frame-control.json"
+    geo = FakeGeocoder(_SAN_DIEGO)
+    first = FrameControl(state, geocode=geo)
+    first.update_settings({"weather_location": {"query": "San Diego, CA"}})
+
+    second = FrameControl(state)
+    location = second.document()["settings"]["weather_location"]
+    assert location == {
+        "name": "San Diego, California, United States",
+        "latitude": 32.72,
+        "longitude": -117.16,
+        "timezone": "America/Los_Angeles",
+    }
+
+
+def test_a_malformed_stored_location_reads_as_null(tmp_path):
+    state = tmp_path / "state" / "frame-control.json"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text(
+        json.dumps(
+            {
+                "settings": {"weather_location": {"name": "X", "latitude": "nope"}},
+                "pin": None,
+                "seq": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    frame = FrameControl(state)
+    assert frame.document()["settings"]["weather_location"] is None

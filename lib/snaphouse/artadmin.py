@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 from snaphouse.artlib import THUMBNAIL_BATCH, ArtError, Library
-from snaphouse.framecontrol import FrameControl
+from snaphouse.framecontrol import FrameControl, urllib_geocode
 
 
 # --------------------------------------------------------------------------- #
@@ -594,8 +594,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         thumbs=public_root / "art-thumbs",
         state=Path(args.state),
     )
+    # The geocoder fetch is injected so a weather-city write resolves a typed
+    # place through Open-Meteo's keyless geocoding API. Only the city name leaves
+    # the LAN; the module holds the URL, the selection, and the error handling.
     frame = FrameControl(
-        Path(args.frame_state), art_history=Path(args.art_history)
+        Path(args.frame_state),
+        art_history=Path(args.art_history),
+        geocode=urllib_geocode,
     )
     app = ArtAdmin(
         library,

@@ -242,6 +242,23 @@
               </div>
             </div>
 
+            <div class="settings-group">
+              <span class="field-label">Weather city</span>
+              <p class="settings-note">
+                The city the frame shows the morning forecast for. The hub looks it
+                up; only the city name leaves your network.
+              </p>
+              <p id="fs-weather-current" class="weather-current">Not set</p>
+              <div class="weather-row">
+                <input id="fs-weather-input" class="text" type="text"
+                       placeholder="San Diego, CA" aria-label="Weather city"
+                       autocomplete="off" />
+                <button id="fs-weather-save" class="btn" type="button">Save</button>
+                <button id="fs-weather-clear" class="btn btn-ghost" type="button">Clear</button>
+              </div>
+              <p id="fs-weather-error" class="fs-error" role="alert" hidden></p>
+            </div>
+
             <div class="settings-actions">
               <button id="fs-save" class="btn" type="button">Save frame settings</button>
               <p id="fs-error" class="fs-error" role="alert" hidden></p>
