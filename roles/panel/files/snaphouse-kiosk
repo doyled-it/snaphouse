@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# The control-panel kiosk: cage (a single-app Wayland compositor) running Chromium
+# full screen on the official DSI display, pointed at the hub's room picker. cage
+# gives Chromium one borderless surface and nothing else: no window chrome, no
+# other apps, and the pointer stays hidden on a touch-only panel.
+#
+# PANEL_URL is set by the service EnvironmentFile (/etc/snaphouse/kiosk.env),
+# templated from the untracked local config, so the hub address never lives in the
+# repo. Launched by snaphouse-kiosk.service, which restarts it if it ever exits.
+set -euo pipefail
+
+url="${PANEL_URL:?PANEL_URL is not set}"
+
+# Chromium's writable profile lives under the kiosk user's data dir, not the repo.
+profile="${XDG_DATA_HOME:-${HOME}/.local/share}/snaphouse-kiosk"
+mkdir -p "${profile}"
+
+# --kiosk, --noerrdialogs, --disable-pinch and --overscroll-history-navigation=0
+# are the kiosk contract (no chrome, no error popups, no pinch-zoom, no swipe-back
+# on a touch panel). --ozone-platform=wayland runs Chromium directly on cage's
+# Wayland display. --disable-session-crashed-bubble and --disable-infobars keep a
+# power cut from leaving a "restore pages?" bar over the picker (Review Focus 4).
+exec cage -- \
+    chromium \
+    --kiosk \
+    --noerrdialogs \
+    --disable-pinch \
+    --overscroll-history-navigation=0 \
+    --ozone-platform=wayland \
+    --no-first-run \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --user-data-dir="${profile}" \
+    "${url}"

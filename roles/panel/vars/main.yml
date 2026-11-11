@@ -1,0 +1,25 @@
+---
+# The unprivileged account the kiosk runs as: it owns only its Chromium profile
+# under its home and runs the compositor on tty1. Not root, no audio, no login.
+panel_kiosk_user: kiosk
+panel_kiosk_home: /var/lib/snaphouse-kiosk
+
+# The official 7 inch DSI display, for the kernel rotation parameter on the
+# command line. Confirm the connector name and mode against the actual panel
+# during hardware bring-up; these are the defaults for the standard 800x480 panel.
+panel_display_connector: DSI-1
+panel_display_mode: 800x480@60
+# The full kernel command-line video token for the configured rotation, assembled
+# once so the rotation task's regexp stays short and readable.
+panel_display_video: "video={{ panel_display_connector }}:{{ panel_display_mode }},rotate={{ panel_rotation }}"
+
+# panel_rotation (0/90/180/270, set per host in vars/hosts.yml) rotates the
+# display and the touch input together. The display rotates via the kernel
+# command line; the touch rotates through this libinput calibration matrix, keyed
+# by the rotation, so a touch lands where it looks. These are the standard
+# libinput matrices; identity for 0.
+panel_rotation_calibration:
+  "0": "1 0 0 0 1 0"
+  "90": "0 -1 1 1 0 0"
+  "180": "-1 0 1 0 -1 1"
+  "270": "0 1 0 -1 0 1"

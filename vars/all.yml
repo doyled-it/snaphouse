@@ -26,6 +26,7 @@ reboot_times:
   house: "03:15"
   office: "03:45"
   nightstand: "04:15"
+  panel: "04:45"
 
 # Snapcast meta stream: AirPlay is listed before Bluetooth, so AirPlay wins a tie
 # when both senders are active. Both the AirPlay and Bluetooth sinks advertise as
@@ -63,6 +64,21 @@ snapserver_idle_threshold_ms: 10000
 # the speakers.
 bt_input_buffer_time_us: 1500000
 bt_input_period_time_us: 100000
+
+# Control-panel backlight schedule (panel role, snaphouse-backlight.service). The
+# panel's official DSI display dims to a low level during quiet hours and wakes to
+# full on a touch, returning to the low level after dim_timeout_s idle; full the
+# rest of the day. Levels are percentages of the panel's max brightness. The
+# quiet-hours window mirrors the house default (22:00 to 06:00) and is kept here so
+# the panel's backlight is self-contained: it never has to reach the hub at boot to
+# know when to dim, which matters after a power cut. tests/python/test_backlight.py
+# pins the schedule logic.
+panel_backlight:
+  full_pct: 100
+  dim_pct: 15
+  dim_timeout_s: 60
+  quiet_start: "22:00"
+  quiet_end: "06:00"
 
 # Pinned Snapcast release. Chosen as the newest release (v0.35.0, 2026-03-10) that
 # supports everything the hub needs: the meta stream (meta:// priority/merge

@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# Rotate the official DSI touchscreen to match the rotated display, so a touch
+# lands where it looks. panel_rotation (0/90/180/270 in vars/hosts.yml) is the one
+# setting that turns the panel: it rotates the display on the kernel command line
+# and the touch here, through libinput's calibration matrix. Identity for 0.
+ACTION=="add|change", ENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{LIBINPUT_CALIBRATION_MATRIX}="{{ panel_rotation_calibration[panel_rotation | string] }}"

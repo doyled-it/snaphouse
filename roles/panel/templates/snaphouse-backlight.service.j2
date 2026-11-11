@@ -1,0 +1,23 @@
+{#
+  The backlight schedule daemon. It runs snaphouse.backlight from the on-device
+  venv, dimming the official DSI display during the shared quiet hours and waking
+  it to full on a touch (then back to dim after the idle timeout), full otherwise.
+  The levels, timeout, and quiet-hours window come from panel_backlight in
+  vars/all.yml, inlined here so one place in the repo owns them.
+#}
+[Unit]
+Description=Snaphouse panel backlight schedule
+Documentation=https://github.com/doyled-it/snaphouse
+After=multi-user.target
+
+[Service]
+Type=simple
+# Reads the touchscreen under /dev/input and writes the sysfs backlight, both
+# root-owned device nodes, so it runs as root. It is stdlib only.
+Environment=PYTHONPATH=/opt/snaphouse/lib
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight --full-pct {{ panel_backlight.full_pct }} --dim-pct {{ panel_backlight.dim_pct }} --dim-timeout {{ panel_backlight.dim_timeout_s }} --quiet-start {{ panel_backlight.quiet_start }} --quiet-end {{ panel_backlight.quiet_end }}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

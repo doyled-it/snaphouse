@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Wait for the hub to answer before the kiosk opens the page. On a cold boot (a
+# power cut, the whole house coming up at once) the hub may not be serving yet,
+# and Chromium pointed at a dead address paints an error page that never retries.
+# So the service runs this first: it polls the hub URL, and once the hub answers
+# the kiosk opens straight onto the room picker.
+#
+# Bounded and best-effort: after a capped number of tries it returns success
+# anyway, so a slow or still-absent hub never leaves the panel stuck with a blank
+# screen forever. The kiosk comes up, and the service's Restart=always plus the
+# poll on the next start keep retrying (Review Focus 4). PANEL_URL comes from the
+# service EnvironmentFile.
+set -euo pipefail
+
+url="${PANEL_URL:?PANEL_URL is not set}"
+attempts="${KIOSK_WAIT_ATTEMPTS:-60}"
+delay="${KIOSK_WAIT_DELAY:-2}"
+
+for ((i = 1; i <= attempts; i++)); do
+    if curl -fsS --max-time 3 -o /dev/null "${url}"; then
+        echo "snaphouse-kiosk-wait: hub answered on attempt ${i}"
+        exit 0
+    fi
+    echo "snaphouse-kiosk-wait: hub not ready (attempt ${i}/${attempts}), retrying in ${delay}s" >&2
+    sleep "${delay}"
+done
+
+echo "snaphouse-kiosk-wait: hub still silent after ${attempts} attempts; starting the kiosk anyway" >&2
+exit 0
