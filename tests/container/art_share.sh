@@ -51,9 +51,27 @@ set_art_password() {
 # no edit here.
 host="$(python3 -c "import yaml; h=yaml.safe_load(open('/repo/vars/hosts.yml'))['snaphouse_hosts']; print(next(k for k, v in h.items() if 'art_share' in v['roles']))")"
 
+# The hub also carries homebody_bootstrap, which clones homebody on apply. Point
+# it at a local stub so this art-share gate stays hermetic (no network, no real
+# homebody). The stub installer mirrors the real contract: idempotent, root,
+# creates /etc/homebody/local.toml. homebody's own gate is homebody_bootstrap.sh.
+hb_stub=/srv/stub-homebody
+mkdir -p "${hb_stub}/deploy"
+cat > "${hb_stub}/deploy/install.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /etc/homebody
+touch /etc/homebody/local.toml
+EOF
+chmod +x "${hb_stub}/deploy/install.sh"
+git -C "${hb_stub}" init -q
+git -C "${hb_stub}" -c user.email=ci@example.invalid -c user.name=ci add -A
+git -C "${hb_stub}" -c user.email=ci@example.invalid -c user.name=ci commit -q -m "stub homebody"
+
 set_art_password "${pw1}"
 echo "==> Applying site.yml for ${host} (the art-share host)"
-ansible-playbook site.yml -e "snaphouse_host=${host}" --skip-tags hardware,service
+ansible-playbook site.yml -e "snaphouse_host=${host}" \
+    -e "homebody_bootstrap_repo_url=${hb_stub}" --skip-tags hardware,service
 
 # The service tasks are gated off in the container, so start nginx and smbd by
 # hand the way systemd would on a real host. smbd needs its state dirs present.
@@ -89,7 +107,8 @@ echo "==> First password authenticates and the upload is listed"
 # truth, so the role must notice the change and re-set the SMB password.
 set_art_password "${pw2}"
 echo "==> Re-applying after rotating the password"
-ansible-playbook site.yml -e "snaphouse_host=${host}" --skip-tags hardware,service
+ansible-playbook site.yml -e "snaphouse_host=${host}" \
+    -e "homebody_bootstrap_repo_url=${hb_stub}" --skip-tags hardware,service
 
 echo "==> The old password must now be rejected"
 if smbclient //localhost/art -U "art%${pw1}" -c 'ls' >/dev/null 2>&1; then
@@ -104,7 +123,8 @@ echo "==> Rotated password authenticates; password path verified"
 # With the password unchanged in local.yml, a re-apply must set nothing: the
 # rotation check compares the stored hash to the configured one and stays quiet.
 echo "==> A re-apply with the same password must change nothing"
-recap="$(ansible-playbook site.yml -e "snaphouse_host=${host}" --skip-tags hardware,service \
+recap="$(ansible-playbook site.yml -e "snaphouse_host=${host}" \
+    -e "homebody_bootstrap_repo_url=${hb_stub}" --skip-tags hardware,service \
     | grep 'PLAY RECAP' -A1 | tail -1)"
 echo "==> Unchanged re-apply recap: ${recap}"
 if ! echo "${recap}" | grep -q 'changed=0'; then
