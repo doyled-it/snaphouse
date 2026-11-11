@@ -111,13 +111,21 @@ def test_installer_runs_once_as_homebody_first_install():
 
 def test_matter_unit_runs_the_controller_on_loopback():
     unit = _render(MATTER_UNIT)
-    # Exactly the command the controller worker pinned: the matter-server entry
-    # point from homebody's own venv, storage under /var/lib/homebody, bound to
-    # loopback only.
-    assert (
-        "ExecStart=/opt/homebody/.venv/bin/matter-server "
-        "--storage-path /var/lib/homebody/matter --port 5580" in unit
-    )
+    exec_lines = [l for l in unit.splitlines() if l.startswith("ExecStart=")]
+    assert len(exec_lines) == 1
+    argv = exec_lines[0].removeprefix("ExecStart=").split()
+    # The matter-server entry point from homebody's own venv.
+    assert argv[0] == "/opt/homebody/.venv/bin/matter-server"
+
+    def flag(name):
+        assert argv.count(name) == 1, f"{name} must appear exactly once in {argv}"
+        return argv[argv.index(name) + 1]
+
+    assert flag("--storage-path") == "/var/lib/homebody/matter"
+    assert flag("--port") == "5580"
+    # python-matter-server binds every interface unless told otherwise; the
+    # controller API is unauthenticated, so it must listen on loopback only.
+    assert flag("--listen-address") == "127.0.0.1"
 
 
 def test_matter_unit_runs_as_homebody_and_restarts():

@@ -20,7 +20,7 @@ Wants=network-online.target
 Type=simple
 User=homebody
 Group=homebody
-ExecStart=/opt/homebody/.venv/bin/matter-server --storage-path /var/lib/homebody/matter --port 5580
+ExecStart=/opt/homebody/.venv/bin/matter-server --storage-path /var/lib/homebody/matter --port 5580 --listen-address 127.0.0.1
 Restart=always
 RestartSec=5
 
