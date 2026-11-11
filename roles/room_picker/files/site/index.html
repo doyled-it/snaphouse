@@ -79,6 +79,9 @@
         <section id="frame" class="section" aria-labelledby="frame-h">
           <h2 id="frame-h" class="section-h">Frame</h2>
 
+          <!-- One button per frame. Hidden while there is only one frame. -->
+          <div id="frame-switcher" class="frame-switcher" role="group" aria-label="Choose a frame" hidden></div>
+
           <div id="mirror" class="mirror" hidden>
             <div class="mat">
               <img id="mirror-img" class="mirror-img" alt="What the frame is showing now" />
@@ -262,6 +265,40 @@
             <div class="settings-actions">
               <button id="fs-save" class="btn" type="button">Save frame settings</button>
               <p id="fs-error" class="fs-error" role="alert" hidden></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Quiet hours per frame: each frame can follow the shared hours, keep
+             none, or set its own. Shown only on the new multi-frame contract. -->
+        <section id="frame-quiet" class="section" aria-labelledby="fq-h" hidden>
+          <h2 id="fq-h" class="section-h">Quiet hours by frame</h2>
+          <div id="fq-body" class="fs-body">
+            <label class="field" id="fq-frame-field" hidden>Frame
+              <select id="fq-frame" class="select"></select>
+            </label>
+            <p class="settings-note">
+              Each frame can keep its own quiet hours, or follow the shared hours above.
+              During quiet hours the frame dims and stops changing.
+            </p>
+            <label class="field">Quiet hours
+              <select id="fq-mode" class="select">
+                <option value="shared">Follow the shared hours</option>
+                <option value="off">No quiet hours</option>
+                <option value="custom">Set custom hours</option>
+              </select>
+            </label>
+            <div id="fq-custom" class="time-row" hidden>
+              <label class="field">From
+                <input id="fq-start" class="text time-input" type="time" aria-label="Frame quiet hours start" />
+              </label>
+              <label class="field">to
+                <input id="fq-end" class="text time-input" type="time" aria-label="Frame quiet hours end" />
+              </label>
+            </div>
+            <div class="settings-actions">
+              <button id="fq-save" class="btn" type="button">Save quiet hours</button>
+              <p id="fq-error" class="fs-error" role="alert" hidden></p>
             </div>
           </div>
         </section>

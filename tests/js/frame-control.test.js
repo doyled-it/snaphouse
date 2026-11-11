@@ -37,6 +37,14 @@ test("screenFromHash maps each known hash to its screen", () => {
   assert.equal(screenFromHash("#settings"), "settings");
 });
 
+test("screenFromHash reads a #frame/<id> hash as the Frame screen", () => {
+  // The chosen frame is carried in the hash as "#frame/office"; the segment
+  // after the screen name must not throw the router off the Frame screen.
+  assert.equal(screenFromHash("#frame/office"), "frame");
+  assert.equal(screenFromHash("#frame/nightstand"), "frame");
+  assert.equal(screenFromHash("frame/office"), "frame");
+});
+
 test("screenFromHash defaults to listen for an empty or bare hash", () => {
   assert.equal(screenFromHash(""), "listen");
   assert.equal(screenFromHash("#"), "listen");
@@ -62,7 +70,9 @@ test("screenFromHash accepts a hash without the leading # and ignores case", () 
 
 test("parseFrameControl reports unavailable for a missing or malformed document", () => {
   for (const bad of [null, undefined, "", "not json", 42, [], true]) {
-    assert.deepEqual(parseFrameControl(bad), { available: false, settings: null, pin: null });
+    const result = parseFrameControl(bad);
+    assert.equal(result.available, false, JSON.stringify(bad));
+    assert.equal(result.settings, null);
   }
 });
 
@@ -79,7 +89,8 @@ test("parseFrameControl fills documented defaults for a present but empty settin
     },
     weather_location: null,
   });
-  assert.equal(result.pin, null);
+  // An old-contract document (no frames map) reads as the nightstand with no pin.
+  assert.equal(result.frames.nightstand.pin, null);
 });
 
 test("parseFrameControl keeps present settings values", () => {
@@ -125,7 +136,8 @@ test("parseFrameControl parses an active pin and rejects a bad one", () => {
       set_at: "2026-11-10T14:00:00-08:00",
     },
   });
-  assert.deepEqual(good.pin, {
+  // The old single-frame document's top-level pin becomes the nightstand's pin.
+  assert.deepEqual(good.frames.nightstand.pin, {
     what: "weather",
     piece: null,
     until: "2026-11-10T16:12:00-08:00",
@@ -134,7 +146,7 @@ test("parseFrameControl parses an active pin and rejects a bad one", () => {
   });
   // An unknown "what" is not a pin the page can show, so it reads as no pin.
   const bad = parseFrameControl({ settings: {}, pin: { what: "lamp", seq: 1 } });
-  assert.equal(bad.pin, null);
+  assert.equal(bad.frames.nightstand.pin, null);
 });
 
 // --------------------------------------------------------------------------- #
@@ -278,26 +290,35 @@ test("validateFrameSettings accepts an empty subset", () => {
 // framePinBody / frameUnpinBody: the request bodies the new API takes
 // --------------------------------------------------------------------------- #
 
-test("framePinBody builds a body for a valid what and duration", () => {
-  assert.deepEqual(framePinBody("art", "1h"), { what: "art", duration: "1h" });
-  assert.deepEqual(framePinBody("weather", "4h"), { what: "weather", duration: "4h" });
-  assert.deepEqual(framePinBody("now_playing", "morning"), {
+test("framePinBody builds a body for a valid frame, what, and duration", () => {
+  assert.deepEqual(framePinBody("nightstand", "art", "1h"), {
+    frame: "nightstand",
+    what: "art",
+    duration: "1h",
+  });
+  assert.deepEqual(framePinBody("office", "weather", "4h"), {
+    frame: "office",
+    what: "weather",
+    duration: "4h",
+  });
+  assert.deepEqual(framePinBody("nightstand", "now_playing", "morning"), {
+    frame: "nightstand",
     what: "now_playing",
     duration: "morning",
   });
-  assert.deepEqual(framePinBody("art", "forever"), { what: "art", duration: "forever" });
 });
 
-test("framePinBody returns null for an unknown what or duration", () => {
-  assert.equal(framePinBody("lamp", "1h"), null);
-  assert.equal(framePinBody("art", "2h"), null);
-  assert.equal(framePinBody("", "1h"), null);
-  assert.equal(framePinBody("art", ""), null);
-  assert.equal(framePinBody(null, null), null);
+test("framePinBody returns null for an unknown what, duration, or frame", () => {
+  assert.equal(framePinBody("office", "lamp", "1h"), null);
+  assert.equal(framePinBody("office", "art", "2h"), null);
+  assert.equal(framePinBody("office", "", "1h"), null);
+  assert.equal(framePinBody("office", "art", ""), null);
+  assert.equal(framePinBody("../etc", "art", "1h"), null);
+  assert.equal(framePinBody(null, null, null), null);
 });
 
-test("frameUnpinBody is an empty object the guarded POST carries", () => {
-  assert.deepEqual(frameUnpinBody(), {});
+test("frameUnpinBody carries the frame the guarded POST acts on", () => {
+  assert.deepEqual(frameUnpinBody("office"), { frame: "office" });
 });
 
 // --------------------------------------------------------------------------- #
