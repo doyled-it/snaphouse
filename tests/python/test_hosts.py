@@ -22,11 +22,14 @@ HOSTS_FILE = VARS_DIR / "hosts.yml"
 ROLES_DIR = REPO_ROOT / "roles"
 
 BASE_ROLES_IN_ORDER = ["common", "web", "selfupdate"]
-VALID_HOST_IDS = {"living", "office", "bedroom"}
+# living, office, bedroom are the audio rooms; panel is the non-audio control
+# panel (a host with no snapclient), which still needs a unique host id.
+VALID_HOST_IDS = {"living", "office", "bedroom", "panel"}
 
 # The machine hostnames after the 2026-11-06 rename. These are the inventory
-# keys in hosts.yml; the host ids (living, office, bedroom) are unchanged.
-EXPECTED_INVENTORY_KEYS = {"house", "office", "nightstand"}
+# keys in hosts.yml; the host ids (living, office, bedroom) are unchanged. panel
+# is the control panel added with the multi-frame rollout.
+EXPECTED_INVENTORY_KEYS = {"house", "office", "nightstand", "panel"}
 
 # A MAC is six colon-separated hex octets. The all-zero address is a wildcard
 # used by tooling (for example bluealsa-aplay) and is not identifying.

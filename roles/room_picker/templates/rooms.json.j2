@@ -4,13 +4,17 @@
   inventory order (living, office, bedroom), each { id, label } where id is the
   snapclient hostID / snapserver client id.
 
+  Only audio hosts are rooms: the loop keeps hosts whose roles include snapclient
+  and skips the rest, so a non-audio host (the control panel) never appears as a
+  selectable room with no player behind it.
+
   Health is not here: the page reads the hub-aggregated house-status.json, and
   the hub's poll targets are in house-status-targets.json.
 
   Rendered with Ansible's to_nice_json so the file is readable and valid JSON.
 #}
 {% set rooms = [] %}
-{% for name, host in snaphouse_hosts.items() %}
+{% for name, host in snaphouse_hosts.items() if 'snapclient' in host.roles %}
 {% set _ = rooms.append({'id': host.host_id, 'label': host.room_label}) %}
 {% endfor %}
 {{ {'rooms': rooms} | to_nice_json }}

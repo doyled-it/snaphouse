@@ -101,6 +101,11 @@
 # every room's group onto the House meta stream. Built from the inventory so one
 # map covers all three rooms. The stream move corrects groups snapserver already
 # remembers in server.json (default_source only steers clients it has never seen).
+#
+# Only audio hosts are clients: the per-item guard keeps hosts whose roles include
+# snapclient and skips the rest, so a non-audio host (the control panel) is never
+# pushed to snapserver as a client that would never connect. It also means the map
+# never reads room_label or latency_ms on a host that carries neither.
 - name: Build the client settings map for all rooms
   ansible.builtin.set_fact:
     snapclient_clients: >-
@@ -113,7 +118,9 @@
   loop: "{{ snaphouse_hosts | dict2items }}"
   loop_control:
     label: "{{ item.value.host_id }}"
-  when: "'hub_input' in snaphouse_hosts[snaphouse_host].roles"
+  when:
+    - "'hub_input' in snaphouse_hosts[snaphouse_host].roles"
+    - "'snapclient' in item.value.roles"
 
 - name: Apply each room's name, latency, and House stream from the hub
   ansible.builtin.command:

@@ -30,3 +30,9 @@ speakers:
 
 # Password for the writable Samba art share on the hub (art_share role).
 art_share_password: "change-me-before-first-apply"
+
+# The hub URL the control panel (panel host) opens in its kiosk. Leave it unset to
+# use the hub's mDNS name (http://house.local/, the default the panel role falls
+# back to). Set it to the hub's reserved IP if .local is not usable at boot on this
+# network: the IP is the household's, so it stays here and never in the repo.
+# panel_url: ""

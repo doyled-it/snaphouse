@@ -1,0 +1,195 @@
+---
+# The control panel: the Raspberry Pi 3 with the official 7 inch DSI touch display
+# on a wall or counter, showing the hub's room picker. This role installs the
+# kiosk (cage running Chromium full screen on tty1), the backlight schedule, the
+# display/touch rotation, and the verify check. It plays no audio; it can join as
+# a speaker later (snapclient is not in its role list).
+#
+# Package installs and config writes run in the CI container; anything that needs
+# the real display, the touchscreen, or a running service is tagged hardware or
+# service and gated on common_systemd_init so the container apply stays green.
+
+# This panel's display rotation lives in its host block (vars/hosts.yml), like the
+# audio hosts' output and latency. Resolve it to a plain name here, defaulting to
+# upright, so the rotation tasks and the panel_display_video token can read it
+# directly.
+- name: Resolve this panel's display rotation
+  ansible.builtin.set_fact:
+    panel_rotation: "{{ snaphouse_hosts[snaphouse_host].panel_rotation | default(0) }}"
+
+- name: Create the kiosk group
+  ansible.builtin.group:
+    name: "{{ panel_kiosk_user }}"
+    system: true
+
+- name: Create the kiosk user
+  ansible.builtin.user:
+    name: "{{ panel_kiosk_user }}"
+    group: "{{ panel_kiosk_user }}"
+    system: true
+    home: "{{ panel_kiosk_home }}"
+    create_home: true
+    # A normal shell: the service opens a PAM login session on tty1 (PAMName=login)
+    # and some login stacks refuse a /usr/sbin/nologin shell through pam_shells,
+    # which would stop the kiosk coming up. The account is passwordless and system,
+    # and systemd runs the compositor through ExecStart, not an interactive login.
+    shell: /bin/bash
+
+# Device access for the compositor: DRM (video, render), the touchscreen (input),
+# and the console (tty). These groups are created by udev on a real machine, so
+# this is tagged hardware; the CI container has no udev and no devices, and the
+# kiosk never starts there.
+- name: Add the kiosk user to the device groups
+  ansible.builtin.user:
+    name: "{{ panel_kiosk_user }}"
+    groups:
+      - video
+      - render
+      - input
+      - tty
+    append: true
+  tags:
+    - hardware
+
+# cage (the single-app Wayland compositor) and Chromium are the kiosk stack. They
+# only run on the real display, so the heavy install is tagged hardware and the CI
+# container never pulls them; the container still exercises the rest of the role.
+- name: Install the kiosk packages
+  ansible.builtin.apt:
+    name:
+      - cage
+      - chromium
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags:
+    - hardware
+
+- name: Install the hub URL environment file for the kiosk
+  ansible.builtin.template:
+    src: snaphouse-kiosk.env.j2
+    dest: /etc/snaphouse/kiosk.env
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the kiosk service
+
+- name: Install the kiosk launcher
+  ansible.builtin.copy:
+    src: snaphouse-kiosk
+    dest: /usr/local/bin/snaphouse-kiosk
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart the kiosk service
+
+- name: Install the kiosk hub-wait pre-start script
+  ansible.builtin.copy:
+    src: snaphouse-kiosk-wait
+    dest: /usr/local/bin/snaphouse-kiosk-wait
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart the kiosk service
+
+- name: Install the kiosk service unit
+  ansible.builtin.copy:
+    src: snaphouse-kiosk.service
+    dest: /etc/systemd/system/snaphouse-kiosk.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for panel
+    - Restart the kiosk service
+
+- name: Install the backlight service unit
+  ansible.builtin.template:
+    src: snaphouse-backlight.service.j2
+    dest: /etc/systemd/system/snaphouse-backlight.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for panel
+    - Restart the backlight service
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the panel verify check
+  ansible.builtin.copy:
+    src: verify.d/panel.sh
+    dest: /etc/snaphouse/verify.d/panel.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# The backlight service runs its code in place from /opt/snaphouse, so a
+# self-update that changes backlight.py must restart it rather than wait for a
+# reboot. Gated on the on-device checkout (absent in the CI container, where the
+# repo is read-only elsewhere).
+- name: Record the backlight module digest so the service restarts when it changes
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/backlight.py') | hash('sha1') }}\n"
+    dest: /etc/snaphouse/backlight.sha1
+    owner: root
+    group: root
+    mode: "0644"
+  when: common_systemd_init
+  notify: Restart the backlight service
+
+# Rotation. panel_rotation turns the display and the touch together. Both touch
+# real device config (the boot command line, the udev touch rule) that means
+# nothing in the container, so both are tagged hardware. Confirm the exact display
+# knob on the panel during hardware bring-up; the touch matrix is the libinput
+# standard.
+- name: Rotate the display on the kernel command line
+  ansible.builtin.replace:
+    path: /boot/firmware/cmdline.txt
+    # Match the single-line command line only when it does not already carry the
+    # exact desired video token (negative lookahead), strip any stale snaphouse
+    # video token, and append the desired one. When the token is already correct
+    # the lookahead fails, nothing matches, and the task reports changed=0.
+    regexp: '^(?!.*{{ panel_display_video }})(.*?)(?:\s+video={{ panel_display_connector }}:\S+)?\s*$'
+    replace: '\1 {{ panel_display_video }}'
+  tags:
+    - hardware
+
+- name: Install the touch-rotation udev rule
+  ansible.builtin.template:
+    src: 99-snaphouse-touch-calibration.rules.j2
+    dest: /etc/udev/rules.d/99-snaphouse-touch-calibration.rules
+    owner: root
+    group: root
+    mode: "0644"
+  tags:
+    - hardware
+
+# Make the units and the daemon-reload known before enabling on a first install.
+# The handlers are gated on systemd, so this is a no-op in the CI container.
+- name: Reload systemd now if the units changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the backlight service
+  ansible.builtin.systemd_service:
+    name: snaphouse-backlight.service
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Enable and start the kiosk service
+  ansible.builtin.systemd_service:
+    name: snaphouse-kiosk.service
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service

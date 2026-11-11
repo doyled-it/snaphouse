@@ -1,0 +1,46 @@
+[Unit]
+Description=Snaphouse control panel kiosk (cage + Chromium)
+Documentation=https://github.com/doyled-it/snaphouse
+# Wait for the network so the launcher's hub poll has a link to try, and for user
+# sessions so logind can seat the compositor.
+After=network-online.target systemd-user-sessions.service
+Wants=network-online.target
+# The kiosk owns tty1: take the VT over from the login prompt rather than fighting
+# it, so cage gets the console and a power cut boots straight into the panel.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+# No start rate limit: a fast crash loop at boot (cage losing the DRM race, GPU
+# init, the seat not ready yet) must keep being restarted, not trip systemd's
+# default 5-starts-in-10s limit and leave the panel dead until a reboot.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=kiosk
+Group=kiosk
+# Open a real login session on tty1 through PAM so logind grants the seat cage
+# needs for DRM and input (this is the autologin: no getty, the service is the
+# session).
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+TTYReset=yes
+TTYVHangup=yes
+UtmpIdentifier=tty1
+UtmpMode=user
+# PANEL_URL for the hub wait and the kiosk launcher, templated from local config.
+EnvironmentFile=/etc/snaphouse/kiosk.env
+# The launcher waits for the hub itself, then execs cage/Chromium. Keeping the wait
+# in the launcher (not ExecStartPre) means the service is active while it waits, so
+# a late hub never reads as a failed unit, and Chromium only opens once the hub
+# answers: never on a dead page (Review Focus 4).
+ExecStart=/usr/local/bin/snaphouse-kiosk
+# Chromium or cage exiting (a crash, a renderer kill) must bring the panel back on
+# its own, not wait for a reboot.
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

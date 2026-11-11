@@ -61,6 +61,33 @@ check these, in this order:
 - **HTTPS-only browser modes.** The page is plain `http` on the LAN. Type the
   `http://` address explicitly and accept the browser's "not secure" prompt once.
 
+## The control panel
+
+One of the machines is a wall or counter control panel: a Raspberry Pi 3 with the
+official 7 inch touch display, running the room picker full screen so you can
+toggle rooms and set volume without a phone. It boots straight into the picker.
+There is no login and no desktop: a single-app compositor (cage) runs Chromium in
+kiosk mode on the hub's page, and the service restarts it if it ever exits. After
+a power cut the panel comes back on its own, waits for the hub to answer before
+opening the page (so it never flashes an error), and shows the picker once the hub
+is up, even if that takes a moment.
+
+The screen dims during the quiet hours and wakes to full on a touch, returning to
+the low level after a minute idle; during the day it stays full. The backlight
+levels, the idle timeout, and the quiet-hours window are in `vars/all.yml`
+(`panel_backlight`). The tap that wakes a dimmed screen also reaches Chromium and
+can toggle a room, so confirm during bring-up whether the first touch should wake
+only; today it does both.
+
+The hub address the panel opens is the one piece of per-home config it needs, and
+like every other address it stays out of the repo: set `panel_url` in the
+machine's untracked `/etc/snaphouse/local.yml` (see `local.example.yml`). Left
+unset, the panel uses the hub's `http://house.local/` mDNS name; set it to the
+hub's reserved IP if `.local` is not usable at boot on this network. If the
+display is mounted turned, set `panel_rotation` (0, 90, 180, or 270) for that host
+in `vars/hosts.yml`; it rotates the picture and the touch together, so a tap lands
+where it looks.
+
 ## Now playing
 
 The hub runs a small service, `snaphouse-nowplaying`, that is the single source of
