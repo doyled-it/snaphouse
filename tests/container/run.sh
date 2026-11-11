@@ -48,6 +48,24 @@ git -C "${stub_nightstand}" init -q
 git -C "${stub_nightstand}" -c user.email=ci@example.invalid -c user.name=ci add -A
 git -C "${stub_nightstand}" -c user.email=ci@example.invalid -c user.name=ci commit -q -m "stub nightstand"
 
+# A stub homebody repo so the hub's homebody bootstrap stays hermetic here: the
+# hub's clone points at this instead of reaching out to GitHub. Its installer
+# mirrors the real contract (idempotent, root, creates /etc/homebody/local.toml).
+# The focused idempotency check is in homebody_bootstrap.sh; here it only needs to
+# apply cleanly.
+stub_homebody=/srv/stub-homebody
+mkdir -p "${stub_homebody}/deploy"
+cat > "${stub_homebody}/deploy/install.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /etc/homebody
+touch /etc/homebody/local.toml
+EOF
+chmod +x "${stub_homebody}/deploy/install.sh"
+git -C "${stub_homebody}" init -q
+git -C "${stub_homebody}" -c user.email=ci@example.invalid -c user.name=ci add -A
+git -C "${stub_homebody}" -c user.email=ci@example.invalid -c user.name=ci commit -q -m "stub homebody"
+
 hosts="$(python3 -c "import yaml; print(' '.join(yaml.safe_load(open('/repo/vars/hosts.yml'))['snaphouse_hosts']))")"
 echo "==> Hosts: ${hosts}"
 
@@ -55,7 +73,8 @@ rc=0
 for host in ${hosts}; do
     echo "==> Applying site.yml for ${host}"
     if ! ansible-playbook site.yml -e "snaphouse_host=${host}" \
-        -e "nightstand_bootstrap_repo_url=${stub_nightstand}" --skip-tags hardware,service; then
+        -e "nightstand_bootstrap_repo_url=${stub_nightstand}" \
+        -e "homebody_bootstrap_repo_url=${stub_homebody}" --skip-tags hardware,service; then
         echo "!!! apply failed for ${host}" >&2
         rc=1
     fi
