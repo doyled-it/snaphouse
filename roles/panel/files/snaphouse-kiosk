@@ -11,6 +11,12 @@ set -euo pipefail
 
 url="${PANEL_URL:?PANEL_URL is not set}"
 
+# Hold off opening the page until the hub answers. This runs in the launcher (not
+# a pre-start step) so the service is active while it waits, and Chromium only ever
+# opens once the hub is reachable: a late hub gives a blank screen that comes alive,
+# never a stuck error page (Review Focus 4). Unbounded by default; see the script.
+snaphouse-kiosk-wait
+
 # Chromium's writable profile lives under the kiosk user's data dir, not the repo.
 profile="${XDG_DATA_HOME:-${HOME}/.local/share}/snaphouse-kiosk"
 mkdir -p "${profile}"

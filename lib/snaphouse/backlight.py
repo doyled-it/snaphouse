@@ -137,15 +137,34 @@ class _ActivityClock:
     Any readable event on any of the touchscreen's evdev nodes counts as a touch.
     wait() blocks up to `timeout` for an event, draining whatever arrives, and
     reports whether something happened so the caller can refresh immediately.
+
+    The touchscreen node can appear after the daemon starts: a power cut brings the
+    daemon up before the driver binds, or the node is enumerated late. So the glob
+    is rescanned on every wait(), opening any node that has shown up since, rather
+    than globbed once at start and then sleeping forever against an empty fd set.
     """
 
-    def __init__(self, input_glob: str, *, monotonic=time_module.monotonic) -> None:
+    def __init__(
+        self,
+        input_glob: str,
+        *,
+        monotonic=time_module.monotonic,
+        opener=os.open,
+    ) -> None:
         self._monotonic = monotonic
+        self._opener = opener
+        self._input_glob = input_glob
         self._last = monotonic()
-        self._fds: list[int] = []
-        for path in sorted(glob.glob(input_glob)):
+        # Keyed by path so a rescan does not reopen a node already watched.
+        self._fds: dict[str, int] = {}
+        self._rescan()
+
+    def _rescan(self) -> None:
+        for path in sorted(glob.glob(self._input_glob)):
+            if path in self._fds:
+                continue
             try:
-                self._fds.append(os.open(path, os.O_RDONLY | os.O_NONBLOCK))
+                self._fds[path] = self._opener(path, os.O_RDONLY | os.O_NONBLOCK)
             except OSError:
                 # A node we cannot open (permissions, hot-unplug) is skipped
                 # rather than fatal; the others still report touches.
@@ -156,10 +175,13 @@ class _ActivityClock:
         return self._monotonic() - self._last
 
     def wait(self, timeout: float) -> bool:
+        # Pick up a touchscreen that was not there at start before deciding how to
+        # wait, so a late node starts waking the screen without a daemon restart.
+        self._rescan()
         if not self._fds:
             time_module.sleep(timeout)
             return False
-        readable, _, _ = select.select(self._fds, [], [], timeout)
+        readable, _, _ = select.select(list(self._fds.values()), [], [], timeout)
         if not readable:
             return False
         for fd in readable:

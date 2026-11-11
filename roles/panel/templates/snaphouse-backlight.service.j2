@@ -8,7 +8,12 @@
 [Unit]
 Description=Snaphouse panel backlight schedule
 Documentation=https://github.com/doyled-it/snaphouse
-After=multi-user.target
+After=sysinit.target
+# No start rate limit: the backlight device (or the touchscreen) can bind late
+# after a power cut, and the daemon exits when the backlight is not yet there.
+# Unlimited restarts let it retry until the device appears rather than tripping
+# systemd's default start limit and staying dead.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

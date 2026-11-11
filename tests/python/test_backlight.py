@@ -12,12 +12,23 @@ two together.
 
 from __future__ import annotations
 
+import os
 from datetime import time
 from pathlib import Path
 
 import pytest
 
 from snaphouse import backlight
+
+
+class _FakeClock:
+    """A monotonic clock we can step by hand, for the idle/wake timing."""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self.t = start
+
+    def __call__(self) -> float:
+        return self.t
 
 
 def _fake_device(tmp_path: Path, *, max_brightness: int, brightness: int = 0) -> Path:
@@ -155,3 +166,65 @@ def test_apply_once_writes_the_scheduled_level(tmp_path):
     # Daytime: full regardless of idle.
     assert backlight.apply_once(light, sched, now=time(12, 0), idle_s=9999.0) == 10
     assert (device / "brightness").read_text().strip() == "10"
+
+
+# --------------------------------------------------------------------------- #
+# _ActivityClock: the wake-on-touch path (injected clock, fake input)
+# --------------------------------------------------------------------------- #
+
+
+def test_activity_clock_wakes_on_a_touch(tmp_path):
+    # A pipe stands in for a touchscreen evdev node: readable only once "touched".
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+    (tmp_path / "event0").write_text("")  # a path for the glob to find
+    clock_time = _FakeClock(1000.0)
+    activity = backlight._ActivityClock(
+        str(tmp_path / "event*"),
+        monotonic=clock_time,
+        opener=lambda path, flags: read_fd,
+    )
+
+    # Time passes with no touch: the screen is idle, and waiting reports nothing.
+    clock_time.t = 1100.0
+    assert activity.idle_s == 100.0
+    assert activity.wait(0.01) is False
+    assert activity.idle_s == 100.0
+
+    # A touch arrives: the wait wakes, and the idle timer resets to now.
+    os.write(write_fd, b"\x01")
+    assert activity.wait(0.01) is True
+    assert activity.idle_s == 0.0
+
+    os.close(write_fd)
+    os.close(read_fd)
+
+
+def test_activity_clock_opens_a_touchscreen_that_appears_late(tmp_path):
+    # The daemon can start before the touchscreen node is enumerated (a power cut,
+    # a driver binding late). It must rescan and open the node when it shows up,
+    # then wake on a touch, rather than sleep forever against an empty fd set.
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+    opened: list[str] = []
+
+    def opener(path, flags):
+        opened.append(path)
+        return read_fd
+
+    activity = backlight._ActivityClock(
+        str(tmp_path / "event*"),
+        monotonic=_FakeClock(0.0),
+        opener=opener,
+    )
+    assert opened == []  # nothing to open yet
+
+    (tmp_path / "event0").write_text("")  # the touchscreen appears after start
+    assert activity.wait(0.01) is False  # rescans, opens it, no touch yet
+    assert opened == [str(tmp_path / "event0")]
+
+    os.write(write_fd, b"\x01")
+    assert activity.wait(0.01) is True  # the late node now wakes the screen
+
+    os.close(write_fd)
+    os.close(read_fd)

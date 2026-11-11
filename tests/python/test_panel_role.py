@@ -11,13 +11,27 @@ wait loop, the rotation mapping, the verify check, and the container-safety gate
 
 from __future__ import annotations
 
+import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 from jinja2 import Environment, FileSystemLoader
 
 REPO = Path(__file__).resolve().parents[2]
 ROLE = REPO / "roles/panel"
+
+# The levels, timeout and quiet-hours window the backlight unit template inlines.
+BACKLIGHT_CTX = {
+    "full_pct": 100,
+    "dim_pct": 15,
+    "dim_timeout_s": 60,
+    "quiet_start": "22:00",
+    "quiet_end": "06:00",
+}
 
 TASKS = ROLE / "tasks/main.yml"
 HANDLERS = ROLE / "handlers/main.yml"
@@ -62,11 +76,20 @@ def test_kiosk_unit_restarts_always_and_waits_for_the_network():
     assert "Wants=network-online.target" in KIOSK_UNIT
 
 
-def test_kiosk_unit_waits_for_the_hub_before_opening_the_page():
-    # The pre-start wait is what keeps a cold boot from flashing an error page
-    # before the hub is up (Review Focus 4).
-    assert "ExecStartPre=/usr/local/bin/snaphouse-kiosk-wait" in KIOSK_UNIT
+def test_kiosk_unit_opens_the_page_through_the_launcher():
+    # The hub wait lives inside the launcher (ExecStart), not a pre-start step, so
+    # the service reads as active while it waits for the hub rather than stuck in
+    # "activating" (which the verify check would read as down). Review Focus 4.
     assert "ExecStart=/usr/local/bin/snaphouse-kiosk" in KIOSK_UNIT
+    assert "ExecStartPre=/usr/local/bin/snaphouse-kiosk-wait" not in KIOSK_UNIT
+
+
+def test_kiosk_unit_disables_the_start_rate_limit():
+    # A fast crash loop at boot (cage losing the DRM race, GPU init, seat not
+    # ready) must not trip systemd's default start limit and leave the panel dead
+    # until a reboot. Unlimited restart attempts, with a sane backoff.
+    assert "StartLimitIntervalSec=0" in KIOSK_UNIT
+    assert "RestartSec=" in KIOSK_UNIT
 
 
 def test_kiosk_unit_runs_as_the_unprivileged_kiosk_user_on_tty1():
@@ -101,20 +124,52 @@ def test_launcher_runs_cage_with_the_kiosk_chromium_flags():
     assert 'url="${PANEL_URL' in KIOSK_LAUNCHER
 
 
+def test_launcher_waits_for_the_hub_before_opening_chromium():
+    # The launcher blocks on the hub wait, then execs cage/Chromium. Because it is
+    # the service's main process (Type=simple), the service is active throughout
+    # the wait, and Chromium only opens once the hub answers: never on a dead page.
+    wait_idx = KIOSK_LAUNCHER.find("snaphouse-kiosk-wait")
+    cage_idx = KIOSK_LAUNCHER.find("exec cage")
+    assert wait_idx != -1, "launcher does not run the hub wait"
+    assert cage_idx != -1
+    assert wait_idx < cage_idx, "the launcher must wait for the hub before cage"
+
+
 # --------------------------------------------------------------------------- #
 # the hub-URL wait loop (Review Focus 4)
 # --------------------------------------------------------------------------- #
 
 
-def test_wait_loop_retries_the_hub_then_gives_up_without_blocking_forever():
+def test_wait_loop_is_a_retry_loop_with_no_unconditional_giveup():
     assert 'url="${PANEL_URL' in KIOSK_WAIT
     assert "curl" in KIOSK_WAIT
-    # A bounded retry loop: a capped attempt count and a sleep between tries.
-    assert "attempts" in KIOSK_WAIT
     assert "sleep" in KIOSK_WAIT
-    # After the cap it still exits 0, so the kiosk comes up even if the hub is
-    # late: no blank screen forever.
-    assert KIOSK_WAIT.rstrip().endswith("exit 0")
+    # The only success is the hub answering. There is no "start the kiosk anyway"
+    # branch that returns success on a dead hub (which would open an error page).
+    assert "anyway" not in KIOSK_WAIT
+
+
+@pytest.mark.skipif(
+    shutil.which("curl") is None or shutil.which("bash") is None,
+    reason="needs curl and bash to run the wait script",
+)
+def test_wait_script_fails_when_the_hub_never_answers():
+    # Against an unreachable hub, with the attempt cap reached, the script must
+    # report failure, never a false success. The launcher only execs Chromium once
+    # the wait succeeds, so a dead hub can never put Chromium on an error page.
+    result = subprocess.run(
+        ["bash", str(ROLE / "files/snaphouse-kiosk-wait")],
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PANEL_URL": "http://127.0.0.1:1/",  # loopback, port 1: refused at once
+            "KIOSK_WAIT_ATTEMPTS": "1",
+            "KIOSK_WAIT_DELAY": "0",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode != 0, result.stderr
 
 
 # --------------------------------------------------------------------------- #
@@ -123,16 +178,7 @@ def test_wait_loop_retries_the_hub_then_gives_up_without_blocking_forever():
 
 
 def test_backlight_unit_runs_the_module_with_the_configured_levels():
-    unit = _render(
-        "snaphouse-backlight.service.j2",
-        panel_backlight={
-            "full_pct": 100,
-            "dim_pct": 15,
-            "dim_timeout_s": 60,
-            "quiet_start": "22:00",
-            "quiet_end": "06:00",
-        },
-    )
+    unit = _render("snaphouse-backlight.service.j2", panel_backlight=BACKLIGHT_CTX)
     assert "/opt/snaphouse/.venv/bin/python -m snaphouse.backlight" in unit
     assert "Environment=PYTHONPATH=/opt/snaphouse/lib" in unit
     assert "--full-pct 100" in unit
@@ -141,6 +187,18 @@ def test_backlight_unit_runs_the_module_with_the_configured_levels():
     assert "--quiet-start 22:00" in unit
     assert "--quiet-end 06:00" in unit
     assert "Restart=always" in unit
+
+
+def test_backlight_unit_disables_the_start_rate_limit_and_orders_after_sysinit():
+    unit = _render("snaphouse-backlight.service.j2", panel_backlight=BACKLIGHT_CTX)
+    # The backlight device (or the touchscreen) can bind late after a power cut;
+    # NoBacklightError then exits the daemon. Unlimited restarts let it retry until
+    # the device is there, rather than hitting the start limit and staying dead.
+    assert "StartLimitIntervalSec=0" in unit
+    assert "RestartSec=" in unit
+    # sysinit.target is the usual ordering for a WantedBy=multi-user.target unit;
+    # the daemon rescans for the input node, so it does not need to wait for later.
+    assert "After=sysinit.target" in unit
 
 
 # --------------------------------------------------------------------------- #
@@ -198,6 +256,45 @@ def test_rotation_tasks_drive_display_and_touch_from_panel_rotation():
     ]
     assert touch, "no task installs the touch-rotation udev rule"
     assert "hardware" in (touch[0].get("tags") or [])
+
+
+def test_display_rotation_regexp_appends_strips_stale_and_is_idempotent():
+    # The cmdline rotation task's regexp is hardware-gated out of CI, so pin its
+    # three cases with Python's re (Ansible's replace uses the same engine): append
+    # the video token when absent, strip a stale token and append the current one,
+    # and leave an already-correct line unchanged (changed=0 on re-apply).
+    display = next(
+        t for t in _tasks()
+        if _module(t)[0].endswith("replace")
+        and "cmdline.txt" in str(_module(t)[1].get("path", ""))
+    )
+    args = _module(display)[1]
+
+    env = Environment()
+    ctx = {**ROLE_VARS, "panel_rotation": 0}
+    # Resolve panel_display_video first (Ansible templates vars recursively).
+    ctx["panel_display_video"] = env.from_string(ROLE_VARS["panel_display_video"]).render(**ctx)
+    token = ctx["panel_display_video"]
+    regexp = env.from_string(args["regexp"]).render(**ctx)
+    replace = env.from_string(args["replace"]).render(**ctx)
+
+    def apply(line: str) -> str:
+        return re.sub(regexp, replace, line, flags=re.MULTILINE)
+
+    base = "console=serial0,115200 root=PARTUUID=abcd-02 rootwait"
+
+    # Absent: the token is appended.
+    appended = apply(base)
+    assert appended.endswith(" " + token)
+
+    # Already correct: no change (the idempotency the report claims).
+    assert apply(appended) == appended
+
+    # Stale token for a different rotation/mode: stripped, current one appended.
+    stale = base + " video=DSI-1:640x480@60,rotate=90"
+    fixed = apply(stale)
+    assert "rotate=90" not in fixed
+    assert fixed.endswith(" " + token)
 
 
 # --------------------------------------------------------------------------- #
