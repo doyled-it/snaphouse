@@ -25,6 +25,7 @@ from PIL import Image
 
 from snaphouse import artadmin
 from snaphouse.artlib import Library
+from snaphouse.framecontrol import FrameControl
 
 
 # --------------------------------------------------------------------------- #
@@ -44,16 +45,23 @@ def _write_image(path: Path, size=(400, 200), color=(120, 160, 200), fmt="JPEG")
     path.write_bytes(_image_bytes(size=size, color=color, fmt=fmt))
 
 
-def _make_app(tmp_path: Path) -> artadmin.ArtAdmin:
+def _make_app(tmp_path: Path, *, art_history: Path = None) -> artadmin.ArtAdmin:
     root = tmp_path / "art"
     thumbs = tmp_path / "public" / "art-thumbs"
     state = tmp_path / "state" / "art-control.json"
     index_path = tmp_path / "public" / "art" / "art-index.json"
     control_path = tmp_path / "public" / "art" / "art-control.json"
+    frame_state = tmp_path / "state" / "frame-control.json"
+    frame_control_path = tmp_path / "public" / "art" / "frame-control.json"
     root.mkdir(parents=True, exist_ok=True)
     library = Library(root, thumbs, state)
+    frame = FrameControl(frame_state, art_history=art_history)
     return artadmin.ArtAdmin(
-        library, index_path=index_path, control_path=control_path
+        library,
+        index_path=index_path,
+        control_path=control_path,
+        frame=frame,
+        frame_control_path=frame_control_path,
     )
 
 
@@ -152,6 +160,10 @@ def _index(app: artadmin.ArtAdmin) -> dict:
 
 def _control(app: artadmin.ArtAdmin) -> dict:
     return json.loads(app.control_path.read_text(encoding="utf-8"))
+
+
+def _frame_doc(app: artadmin.ArtAdmin) -> dict:
+    return json.loads(app.frame_control_path.read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------- #
@@ -581,3 +593,121 @@ def test_make_server_publishes_without_thumbnail_work(tmp_path, monkeypatch):
         assert len(index["pieces"]) == 50
     finally:
         server.server_close()
+
+
+# --------------------------------------------------------------------------- #
+# Frame control: settings, pin, unpin
+# --------------------------------------------------------------------------- #
+
+
+def test_frame_control_is_published_at_startup(tmp_path):
+    # make_server publishes every document before serving, so frame-control.json
+    # exists (with defaults) even before the first change.
+    app = _make_app(tmp_path)
+    server = artadmin.make_server(app, "127.0.0.1", 0)
+    try:
+        doc = _frame_doc(app)
+        assert doc["pin"] is None
+        assert doc["settings"]["now_playing_kinds"] == ["music"]
+    finally:
+        server.server_close()
+
+
+def test_frame_settings_update_is_stored_and_published(client):
+    status, body = client.post_json(
+        "/api/frame/settings", {"now_playing_kinds": ["music", "podcast"]}
+    )
+    assert status == 200
+    assert body["settings"]["now_playing_kinds"] == ["music", "podcast"]
+    # The published document reflects the change after the request.
+    assert _frame_doc(client.app)["settings"]["now_playing_kinds"] == ["music", "podcast"]
+
+
+def test_frame_settings_validation_error_is_a_json_400(client):
+    status, body = client.post_json(
+        "/api/frame/settings", {"now_playing_kinds": ["radio"]}
+    )
+    assert status == 400
+    assert "error" in body
+
+
+def test_frame_settings_bad_time_is_a_json_400(client):
+    status, body = client.post_json(
+        "/api/frame/settings", {"quiet_hours": {"start": "24:00"}}
+    )
+    assert status == 400
+    assert "error" in body
+
+
+def test_frame_pin_sets_and_publishes_the_pin(client):
+    status, body = client.post_json(
+        "/api/frame/pin", {"what": "weather", "duration": "forever"}
+    )
+    assert status == 200
+    assert body["pin"]["what"] == "weather"
+    assert body["pin"]["until"] is None
+    assert _frame_doc(client.app)["pin"]["what"] == "weather"
+
+
+def test_frame_pin_art_captures_the_current_piece(tmp_path):
+    history = tmp_path / "public" / "art-history.json"
+    history.parent.mkdir(parents=True, exist_ok=True)
+    history.write_text(
+        json.dumps({"current": {"file": "a.jpg", "id": "Photos/a.jpg", "title": "X"}, "history": []}),
+        encoding="utf-8",
+    )
+    app = _make_app(tmp_path, art_history=history)
+    started = Client(app)
+    try:
+        status, body = started.post_json(
+            "/api/frame/pin", {"what": "art", "duration": "forever"}
+        )
+        assert status == 200
+        assert body["pin"]["piece"] == "Photos/a.jpg"
+    finally:
+        started.close()
+
+
+def test_frame_pin_missing_field_is_a_json_400(client):
+    status, body = client.post_json("/api/frame/pin", {"what": "weather"})
+    assert status == 400
+    assert "error" in body
+
+
+def test_frame_pin_bad_duration_is_a_json_400(client):
+    status, body = client.post_json(
+        "/api/frame/pin", {"what": "weather", "duration": "2h"}
+    )
+    assert status == 400
+    assert "error" in body
+
+
+def test_frame_unpin_clears_the_pin(client):
+    client.post_json("/api/frame/pin", {"what": "weather", "duration": "forever"})
+    status, body = client.post_json("/api/frame/unpin", {})
+    assert status == 200
+    assert body["pin"] is None
+    assert _frame_doc(client.app)["pin"] is None
+
+
+def test_frame_pin_seq_increases(client):
+    _, first = client.post_json(
+        "/api/frame/pin", {"what": "weather", "duration": "forever"}
+    )
+    _, second = client.post_json(
+        "/api/frame/pin", {"what": "art", "duration": "forever"}
+    )
+    assert second["pin"]["seq"] > first["pin"]["seq"]
+
+
+def test_frame_routes_require_the_header_guard(client):
+    for path, payload in (
+        ("/api/frame/settings", {"now_playing_kinds": ["music"]}),
+        ("/api/frame/pin", {"what": "weather", "duration": "forever"}),
+        ("/api/frame/unpin", {}),
+    ):
+        status, body = client.post_json(path, payload, header=False)
+        assert status == 403, path
+        assert "error" in body
+    # Nothing was written: the pin is still unset.
+    assert _frame_doc(client.app)["pin"] is None

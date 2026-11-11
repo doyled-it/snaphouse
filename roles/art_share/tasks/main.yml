@@ -207,8 +207,9 @@
 
 # The service runs its code in place from /opt/snaphouse, so restart it when its
 # modules change on a self-update rather than waiting for a reboot. artadmin.py is
-# the service; artlib.py is the library it drives. Gated on the on-device checkout
-# (absent in the CI container, where the repo is read-only elsewhere).
+# the service; artlib.py is the library it drives; framecontrol.py is the frame
+# settings and pin it also owns. Gated on the on-device checkout (absent in the CI
+# container, where the repo is read-only elsewhere).
 - name: Record the art admin module digests so the service restarts when they change
   ansible.builtin.copy:
     content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/' ~ item) | hash('sha1') }}\n"
@@ -219,6 +220,7 @@
   loop:
     - artadmin.py
     - artlib.py
+    - framecontrol.py
   when: common_systemd_init
   notify: Restart the art admin service
 

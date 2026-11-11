@@ -72,6 +72,16 @@ git clone git@github.com:doyled-it/nightstand.git
   rescan so edits made over SMB show up too. The "Art index file" and "Art control file"
   contracts below pin their shapes. For the frame's sync this supersedes the flat `/art/`
   listing (nightstand Task 4); the listing stays until then.
+- **Frame control (snaphouse produces, the room-picker page and nightstand consume).** The
+  same `snaphouse-artadmin` service owns the frame settings and the pin: which kinds of audio
+  take the now-playing screen, the quiet-hours and morning-weather windows, and a pin that
+  holds the frame on the current art piece, the weather, or now playing. The page sets them
+  over three write endpoints behind the same `X-Snaphouse: 1` guard (`/api/frame/settings`,
+  `/api/frame/pin`, `/api/frame/unpin`), and the service publishes one same-origin document,
+  `frame-control.json`, rewritten after every change and at startup. The frame reads it each
+  cycle and follows it; a missing or malformed document falls back to local config and no pin
+  (the page shows the settings as unknown rather than wrong). The "Frame control file" contract
+  below pins its shape.
 - **Art history (nightstand produces, snaphouse consumes).** nightstand writes an
   art-history file each time it pushes the ART screen to the panel, served by snaphouse's
   nginx on the `nightstand` host at `http://nightstand.local/nightstand/art-history.json`
@@ -331,6 +341,42 @@ command; `action` is `next`, `previous`, or
 `show` (`piece` is the id for `show`, otherwise `null`). `seq` only increases, so a frame acts on
 a `seq` greater than the last one it applied; a frame that starts up and sees an existing command
 records its `seq` without replaying it.
+
+**Frame control file.** snaphouse produces, nightstand and the room-picker page consume. The
+`snaphouse-artadmin` service writes `/var/lib/snaphouse/public/art/frame-control.json` atomically
+(0644); nginx serves it same-origin at `http://house.local/frame-control.json`. The private copy
+it is rebuilt from persists at `/var/lib/snaphouse/artadmin/frame-control.json` (not served). Shape:
+
+```json
+{
+  "settings": {
+    "now_playing_kinds": ["music"],
+    "quiet_hours": {"start": "22:00", "end": "06:00"},
+    "morning_weather": {"enabled": true,
+                        "weekday": ["06:00", "08:30"],
+                        "weekend": ["07:00", "09:00"]}
+  },
+  "pin": null
+}
+```
+
+`now_playing_kinds` is a subset of `music`, `podcast`, `audiobook` (default `["music"]`): the
+now-playing screen takes the frame only when the derived category is in it. `quiet_hours.start`
+and `.end` are `HH:MM` and may wrap past midnight (22:00 to 06:00). `morning_weather` carries an
+`enabled` flag and a `weekday` and `weekend` window, each `[start, end]` in `HH:MM` with start
+before end. `pin` is `null` or
+`{"what": "art" | "weather" | "now_playing", "piece": id | null, "until": iso | null, "seq": n,
+"set_at": iso}`. `piece` is the art id captured when an `art` pin was set (the piece then on the
+frame, read from the republished `art-history.json`), or `null`; `until` is an ISO-8601 stamp with
+offset, or `null` for "until unpinned". The "until tomorrow morning" choice resolves on the hub to
+the next morning-window start for that day of the week. `seq` increases on every pin and unpin, so
+a frame can tell a change and redraw once (a pin change forces one redraw even in quiet hours).
+The three write endpoints (`/api/frame/settings` with any subset of `settings`; `/api/frame/pin`
+with `{"what", "duration"}` where `duration` is `1h`, `4h`, `morning`, or `forever`;
+`/api/frame/unpin` with `{}`) each carry the `X-Snaphouse: 1` guard and return JSON errors like
+the art API. A missing, stale, or malformed file means the frame keeps working on local config and
+no pin, and the page shows the settings as unknown rather than wrong. A pinned art piece deleted
+from the library while pinned makes the frame fall back to the schedule, no crash.
 
 **snapserver API.** `http://house.local/jsonrpc` is proxied by nginx on the hub to
 snapserver's JSON-RPC (port 1780). Port 1780 itself stays reachable on the LAN for
