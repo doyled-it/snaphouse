@@ -96,6 +96,26 @@ _MUSICBRAINZ_MIN_INTERVAL = 1.0
 _BASE_SEPARATORS = (" - ", " | ", ": ", " (")
 _MIN_BASE_LENGTH = 3
 
+# A music cover is first searched for under the full track credit; only when that
+# finds nothing is a lead artist derived and searched for as a fallback. The lead
+# is the part before the first of these separators: list separators (", ", " & ")
+# and unambiguous featuring markers. " and ", " with " and " x " are deliberately
+# left out, because they are part of real band names ("Florence and the Machine",
+# "Dance with the Dead", "Lil Nas X") far more often than they introduce a guest.
+# Matched case-insensitively, on the original string so the cut index is exact.
+_LEAD_SEPARATORS = (
+    ", ",
+    " & ",
+    " feat. ",
+    " feat ",
+    " ft. ",
+    " featuring ",
+)
+_LEAD_SEPARATOR_RE = re.compile(
+    "|".join(re.escape(separator) for separator in _LEAD_SEPARATORS),
+    re.IGNORECASE,
+)
+
 _NONE_SUFFIX = ".none"
 # A podcast cover's iTunes collectionId is cached in a sidecar next to the cover,
 # so a cached hit returns the id without a network call. A ``.noid`` marker beside
@@ -386,10 +406,8 @@ class ArtLookup:
         album: Optional[str],
     ) -> tuple[Optional[str], str, Optional[int]]:
         """Resolve the cover URL, a one-word outcome label, and a podcast id."""
-        if chosen == "music" and not artist and not album:
-            # Music needs at least an album or an artist to search on; with
-            # neither there is nothing to look up.
-            return (None, "miss", None)
+        if chosen == "music":
+            return self._find_music(title, artist, album)
 
         key = _lookup_key(chosen, title, artist, album)
         image_path = self._lookup_dir() / f"{key}.jpg"
@@ -443,6 +461,94 @@ class ArtLookup:
                 pass
         self._prune()
         return (_lookup_url(key), "cover found", podcast_id)
+
+    def _find_music(
+        self, title: str, artist: Optional[str], album: Optional[str]
+    ) -> tuple[Optional[str], str, Optional[int]]:
+        """Resolve a music cover in two steps, full credit first, then lead.
+
+        The full track credit is searched for and cached under its own key, so a
+        band whose name carries ", " or " & " ("Simon & Garfunkel", "Earth, Wind
+        & Fire") is found and cached exactly as it was before featured artists
+        were handled. Only when the full credit finds nothing is a lead artist
+        derived and searched for, accepting a release whose artist credit equals
+        the lead exactly; that cover is cached under the lead key and consulted
+        before any network call for a later track with the same album and lead, so
+        a whole album of featured tracks shares one cover after one fallback
+        lookup. Each step keeps its own miss marker, so neither suppresses the
+        other.
+        """
+        if not album:
+            # Music needs an album to search a release on; a track with neither an
+            # album nor the means to find one has nothing to look up.
+            return (None, "miss", None)
+
+        full_key = _lookup_key("music", title, artist, album)
+        full_image = self._lookup_dir() / f"{full_key}.jpg"
+        full_miss = self._lookup_dir() / f"{full_key}{_NONE_SUFFIX}"
+
+        lead = _lead_artist(artist)
+        lead_key = _lookup_key("music", title, lead, album) if lead else None
+        lead_image = (
+            self._lookup_dir() / f"{lead_key}.jpg" if lead_key is not None else None
+        )
+        lead_miss = (
+            self._lookup_dir() / f"{lead_key}{_NONE_SUFFIX}"
+            if lead_key is not None
+            else None
+        )
+
+        # Cached cover: the track's own full-credit cover, or the album's shared
+        # fallback cover under the lead. Both are checked before any network call.
+        if full_image.is_file():
+            return (_lookup_url(full_key), "cover found", None)
+        if lead_image is not None and lead_image.is_file():
+            return (_lookup_url(lead_key), "cover found", None)
+
+        # Step 1: the full track credit. Skip the search when a fresh miss marker
+        # already records that this exact credit found nothing.
+        if not self._miss_fresh(full_miss):
+            resolved = self._music(artist, album)
+            if resolved.outcome == _ERROR:
+                return (None, "failure", None)
+            if resolved.image is not None:
+                return self._store_cover(full_key, full_image, full_miss, resolved.image)
+            self._write_miss(full_miss)
+
+        # Step 2: fall back to the lead, only when the credit named extra artists.
+        if lead_key is None:
+            return (None, "miss", None)
+        if self._miss_fresh(lead_miss):
+            return (None, "miss", None)
+        resolved = self._music(lead, album)
+        if resolved.outcome == _ERROR:
+            return (None, "failure", None)
+        if resolved.image is not None:
+            return self._store_cover(lead_key, lead_image, lead_miss, resolved.image)
+        self._write_miss(lead_miss)
+        return (None, "miss", None)
+
+    def _store_cover(
+        self, key: str, image_path: Path, miss_path: Path, raw: bytes
+    ) -> tuple[Optional[str], str, Optional[int]]:
+        """Downscale and cache a found cover, returning its ``_find`` triple.
+
+        A cover that will not decode is treated as a real miss (the marker is
+        written), a disk error is a transient failure (no marker), and a stored
+        cover prunes the lookup directory and returns its same-origin URL.
+        """
+        try:
+            jpeg = downscale_cover(raw)
+        except Exception:
+            self._write_miss(miss_path)
+            return (None, "miss", None)
+        try:
+            self._lookup_dir().mkdir(parents=True, exist_ok=True)
+            _atomic_write(image_path, jpeg)
+        except OSError:
+            return (None, "failure", None)
+        self._prune()
+        return (_lookup_url(key), "cover found", None)
 
     def _read_podcast_id(self, id_path: Path) -> Optional[int]:
         """The cached podcast id beside a cover, or None when there is none.
@@ -529,9 +635,8 @@ class ArtLookup:
                     return _Resolved(_ERROR, None)
                 return _Resolved(_MISS, None)
             return _Resolved(found.outcome, None)
-        if chosen == "audiobook":
-            return self._open_library(artist, album)
-        return self._music(artist, album)
+        # Music takes its own two-step path in _find_music and never reaches here.
+        return self._open_library(artist, album)
 
     def _with_base(
         self,
@@ -652,21 +757,29 @@ class ArtLookup:
         return _Resolved(_MISS, None)
 
     def _music(
-        self, artist: Optional[str], album: Optional[str]
+        self, name: Optional[str], album: Optional[str]
     ) -> _Resolved:
+        """Search MusicBrainz for a release ``album`` credited exactly to ``name``.
+
+        ``name`` is the full track credit on the primary lookup and the derived
+        lead artist on the fallback. The full album title is searched first, then
+        its base before a decorated suffix, so a release named "<Album> (Deluxe)"
+        is still found.
+        """
         if not album:
             return _Resolved(_MISS, None)
         return self._with_base(
-            album, lambda release: self._music_search(artist, release)
+            album, lambda release: self._music_search(name, release)
         )
 
     def _music_search(
-        self, artist: Optional[str], album: str
+        self, name: Optional[str], album: str
     ) -> _Resolved:
         self._await_musicbrainz_gate()
-        if artist:
+        if name:
             query = (
-                f'artist:"{_lucene_phrase(artist)}" AND release:"{_lucene_phrase(album)}"'
+                f'artist:"{_lucene_phrase(name)}"'
+                f' AND release:"{_lucene_phrase(album)}"'
             )
         else:
             query = f'release:"{_lucene_phrase(album)}"'
@@ -684,7 +797,7 @@ class ArtLookup:
                 continue
             if not _names_match(release.get("title"), album):
                 continue
-            if not _artist_credit_matches(release.get("artist-credit"), artist):
+            if not _credit_equals(release.get("artist-credit"), name):
                 continue
             mbid = release.get("id")
             if isinstance(mbid, str):
@@ -772,7 +885,9 @@ def _lookup_key(chosen: str, title: str, artist: Optional[str], album: Optional[
 
     The episode title never changes a podcast's or an audiobook's cover, so it is
     left out of their keys and every episode of a show shares one cached image.
-    Music is keyed by artist and album, the only fields its search and match use.
+    Music is keyed by the artist and album, where the artist is the full track
+    credit on the primary lookup and the derived lead artist on the fallback, so a
+    featured track's fallback cover is shared across the album under the lead key.
     """
     if chosen == "podcast":
         parts = ["podcast", _normalize(album) or _normalize(artist)]
@@ -834,16 +949,38 @@ def _search_list(data: Optional[bytes], field: str) -> Optional[list]:
     return value if isinstance(value, list) else []
 
 
-def _artist_credit_matches(credit, artist: Optional[str]) -> bool:
-    """Whether a MusicBrainz ``artist-credit`` names the searched artist.
+def _lead_artist(credit: Optional[str]) -> Optional[str]:
+    """The lead artist cut from a track credit, or None when the credit is one name.
 
-    With no searched artist there is nothing to match against, so music with no
-    artist never matches (its cover would be a guess). The credit is a list of
-    parts; their joined names are compared as one name.
+    Cuts at the earliest whole-token separator in ``_LEAD_SEPARATORS`` (matched
+    case-insensitively on the original string, so the cut index is exact even when
+    case-folding would change length) and trims the part before it. Returns None
+    when no separator appears or the lead equals the whole credit, so a single
+    artist, or a band whose own name is tried first and matched in full, needs no
+    fallback.
     """
-    if not artist:
+    if not credit:
+        return None
+    match = _LEAD_SEPARATOR_RE.search(credit)
+    if match is None:
+        return None
+    lead = credit[: match.start()].strip()
+    if not lead or lead == credit.strip():
+        return None
+    return lead
+
+
+def _credit_equals(credit, name: Optional[str]) -> bool:
+    """Whether a MusicBrainz ``artist-credit`` equals ``name`` exactly.
+
+    With no name there is nothing to match against, so a release never matches
+    (its cover would be a guess). The credit is a list of parts; their joined
+    names are compared as one name, so a release stands only when its whole artist
+    credit is the searched name, never when it merely contains it.
+    """
+    if not name:
         return False
     if not isinstance(credit, list):
         return False
     names = "".join(part.get("name", "") for part in credit if isinstance(part, dict))
-    return _names_match(names, artist)
+    return _names_match(names, name)

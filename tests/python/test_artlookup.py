@@ -514,6 +514,210 @@ def test_music_requires_artist_match(tmp_path):
     assert mismatched is None
 
 
+def _musicbrainz_release(title, credit_names, mbid="feat-mbid-1"):
+    """One MusicBrainz release with the given title and artist-credit parts."""
+    return json.dumps(
+        {
+            "count": 1,
+            "releases": [
+                {
+                    "id": mbid,
+                    "title": title,
+                    "artist-credit": [{"name": name} for name in credit_names],
+                }
+            ],
+        }
+    ).encode("utf-8")
+
+
+def _mb_queries(fetch):
+    """Every MusicBrainz query string sent, in call order."""
+    return [
+        urllib.parse.parse_qs(urllib.parse.urlsplit(call).query)["query"][0]
+        for call in fetch.calls
+        if "musicbrainz.org" in call
+    ]
+
+
+def test_music_searches_full_credit_before_lead(tmp_path):
+    # The full track credit is searched first; the lead is searched only after the
+    # full credit finds nothing, and the lead is the plain part before the first
+    # list separator, never a mangled name.
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", _musicbrainz_release("Album", ["Headliner"])),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find("Song", "Headliner, Guest & Other", "Album", "music", None)
+
+    assert url is not None
+    queries = _mb_queries(fetch)
+    assert len(queries) == 2
+    assert 'artist:"Headliner, Guest & Other"' in queries[0]
+    assert 'artist:"Headliner"' in queries[1]
+
+
+def test_featured_credits_share_album_cover(tmp_path):
+    # Every track on an album credited to the lead artist alone resolves to the
+    # same cover, whatever featured artists ride along on the credit, and the
+    # whole album costs one search and one cover fetch (the solo track plays
+    # first, so its full-credit cover is the shared one).
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", _musicbrainz_release("Great Album", ["Lead"])),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    credits = ["Lead", "Lead, A & B", "Lead & C", "Lead, A & B & C"]
+    urls = [lookup.find("Track", credit, "Great Album", "music", None) for credit in credits]
+
+    assert all(url is not None for url in urls)
+    assert len(set(urls)) == 1
+    assert len(_mb_queries(fetch)) == 1
+    caa_calls = [c for c in fetch.calls if "coverartarchive.org" in c]
+    assert len(caa_calls) == 1
+
+
+def test_featured_album_shares_cover_with_one_fallback_lookup(tmp_path):
+    # A featured track plays first, so the album is found through one full-credit
+    # miss and one fallback lead search; the rest of the album, solo track
+    # included, reuses the shared lead cover with no further network call.
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", _musicbrainz_release("Un Verano Sin Ti", ["Bad Bunny"])),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    credits = ["Bad Bunny & Ñengo Flow", "Bad Bunny, Chencho Corleone", "Bad Bunny"]
+    urls = [lookup.find("Track", credit, "Un Verano Sin Ti", "music", None) for credit in credits]
+
+    assert all(url is not None for url in urls)
+    assert len(set(urls)) == 1
+    queries = _mb_queries(fetch)
+    # One full-credit miss and one fallback lead search, both from the first track.
+    assert len(queries) == 2
+    assert 'artist:"Bad Bunny & Ñengo Flow"' in queries[0]
+    assert 'artist:"Bad Bunny"' in queries[1]
+    caa_calls = [c for c in fetch.calls if "coverartarchive.org" in c]
+    assert len(caa_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "credit,album",
+    [
+        ("Simon & Garfunkel", "Bookends"),
+        ("Earth, Wind & Fire", "That's the Way of the World"),
+        ("Florence and the Machine", "Lungs"),
+        ("Tyler, the Creator", "Igor"),
+    ],
+)
+def test_band_name_matches_on_full_credit_without_lead_query(tmp_path, credit, album):
+    # A band whose own name carries ", ", " & " or "and" is the real release
+    # artist, so the full credit matches in step one and no lead query is sent.
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", _musicbrainz_release(album, [credit])),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find("Track", credit, album, "music", None)
+
+    assert url is not None
+    queries = _mb_queries(fetch)
+    assert len(queries) == 1
+    assert f'artist:"{credit}"' in queries[0]
+
+
+def test_lil_nas_x_keeps_the_x_in_the_lead(tmp_path):
+    # " x " is not a cut point, so the artist's own trailing X survives: the
+    # fallback lead is "Lil Nas X", cut at the " & ", not "Lil Nas".
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", _musicbrainz_release("Montero", ["Lil Nas X"])),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find("Industry Baby", "Lil Nas X & Jack Harlow", "Montero", "music", None)
+
+    assert url is not None
+    queries = _mb_queries(fetch)
+    assert len(queries) == 2
+    assert 'artist:"Lil Nas X & Jack Harlow"' in queries[0]
+    assert 'artist:"Lil Nas X"' in queries[1]
+    assert 'artist:"Lil Nas"' not in queries[1]
+
+
+def test_solo_lead_album_key_does_not_collide_with_band(tmp_path):
+    # The band's cover is cached under its full credit, so a solo artist who is
+    # only the band's first word does not borrow it, and its miss is its own.
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", _musicbrainz_release("Bookends", ["Simon & Garfunkel"])),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    band = lookup.find("Track", "Simon & Garfunkel", "Bookends", "music", None)
+    assert band is not None
+
+    solo = lookup.find("Track", "Simon", "Bookends", "music", None)
+    assert solo is None
+
+
+def test_lead_artist_not_matching_release_is_miss(tmp_path):
+    # The album title matches, but the release artist is neither the full credit
+    # nor the lead artist, so it stays a miss and is cached as one.
+    fetch = FakeFetch(
+        [("musicbrainz.org", _musicbrainz_release("Shared Title", ["Different Band"]))]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    assert lookup.find("Song", "Lead, A & B", "Shared Title", "music", None) is None
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_musicbrainz_gate_holds_across_full_and_lead(tmp_path):
+    # A single featured track whose full credit misses and whose lead matches
+    # sends two MusicBrainz searches back to back, so the one-per-second gate must
+    # sleep once between them.
+    now = [1000.0]
+    slept = []
+
+    def clock():
+        return now[0]
+
+    def sleep(seconds):
+        slept.append(seconds)
+        now[0] += seconds
+
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", _musicbrainz_release("Album", ["Lead"])),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find("Song", "Lead, Guest", "Album", "music", None)
+
+    assert url is not None
+    assert len(_mb_queries(fetch)) == 2
+    assert slept
+    assert slept[0] == pytest.approx(1.0, abs=0.01)
+
+
 def test_no_artist_no_album_music_skips_lookup(tmp_path):
     fetch = FakeFetch([("", _jpeg())])
     lookup = ArtLookup(tmp_path, fetch)
