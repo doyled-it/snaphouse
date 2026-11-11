@@ -1,0 +1,18 @@
+# homebody self-update, managed by Ansible (roles/homebody_bootstrap). Do not
+# edit on the host; change the template and let self-update roll it out.
+#
+# Runs homebody's own updater as root: fetch main, re-run deploy/install.sh,
+# verify, and fall back to the last-good commit on a failed verify, the way
+# snaphouse's own self-update works. Root, because install.sh ensures the
+# homebody user, the local config, and the state directory.
+[Unit]
+Description=homebody self-update (fetch main, apply, verify, fall back on failure)
+# Needs the network to fetch origin/main; a failed fetch is handled by the
+# updater, so this is a preference, not a hard requirement.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/homebody
+ExecStart=/opt/homebody/deploy/update.sh

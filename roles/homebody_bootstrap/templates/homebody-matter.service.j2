@@ -1,0 +1,38 @@
+# homebody Matter controller, managed by Ansible (roles/homebody_bootstrap). Do
+# not edit on the host; change the template and let self-update roll it out.
+#
+# python-matter-server (the open-source controller Home Assistant uses) run from
+# homebody's own uv venv. homebody talks to it over the local WebSocket API on
+# 127.0.0.1:5580 to read and write the Nest's Thermostat cluster. It is bound to
+# loopback only; nothing off the hub reaches it.
+#
+# The controller does its own Matter discovery, which over Wi-Fi relies on IPv6
+# link-local and mDNS on the LAN (the design's open risk, proven by commissioning
+# in this task). The hardening below is deliberately filesystem-only: it must not
+# sandbox the network away, drop IPv6, or block the netlink socket the controller
+# uses to see link-local addresses, or commissioning cannot find the thermostat.
+[Unit]
+Description=homebody Matter controller (python-matter-server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=homebody
+Group=homebody
+ExecStart=/opt/homebody/.venv/bin/matter-server --storage-path /var/lib/homebody/matter --port 5580 --listen-address 127.0.0.1
+Restart=always
+RestartSec=5
+
+# Filesystem hardening only (see the header): the rest of the filesystem is
+# read-only, a private /tmp, no privilege escalation, and write access limited to
+# homebody's own state directory (the controller creates and writes the matter
+# subdirectory under it). The network is left untouched so Matter discovery over
+# IPv6 link-local and mDNS keeps working.
+ProtectSystem=strict
+NoNewPrivileges=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/homebody
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+---
+# Where this host clones the homebody repo from on first boot. It defaults to the
+# real public repo; the container test overrides it with a local stub so the
+# bootstrap can be exercised with no network and no real thermostat.
+homebody_bootstrap_repo_url: "https://github.com/doyled-it/homebody"

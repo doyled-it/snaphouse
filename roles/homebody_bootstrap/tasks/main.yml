@@ -1,0 +1,120 @@
+---
+# First-boot bootstrap of homebody on the hub (design "Deployment", the homebody
+# spec). snaphouse installs the OS base and audio, then installs homebody: it
+# clones the repo and runs homebody's own installer once, which ensures the
+# homebody user, the local config from the example, the state directory, and the
+# uv venv. From then on homebody self-updates on the timer this role installs, so
+# this role never re-touches a homebody-owned path. Both the clone and the
+# installer are guarded by creates for exactly that reason; the git module is
+# deliberately not used, since it would reach into the checkout on every apply.
+#
+# Unlike nightstand (which owns its own units), the systemd units homebody runs
+# under live here as templates: the Matter controller and the self-update service
+# and timer. The install interface the two repos share pins that split.
+
+- name: Ensure git is present for the clone
+  ansible.builtin.apt:
+    name: git
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Clone homebody on first boot only
+  ansible.builtin.command:
+    cmd: "git clone {{ homebody_bootstrap_repo_url }} /opt/homebody"
+    creates: /opt/homebody
+  # Deliberately the command module with a creates guard, not ansible.builtin.git:
+  # snaphouse clones once and must never re-touch homebody-owned paths after.
+  # noqa command-instead-of-module
+
+- name: Run the homebody installer once
+  # homebody's installer is idempotent, runs as root, and creates
+  # /etc/homebody/local.toml from its example on first run (and the homebody user,
+  # /var/lib/homebody, and the uv venv). The creates guard means snaphouse runs it
+  # exactly once; homebody self-updates from then on.
+  ansible.builtin.command:
+    cmd: ./deploy/install.sh
+    chdir: /opt/homebody
+    creates: /etc/homebody/local.toml
+
+- name: Ensure the systemd unit directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the homebody Matter controller unit
+  ansible.builtin.template:
+    src: homebody-matter.service.j2
+    dest: /etc/systemd/system/homebody-matter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for homebody_bootstrap
+    - Restart the homebody Matter controller
+
+- name: Install the homebody self-update service unit
+  ansible.builtin.template:
+    src: homebody-update.service.j2
+    dest: /etc/systemd/system/homebody-update.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for homebody_bootstrap
+
+- name: Install the homebody self-update timer unit
+  ansible.builtin.template:
+    src: homebody-update.timer.j2
+    dest: /etc/systemd/system/homebody-update.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for homebody_bootstrap
+    - Restart the homebody update timer
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the homebody verify check
+  ansible.builtin.copy:
+    src: verify.d/homebody.sh
+    dest: /etc/snaphouse/verify.d/homebody.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# Flush the reload handler now so the units are known before we enable them on a
+# first install. The handlers are gated on systemd, so this is a no-op in the CI
+# container.
+- name: Reload systemd now if the units changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the homebody Matter controller
+  ansible.builtin.systemd_service:
+    name: homebody-matter.service
+    enabled: true
+    state: started
+  # Only on a real systemd host; the CI container has no running init, so the
+  # service is never started there (see common_systemd_init in the common role).
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Enable and start the homebody self-update timer
+  ansible.builtin.systemd_service:
+    name: homebody-update.timer
+    enabled: true
+    state: started
+  # Only on a real systemd host; the CI container has no running init.
+  when: common_systemd_init
+  tags:
+    - service

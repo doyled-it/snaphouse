@@ -1,0 +1,32 @@
+---
+# Both handlers touch systemd, so each is gated on common_systemd_init (real
+# machine only) and tagged service. A notified handler ignores --skip-tags, so
+# the when: is what keeps these out of the CI container; the tag still marks them
+# for a real-host --skip-tags service run.
+
+# Defined before the restart handler so a daemon-reload runs first when both are
+# notified on a unit change.
+- name: Reload systemd for homebody_bootstrap
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Restart the homebody Matter controller
+  ansible.builtin.systemd_service:
+    name: homebody-matter.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service
+
+# A changed cadence in the timer unit only takes effect once the running timer is
+# restarted; the daemon-reload above alone would not re-read it.
+- name: Restart the homebody update timer
+  ansible.builtin.systemd_service:
+    name: homebody-update.timer
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service
