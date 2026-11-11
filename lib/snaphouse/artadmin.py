@@ -303,9 +303,26 @@ class ArtAdmin:
             return
         body = handler.rfile.read(length) if length else b""
 
+        # Slow, network-bound work (the weather geocode) runs here, before the
+        # write lock is taken, so a slow geocoder (up to its 10 s timeout) never
+        # stalls the thumbnail pass or another write. This mirrors
+        # run_thumbnail_pass, which does its slow decode outside the lock. The
+        # prepared value feeds the locked step; most routes produce none.
+        try:
+            prepared = self._prepare(path, body)
+        except ArtError as error:
+            handler.send_api_error(error.status, error.message)
+            return
+        except Exception:  # noqa: BLE001 - never leak a traceback to the page
+            self.log.exception("art admin prepare failed: %s", path)
+            handler.send_api_error(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Something went wrong."
+            )
+            return
+
         with self._lock:
             try:
-                result = route(handler, body)
+                result = route(handler, body, prepared)
                 self.publish()
             except ArtError as error:
                 handler.send_api_error(error.status, error.message)
@@ -322,9 +339,21 @@ class ArtAdmin:
         self.wake()
         handler.send_api_json(HTTPStatus.OK, result)
 
+    def _prepare(self, path: str, body: bytes):
+        """Resolve a route's slow, network-bound input before the write lock.
+
+        Only the frame-settings route needs this: a weather-city write is
+        geocoded here (a network call up to the 10 s timeout) so it never runs
+        under the library lock. Returns the prepared value the route consumes
+        under the lock, or ``None`` for a route with no pre-lock work.
+        """
+        if path == "/api/frame/settings":
+            return self.frame.prepare_settings(_json_body(body))
+        return None
+
     # -- endpoint handlers ------------------------------------------------- #
 
-    def _upload(self, handler: "_Handler", body: bytes) -> dict:
+    def _upload(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         content_type = handler.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type.lower():
             raise ArtError(400, "That upload was not a valid form submission.")
@@ -340,39 +369,39 @@ class ArtAdmin:
         ]
         return {"ids": ids}
 
-    def _delete(self, handler: "_Handler", body: bytes) -> dict:
+    def _delete(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         return {"id": self.library.delete(_require_str(data, "id"))}
 
-    def _restore(self, handler: "_Handler", body: bytes) -> dict:
+    def _restore(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         return {"id": self.library.restore(_require_str(data, "id"))}
 
-    def _move(self, handler: "_Handler", body: bytes) -> dict:
+    def _move(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         new_id = self.library.move(
             _require_str(data, "id"), _require_str(data, "folder")
         )
         return {"id": new_id}
 
-    def _folder_create(self, handler: "_Handler", body: bytes) -> dict:
+    def _folder_create(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         name = _require_str(data, "name")
         _reject_reserved_name(name)
         return {"folder": self.library.create_folder(name)}
 
-    def _folder_rename(self, handler: "_Handler", body: bytes) -> dict:
+    def _folder_rename(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         target = _require_str(data, "to")
         _reject_reserved_name(target)
         folder = self.library.rename_folder(_require_str(data, "from"), target)
         return {"folder": folder}
 
-    def _folder_delete(self, handler: "_Handler", body: bytes) -> dict:
+    def _folder_delete(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         return {"folder": self.library.delete_folder(_require_str(data, "name"))}
 
-    def _folder_enable(self, handler: "_Handler", body: bytes) -> dict:
+    def _folder_enable(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         name = _require_str(data, "name")
         enabled = data.get("enabled")
@@ -380,14 +409,14 @@ class ArtAdmin:
             raise ArtError(400, "The enabled flag must be true or false.")
         return {"name": name, "enabled": self.library.set_folder_enabled(name, enabled)}
 
-    def _settings(self, handler: "_Handler", body: bytes) -> dict:
+    def _settings(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         minutes = data.get("rotate_minutes")
         if not isinstance(minutes, int) or isinstance(minutes, bool):
             raise ArtError(400, "That is not one of the allowed rotation intervals.")
         return {"rotate_minutes": self.library.set_interval(minutes)}
 
-    def _command(self, handler: "_Handler", body: bytes) -> dict:
+    def _command(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         action = data.get("action")
         if not isinstance(action, str):
@@ -399,17 +428,19 @@ class ArtAdmin:
 
     # -- frame control endpoints ------------------------------------------- #
 
-    def _frame_settings(self, handler: "_Handler", body: bytes) -> dict:
-        data = _json_body(body)
-        return {"settings": self.frame.update_settings(data)}
+    def _frame_settings(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
+        # The subset was parsed and its weather-city query geocoded in _prepare,
+        # outside the write lock; here, under the lock, it is only merged and
+        # stored, so no network call runs while the lock is held.
+        return {"settings": self.frame.update_settings(prepared)}
 
-    def _frame_pin(self, handler: "_Handler", body: bytes) -> dict:
+    def _frame_pin(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         data = _json_body(body)
         what = _require_str(data, "what")
         duration = _require_str(data, "duration")
         return {"pin": self.frame.pin(what, duration)}
 
-    def _frame_unpin(self, handler: "_Handler", body: bytes) -> dict:
+    def _frame_unpin(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
         _json_body(body)
         return {"pin": self.frame.unpin()}
 

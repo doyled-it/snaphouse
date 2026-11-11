@@ -15,6 +15,7 @@ import io
 import json
 import socket
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -688,6 +689,68 @@ def test_frame_weather_location_no_match_is_a_json_400(tmp_path):
         )
         assert status == 400
         assert "Nowhereville, ZZ" in body["error"]
+    finally:
+        started.close()
+
+
+def test_slow_geocoder_does_not_block_other_writes(tmp_path):
+    # The geocode runs before the library write lock is taken, so a slow geocoder
+    # (here blocked until released) must not stall a concurrent art-admin write.
+    # Under the old shape (geocode under the lock) the pin below would wait out
+    # the whole geocode; here it returns promptly.
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_fetch(url):
+        started.set()
+        release.wait(10)
+        return json.dumps(_SAN_DIEGO_BODY).encode("utf-8")
+
+    app = _make_app(tmp_path, geocode=slow_fetch)
+    client = Client(app)
+    try:
+        result = {}
+
+        def do_geocode():
+            result["status"], result["body"] = client.post_json(
+                "/api/frame/settings", {"weather_location": {"query": "San Diego, CA"}}
+            )
+
+        geocode_thread = threading.Thread(target=do_geocode)
+        geocode_thread.start()
+        # The geocode is in flight (and would be holding the lock in the old code).
+        assert started.wait(5), "the geocode never started"
+
+        # A concurrent write completes without waiting out the blocked geocode.
+        begin = time.monotonic()
+        status, body = client.post_json(
+            "/api/frame/pin", {"what": "weather", "duration": "forever"}
+        )
+        elapsed = time.monotonic() - begin
+        assert status == 200
+        assert elapsed < 3.0, f"a concurrent write stalled {elapsed:.1f}s on the geocode"
+
+        # Let the geocode finish and confirm it still stores its result.
+        release.set()
+        geocode_thread.join(10)
+        assert result["status"] == 200
+        assert result["body"]["settings"]["weather_location"]["name"] == (
+            "San Diego, California, United States"
+        )
+    finally:
+        release.set()
+        client.close()
+
+
+def test_frame_weather_location_overlong_query_is_a_json_400(tmp_path):
+    app = _make_app(tmp_path, geocode=_geocoder(_SAN_DIEGO_BODY))
+    started = Client(app)
+    try:
+        status, body = started.post_json(
+            "/api/frame/settings", {"weather_location": {"query": "x" * 200}}
+        )
+        assert status == 400
+        assert "error" in body
     finally:
         started.close()
 

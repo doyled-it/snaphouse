@@ -105,6 +105,11 @@ _GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 _GEOCODE_MAX_BYTES = 1 * 1024 * 1024
 _GEOCODE_TIMEOUT = 10.0
 
+#: The longest typed city query accepted. A city name is short; a longer string
+#: is a mistake or abuse, refused with a 400 before anything is geocoded rather
+#: than sent on to the geocoder as the search term.
+_MAX_QUERY_LENGTH = 100
+
 #: Shown when the geocoder could not be reached or returned something unusable
 #: (a transient condition the owner can retry), distinct from a clean no-match.
 _GEOCODER_UNREACHABLE = "Could not look up places right now. Try again in a minute."
@@ -307,22 +312,71 @@ class FrameControl:
 
     # -- weather location --------------------------------------------------- #
 
-    def _clean_weather_location(self, value):
-        """Validate a weather-location write and resolve it to a stored location.
+    def prepare_settings(self, subset: dict) -> dict:
+        """Resolve a settings subset's network-bound parts before it is stored.
 
-        The write API takes exactly ``None`` (clear the location) or
-        ``{"query": "<city>"}`` (the hub geocodes it). Anything else is a 400. A
-        non-blank query is geocoded; the stored form is the display name,
-        city-centre coordinates rounded to two decimals, and the IANA timezone.
+        The weather geocode is the only slow, network-bound step in a settings
+        write, and the service must run it outside its library write lock (so a
+        slow geocoder never stalls the thumbnail pass or another write). This does
+        that resolution: it returns a shallow copy of ``subset`` in which a
+        ``weather_location`` write of the form ``{"query": "<city>"}`` is replaced
+        by the resolved location (the geocode happens here) and ``None`` is left
+        as ``None``. Every other key is passed through untouched for
+        :meth:`update_settings` to validate and store under the lock. A write with
+        no ``weather_location`` key needs no network and is returned as-is.
+        """
+        if not isinstance(subset, dict):
+            raise ArtError(400, "That is not a valid settings object.")
+        if "weather_location" not in subset:
+            return dict(subset)
+        prepared = dict(subset)
+        prepared["weather_location"] = self._resolve_weather_location(
+            subset["weather_location"]
+        )
+        return prepared
+
+    def _resolve_weather_location(self, value):
+        """Resolve a weather-location write to its stored form (the geocode).
+
+        ``None`` clears the location; ``{"query": "<city>"}`` is geocoded to the
+        stored location dict. Any other shape is a 400, matching what
+        :meth:`update_settings` would reject, so a client posting a pre-resolved
+        location (not via ``query``) is refused rather than trusted.
         """
         if value is None:
             return None
         if not isinstance(value, dict) or "query" not in value:
             raise ArtError(400, "That is not a valid weather location.")
-        query = value["query"]
+        return self._geocode_query(self._clean_query(value["query"]))
+
+    def _clean_weather_location(self, value):
+        """Validate a weather-location value and return its stored form.
+
+        ``None`` clears it. A ``{"query": "<city>"}`` is geocoded (a direct call;
+        the service resolves it in :meth:`prepare_settings` outside the lock, so
+        this path does no network there). An already-resolved location dict is
+        validated to the stored shape and kept. Anything else is a 400.
+        """
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ArtError(400, "That is not a valid weather location.")
+        if "query" in value:
+            return self._geocode_query(self._clean_query(value["query"]))
+        resolved = _normalize_weather_location(value)
+        if resolved is None:
+            raise ArtError(400, "That is not a valid weather location.")
+        return resolved
+
+    @staticmethod
+    def _clean_query(query) -> str:
+        """A typed city query, trimmed, non-blank, and within the length cap."""
         if not isinstance(query, str) or not query.strip():
             raise ArtError(400, 'Enter a city, like "San Diego, CA".')
-        return self._geocode_query(query.strip())
+        trimmed = query.strip()
+        if len(trimmed) > _MAX_QUERY_LENGTH:
+            raise ArtError(400, "That city name is too long. Use a shorter city name.")
+        return trimmed
 
     def _geocode_query(self, query: str) -> dict:
         """Geocode a typed ``City`` or ``City, Qualifier`` to a stored location.

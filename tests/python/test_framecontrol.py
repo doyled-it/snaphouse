@@ -609,6 +609,55 @@ def test_blank_query_is_rejected_without_a_fetch(tmp_path):
     assert geo.calls == []
 
 
+def test_overlong_query_is_rejected_without_a_fetch(tmp_path):
+    geo = FakeGeocoder(_SAN_DIEGO)
+    frame = _make(tmp_path, geocode=geo)
+    with pytest.raises(ArtError) as info:
+        frame.update_settings({"weather_location": {"query": "x" * 101}})
+    assert info.value.status == 400
+    # The cap is enforced before any network call.
+    assert geo.calls == []
+    # A query right at the 100-char cap passes the cap and reaches the geocoder
+    # (it then no-matches here, but the point is the length check let it through).
+    with pytest.raises(ArtError):
+        frame.update_settings({"weather_location": {"query": "x" * 100}})
+    assert len(geo.calls) == 1
+
+
+def test_prepare_settings_geocodes_a_query_and_update_does_not(tmp_path):
+    # prepare_settings runs the network step (so the service can do it outside the
+    # lock); feeding its result to update_settings stores it with no further call.
+    geo = FakeGeocoder(_SAN_DIEGO)
+    frame = _make(tmp_path, geocode=geo)
+    prepared = frame.prepare_settings({"weather_location": {"query": "San Diego, CA"}})
+    assert prepared["weather_location"]["name"] == "San Diego, California, United States"
+    assert len(geo.calls) == 1
+    settings = frame.update_settings(prepared)
+    assert settings["weather_location"]["name"] == "San Diego, California, United States"
+    # No second geocode: update_settings only validated the resolved location.
+    assert len(geo.calls) == 1
+
+
+def test_prepare_settings_passes_other_keys_through_untouched(tmp_path):
+    frame = _make(tmp_path, geocode=FakeGeocoder(_SAN_DIEGO))
+    prepared = frame.prepare_settings({"now_playing_kinds": ["music", "podcast"]})
+    assert prepared == {"now_playing_kinds": ["music", "podcast"]}
+
+
+def test_prepare_settings_rejects_a_pre_resolved_location(tmp_path):
+    # The write API accepts only a query or null, never a pre-built location.
+    frame = _make(tmp_path, geocode=FakeGeocoder(_SAN_DIEGO))
+    with pytest.raises(ArtError) as info:
+        frame.prepare_settings({"weather_location": {"name": "X", "latitude": 1}})
+    assert info.value.status == 400
+
+
+def test_prepare_settings_clears_with_null(tmp_path):
+    frame = _make(tmp_path, geocode=FakeGeocoder(_SAN_DIEGO))
+    prepared = frame.prepare_settings({"weather_location": None})
+    assert prepared == {"weather_location": None}
+
+
 def test_weather_location_bad_shape_is_rejected(tmp_path):
     frame = _make(tmp_path, geocode=FakeGeocoder(_SAN_DIEGO))
     for bad in [42, "San Diego", {"name": "San Diego"}, []]:
