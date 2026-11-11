@@ -61,6 +61,23 @@ location = /frame.json {
     add_header Cache-Control "no-cache";
 }
 
+# The per-frame art history and mirror, written by the same hub timer under
+# frames/<id>/ inside the timer-owned frame subdir (the "Art history" and "Frame
+# mirror" contracts in docs/cross-repo-features.md). One prefix location serves
+# every frame by id: /frames/office/frame.png maps to
+# /var/lib/snaphouse/public/frame/frames/office/frame.png (root plus the URI),
+# which stays inside the timer-owned subdir, so no write ever chowns the shared
+# public root. Content types come from the file extensions (mime.types): .json is
+# application/json, .png is image/png. Cache-Control "no-cache" makes a phone
+# revalidate the mirror <img> every time instead of showing a stale frame from
+# heuristic freshness; it is harmless on the page's no-store JSON fetches. Any
+# file may be absent (a frame offline, or not yet installed, like the office
+# before its Inky arrives); a 404 then makes the page show that frame as offline.
+location /frames/ {
+    root /var/lib/snaphouse/public/frame;
+    add_header Cache-Control "no-cache";
+}
+
 # The hub's now-playing data, written by the snaphouse-nowplaying service (the
 # metadata role) into its own snapserver-owned subdir of the public root. The
 # root points at that subdir, and nginx appends the single-segment URI, so the
