@@ -1080,6 +1080,26 @@ export function parseFrameControl(raw) {
   };
 }
 
+// Decide the frame-control state to render after a refresh fetch, from the prior
+// state and the fetch outcome. There are three failure shapes and they must all
+// land on the "unavailable" state, never on the HTML form defaults:
+//   - a 404 (the hub has not published the document yet): `json` is null.
+//   - a malformed body: `json` is null.
+//   - the fetch itself throwing (a network error): `threw` is true.
+// A throw while a good document is already on screen is a transient blip, so the
+// last-good render is kept; a throw with no good prior state falls to
+// unavailable, matching the 404 and malformed paths. Any non-throw outcome parses
+// `json`, where null reads as unavailable and an object reads as available.
+export function frameControlAfterFetch(prior, { threw, json }) {
+  if (threw) {
+    if (prior && prior.available) {
+      return prior;
+    }
+    return parseFrameControl(null);
+  }
+  return parseFrameControl(json);
+}
+
 function parseFrameSettings(raw) {
   const s = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const kinds = Array.isArray(s.now_playing_kinds)

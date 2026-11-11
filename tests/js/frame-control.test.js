@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import {
   screenFromHash,
   parseFrameControl,
+  frameControlAfterFetch,
   pinSummary,
   validateFrameSettings,
   framePinBody,
@@ -130,6 +131,41 @@ test("parseFrameControl parses an active pin and rejects a bad one", () => {
   // An unknown "what" is not a pin the page can show, so it reads as no pin.
   const bad = parseFrameControl({ settings: {}, pin: { what: "lamp", seq: 1 } });
   assert.equal(bad.pin, null);
+});
+
+// --------------------------------------------------------------------------- #
+// frameControlAfterFetch: a failed read never falls back to the form defaults
+// --------------------------------------------------------------------------- #
+
+const GOOD_DOC = { settings: {}, pin: null };
+
+test("frameControlAfterFetch reads a 404 (null json, no throw) as unavailable", () => {
+  const result = frameControlAfterFetch(null, { threw: false, json: null });
+  assert.equal(result.available, false);
+});
+
+test("frameControlAfterFetch reads a malformed body (null json, no throw) as unavailable", () => {
+  // safeJsonParse hands a malformed body back as null, same as a 404.
+  const result = frameControlAfterFetch(null, { threw: false, json: null });
+  assert.equal(result.available, false);
+});
+
+test("frameControlAfterFetch reads a network throw with no prior state as unavailable", () => {
+  const result = frameControlAfterFetch(null, { threw: true, json: null });
+  assert.equal(result.available, false);
+});
+
+test("frameControlAfterFetch keeps the last-good document when a later fetch throws", () => {
+  const good = frameControlAfterFetch(null, { threw: false, json: GOOD_DOC });
+  assert.equal(good.available, true);
+  const afterThrow = frameControlAfterFetch(good, { threw: true, json: null });
+  assert.equal(afterThrow, good);
+});
+
+test("frameControlAfterFetch parses a good document into the available state", () => {
+  const result = frameControlAfterFetch(null, { threw: false, json: GOOD_DOC });
+  assert.equal(result.available, true);
+  assert.ok(result.settings);
 });
 
 // --------------------------------------------------------------------------- #

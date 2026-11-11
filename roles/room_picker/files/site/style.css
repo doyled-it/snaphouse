@@ -717,6 +717,25 @@ a.frame-title {
   gap: 6px;
 }
 
+/* Briefly ring a tile when "Show in library" scrolls to it, so the eye lands on
+   the piece after the screen switch. */
+.tile-flash {
+  border-radius: var(--radius-sm);
+  animation: tile-flash 1.6s ease-out;
+}
+
+@keyframes tile-flash {
+  0% {
+    box-shadow: 0 0 0 3px var(--focus);
+  }
+  70% {
+    box-shadow: 0 0 0 3px var(--focus);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
 .tile-thumb-wrap {
   position: relative;
 }
@@ -1297,5 +1316,9 @@ a.row-title {
   .np-fill,
   .library-summary::before {
     transition: none;
+  }
+
+  .tile-flash {
+    animation: none;
   }
 }

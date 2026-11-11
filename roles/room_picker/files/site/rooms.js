@@ -46,7 +46,7 @@ import {
   screenFromHash,
   SCREENS,
   FRAME_KINDS,
-  parseFrameControl,
+  frameControlAfterFetch,
   pinSummary,
   validateFrameSettings,
   framePinBody,
@@ -345,9 +345,9 @@ function wireChrome() {
   });
 }
 
-// Show one screen and hide the others, mark the title, and move focus and the
-// scroll to the top so switching screens starts at the beginning, not wherever
-// the last one was scrolled.
+// Show one screen and hide the others, mark the title, and scroll to the top so
+// switching screens starts at the beginning, not wherever the last one was
+// scrolled.
 function showScreen(name) {
   const screen = SCREENS.includes(name) ? name : "listen";
   state.screen = screen;
@@ -711,15 +711,19 @@ function wireFrameControl() {
 
 async function refreshFrameControl() {
   let json = null;
+  let threw = false;
   try {
     const response = await fetch("frame-control.json", { cache: "no-store" });
     if (response.ok) {
       json = safeJsonParse(await response.text());
     }
   } catch (err) {
-    return;
+    threw = true;
   }
-  state.frameControl = parseFrameControl(json);
+  // A 404, a malformed body, and a network throw all land on the unavailable
+  // state rather than the HTML form defaults; a throw over a good render keeps
+  // the last-good document. See frameControlAfterFetch.
+  state.frameControl = frameControlAfterFetch(state.frameControl, { threw, json });
   renderFrameControl();
 }
 
@@ -1467,6 +1471,7 @@ function renderLibraryGrid() {
 function libraryTile(piece, index) {
   const li = document.createElement("li");
   li.className = "tile";
+  li.dataset.pieceId = piece.id;
 
   const wrap = document.createElement("div");
   wrap.className = "tile-thumb-wrap";
@@ -1684,9 +1689,6 @@ function showInLibrary(current) {
     return;
   }
   const piece = index.pieces.find((p) => (current.id && p.id === current.id) || p.file === current.file);
-  // The library lives on the Art screen; route there (through the hash) before
-  // scrolling to the piece.
-  window.location.hash = "#art";
   els.libraryDetails.open = true;
   if (piece) {
     state.artFilter = piece.folder;
@@ -1695,7 +1697,48 @@ function showInLibrary(current) {
     state.libPage = idx >= 0 ? Math.floor(idx / 24) : 0;
     renderLibrary();
   }
-  els.library.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+
+  // The library lives on the Art screen. Routing through the hash calls
+  // showScreen, which scrolls the body to the top, so the scroll to the piece
+  // has to run after that lands or it is immediately overridden. When the hash
+  // actually changes, scroll on the next hashchange (after showScreen); when we
+  // are already on #art, no hashchange fires, so scroll now.
+  const target = piece ? piece.id : null;
+  if (window.location.hash === "#art") {
+    scrollToPiece(target);
+  } else {
+    window.addEventListener(
+      "hashchange",
+      () => scrollToPiece(target),
+      { once: true },
+    );
+    window.location.hash = "#art";
+  }
+}
+
+// Scroll the piece's tile into view and flash it so "Show in library" lands on
+// the piece, not just the top of the library. Falls back to the library heading
+// when the tile is not on the page (no match, or the piece has no id).
+function scrollToPiece(pieceId) {
+  const behavior = reducedMotion() ? "auto" : "smooth";
+  const tile = pieceId
+    ? els.artGrid.querySelector(`[data-piece-id="${CSS.escape(pieceId)}"]`)
+    : null;
+  if (tile) {
+    tile.scrollIntoView({ behavior, block: "center" });
+    tile.classList.remove("tile-flash");
+    // Reading offsetWidth restarts the animation if the same tile is targeted
+    // again before the class has been cleared.
+    void tile.offsetWidth;
+    tile.classList.add("tile-flash");
+    tile.addEventListener(
+      "animationend",
+      () => tile.classList.remove("tile-flash"),
+      { once: true },
+    );
+    return;
+  }
+  els.library.scrollIntoView({ behavior, block: "start" });
 }
 
 function uploadOne(file, folder) {
