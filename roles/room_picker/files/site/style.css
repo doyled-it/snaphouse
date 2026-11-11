@@ -165,6 +165,27 @@ a {
   letter-spacing: 0.01em;
 }
 
+/* The current screen's name, quiet, to the right of the title. */
+.screen-title {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* The first section on each screen drops its top hairline so a screen does not
+   open under a stray rule. */
+.screen > .section:first-child {
+  border-top: none;
+}
+
+/* The current screen, marked in the drawer. */
+.drawer-link.current {
+  background: var(--mat);
+  color: var(--blue-text);
+}
+
 .drawer {
   margin: 0;
   padding: 0;
@@ -696,6 +717,25 @@ a.frame-title {
   gap: 6px;
 }
 
+/* Briefly ring a tile when "Show in library" scrolls to it, so the eye lands on
+   the piece after the screen switch. */
+.tile-flash {
+  border-radius: var(--radius-sm);
+  animation: tile-flash 1.6s ease-out;
+}
+
+@keyframes tile-flash {
+  0% {
+    box-shadow: 0 0 0 3px var(--focus);
+  }
+  70% {
+    box-shadow: 0 0 0 3px var(--focus);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
 .tile-thumb-wrap {
   position: relative;
 }
@@ -1164,9 +1204,121 @@ a.row-title {
   cursor: pointer;
 }
 
+/* --- Pin control --------------------------------------------------------- */
+
+.pin-status {
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+
+.pin-current {
+  margin-bottom: 14px;
+}
+
+.pin-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.pin-form .field {
+  flex: 0 1 auto;
+}
+
+.pin-form .select {
+  min-width: 0;
+}
+
+.pin-form .btn {
+  flex: 0 0 auto;
+}
+
+/* --- Frame settings ------------------------------------------------------ */
+
+.fs-body {
+  display: grid;
+  gap: 20px;
+}
+
+.settings-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.settings-group {
+  display: grid;
+  gap: 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.time-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.time-row-label {
+  min-width: 78px;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.time-row-to {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.time-input {
+  min-width: 128px;
+  font-variant-numeric: tabular-nums;
+}
+
+.switch-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.switch-input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+
+/* Morning times read as off when morning weather is disabled, but stay usable
+   so a time can be set before switching it on. */
+.morning-times.disabled {
+  opacity: 0.5;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.fs-error {
+  margin: 0;
+  color: var(--red-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .np-fill,
   .library-summary::before {
     transition: none;
+  }
+
+  .tile-flash {
+    animation: none;
   }
 }

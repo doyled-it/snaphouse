@@ -923,13 +923,8 @@ function updatedLabelFor(updatedAt, nowMs) {
   if (Number.isFinite(nowMs) && ms > nowMs + 60000) {
     return "";
   }
-  const match = /T(\d{2}):(\d{2})/.exec(updatedAt);
-  if (!match) {
-    return "";
-  }
-  const hour24 = Number(match[1]);
-  const hour12 = ((hour24 + 11) % 12) + 1;
-  return `Updated ${hour12}:${match[2]}`;
+  const clock = clock12FromIso(updatedAt);
+  return clock ? `Updated ${clock}` : "";
 }
 
 // The "Open in" sheet for a play-history row: a short list of { label, url },
@@ -1018,4 +1013,289 @@ export function openInLinks(play) {
     return [...podcastApps, libro, web];
   }
   return [web];
+}
+
+// The frame-control model: the hash router for the four screens, the hub's
+// /frame-control.json (settings and the current pin), the Frame screen's pin
+// summary, the Settings form validation, and the request bodies the new
+// /api/frame/* endpoints take. All pure, so the view glue in rooms.js stays a
+// thin DOM layer, exactly as the rest of the model is split.
+
+// The four screens the hamburger drawer switches between, each addressed by the
+// URL hash so Back and refresh keep the screen (design "Page: screens").
+export const SCREENS = ["listen", "frame", "art", "settings"];
+
+// The default screen when the hash is empty or unknown (design: Listen).
+const DEFAULT_SCREEN = "listen";
+
+// Which screen a URL hash selects. A leading "#" is optional and case is
+// ignored; an empty, bare, or unknown hash falls back to the default so a
+// hand-typed or stale fragment never lands on a blank page.
+export function screenFromHash(hash) {
+  if (typeof hash !== "string") {
+    return DEFAULT_SCREEN;
+  }
+  const name = hash.replace(/^#/, "").toLowerCase();
+  return SCREENS.includes(name) ? name : DEFAULT_SCREEN;
+}
+
+// The three kinds of audio the now-playing toggle covers, in display order
+// (design "Kinds of audio"; global constraints). The default is music only.
+export const FRAME_KINDS = ["music", "podcast", "audiobook"];
+const DEFAULT_KINDS = ["music"];
+
+// The pin targets and durations the pin control offers (design "Pinning";
+// global constraints). A body is only built from these exact values.
+export const PIN_WHATS = ["art", "weather", "now_playing"];
+export const PIN_DURATIONS = ["1h", "4h", "morning", "forever"];
+
+// The documented defaults when a settings field is missing (design "Hub: frame
+// settings and pin"): quiet hours 22:00 to 06:00, morning weather on with
+// 06:00 to 08:30 weekdays and 07:00 to 09:00 weekends.
+const DEFAULT_QUIET_HOURS = { start: "22:00", end: "06:00" };
+const DEFAULT_MORNING = {
+  enabled: true,
+  weekday: ["06:00", "08:30"],
+  weekend: ["07:00", "09:00"],
+};
+
+// Parse the hub's /frame-control.json into the settings and pin the page shows.
+// The hub owns this document and may not have published it yet (it 404s until
+// deployed), so a missing or malformed body reads as unavailable: the Settings
+// screen then shows the frame settings as unknown rather than inventing values,
+// and the frame keeps running on its own local config (Review Focus 1).
+//
+// Returns { available, settings, pin }. When available, every settings field is
+// filled with the documented default if the stored value is missing or
+// malformed, so the form always has something to show; pin is a validated pin or
+// null.
+export function parseFrameControl(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { available: false, settings: null, pin: null };
+  }
+  return {
+    available: true,
+    settings: parseFrameSettings(raw.settings),
+    pin: parsePin(raw.pin),
+  };
+}
+
+// Decide the frame-control state to render after a refresh fetch, from the prior
+// state and the fetch outcome. There are three failure shapes and they must all
+// land on the "unavailable" state, never on the HTML form defaults:
+//   - a 404 (the hub has not published the document yet): `json` is null.
+//   - a malformed body: `json` is null.
+//   - the fetch itself throwing (a network error): `threw` is true.
+// A throw while a good document is already on screen is a transient blip, so the
+// last-good render is kept; a throw with no good prior state falls to
+// unavailable, matching the 404 and malformed paths. Any non-throw outcome parses
+// `json`, where null reads as unavailable and an object reads as available.
+export function frameControlAfterFetch(prior, { threw, json }) {
+  if (threw) {
+    if (prior && prior.available) {
+      return prior;
+    }
+    return parseFrameControl(null);
+  }
+  return parseFrameControl(json);
+}
+
+function parseFrameSettings(raw) {
+  const s = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const kinds = Array.isArray(s.now_playing_kinds)
+    ? FRAME_KINDS.filter((kind) => s.now_playing_kinds.includes(kind))
+    : DEFAULT_KINDS.slice();
+  return {
+    now_playing_kinds: kinds,
+    quiet_hours: parseWindowOrDefault(s.quiet_hours, DEFAULT_QUIET_HOURS, false),
+    morning_weather: parseMorning(s.morning_weather),
+  };
+}
+
+// A { start, end } of valid HH:MM times, or the given default when either is
+// missing or malformed. `ordered` requires start before end (the morning
+// windows); quiet hours wrap midnight, so they pass ordered false.
+function parseWindowOrDefault(raw, fallback, ordered) {
+  if (!raw || typeof raw !== "object") {
+    return { ...fallback };
+  }
+  if (!isClock(raw.start) || !isClock(raw.end)) {
+    return { ...fallback };
+  }
+  if (ordered && clockMinutes(raw.start) >= clockMinutes(raw.end)) {
+    return { ...fallback };
+  }
+  return { start: raw.start, end: raw.end };
+}
+
+function parseMorning(raw) {
+  const m = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  return {
+    enabled: m.enabled !== false,
+    weekday: parsePairOrDefault(m.weekday, DEFAULT_MORNING.weekday),
+    weekend: parsePairOrDefault(m.weekend, DEFAULT_MORNING.weekend),
+  };
+}
+
+function parsePairOrDefault(raw, fallback) {
+  if (!Array.isArray(raw) || raw.length !== 2) {
+    return fallback.slice();
+  }
+  const [start, end] = raw;
+  if (!isClock(start) || !isClock(end) || clockMinutes(start) >= clockMinutes(end)) {
+    return fallback.slice();
+  }
+  return [start, end];
+}
+
+// A stored pin, validated into the shape the Frame screen reads, or null. `what`
+// must be one of the three targets; a pin with any other target is not something
+// the page can show, so it reads as no pin. The other fields are kept as given
+// (piece id, until, seq, set_at) or nulled.
+function parsePin(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  if (!PIN_WHATS.includes(raw.what)) {
+    return null;
+  }
+  return {
+    what: raw.what,
+    piece: nonEmptyStringOrNull(raw.piece),
+    until: nonEmptyStringOrNull(raw.until),
+    seq: nonNegativeNumberOrNull(raw.seq),
+    setAt: nonEmptyStringOrNull(raw.set_at),
+  };
+}
+
+// The Frame screen's one-line pin status, or null when nothing is pinned. A pin
+// whose `until` has already passed reads as no pin, so the page returns to
+// showing the schedule rather than a stale "Pinned" line (the hub clears an
+// expired pin; the page must not outlive it). A forever pin (until null) says so
+// plainly; a present but unparseable `until` drops the clause rather than show a
+// wrong time.
+//
+// `nowMs` is the client clock in ms (Date.now() in the page, a fixed value in
+// tests).
+export function pinSummary(pin, nowMs) {
+  if (!pin || typeof pin !== "object" || !PIN_WHATS.includes(pin.what)) {
+    return null;
+  }
+  const label = PIN_WHAT_LABELS[pin.what];
+  if (pin.until === null || pin.until === undefined) {
+    return `Pinned: ${label} until you unpin`;
+  }
+  const ms = Date.parse(pin.until);
+  if (Number.isNaN(ms)) {
+    return `Pinned: ${label}`;
+  }
+  if (Number.isFinite(nowMs) && ms <= nowMs) {
+    return null;
+  }
+  const clock = clock12FromIso(pin.until);
+  return clock ? `Pinned: ${label} until ${clock}` : `Pinned: ${label}`;
+}
+
+const PIN_WHAT_LABELS = {
+  art: "this art piece",
+  weather: "weather",
+  now_playing: "now playing",
+};
+
+// Validate a subset of the frame settings before the page posts it, mirroring
+// the hub's own checks (design "Hub: frame settings and pin"): kinds from the
+// three, times as HH:MM, and morning windows whose start is before their end.
+// Quiet hours wrap midnight, so they are not required to be ordered. The page
+// builds valid input from its own controls, but validating here keeps a bad
+// value off the wire and lets the Settings screen explain the problem in place.
+//
+// Returns { ok: true, value } with the cleaned body to send, or { ok: false,
+// error } with a short message in the interface's voice.
+export function validateFrameSettings(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ok: false, error: "Settings are not in a form the frame understands." };
+  }
+  const value = {};
+
+  if ("now_playing_kinds" in input) {
+    const kinds = input.now_playing_kinds;
+    if (!Array.isArray(kinds) || kinds.some((kind) => !FRAME_KINDS.includes(kind))) {
+      return { ok: false, error: "That is not a kind the frame knows." };
+    }
+    value.now_playing_kinds = kinds.slice();
+  }
+
+  if ("quiet_hours" in input) {
+    const window = input.quiet_hours;
+    if (!window || typeof window !== "object" || !isClock(window.start) || !isClock(window.end)) {
+      return { ok: false, error: "Use 24-hour times like 07:30 for quiet hours." };
+    }
+    value.quiet_hours = { start: window.start, end: window.end };
+  }
+
+  if ("morning_weather" in input) {
+    const m = input.morning_weather;
+    if (!m || typeof m !== "object" || Array.isArray(m)) {
+      return { ok: false, error: "Morning weather is not in a form the frame understands." };
+    }
+    for (const window of [m.weekday, m.weekend]) {
+      if (!Array.isArray(window) || window.length !== 2 || !isClock(window[0]) || !isClock(window[1])) {
+        return { ok: false, error: "Use 24-hour times like 07:30 for morning weather." };
+      }
+      if (clockMinutes(window[0]) >= clockMinutes(window[1])) {
+        return { ok: false, error: "Morning weather must start before it ends." };
+      }
+    }
+    value.morning_weather = {
+      enabled: m.enabled === true,
+      weekday: m.weekday.slice(),
+      weekend: m.weekend.slice(),
+    };
+  }
+
+  return { ok: true, value };
+}
+
+// The body the /api/frame/pin endpoint takes, or null when the target or
+// duration is not one the API accepts (the view then does nothing rather than
+// post garbage). The guard header is added by apiRequest, as for every write.
+export function framePinBody(what, duration) {
+  if (!PIN_WHATS.includes(what) || !PIN_DURATIONS.includes(duration)) {
+    return null;
+  }
+  return { what, duration };
+}
+
+// The body the /api/frame/unpin endpoint takes: an empty object the guarded
+// POST still carries so the service sees the X-Snaphouse header.
+export function frameUnpinBody() {
+  return {};
+}
+
+// A 24-hour HH:MM clock string (00:00 to 23:59), the format the hub stores and
+// the page sends. Anything else (a single-digit hour, an out-of-range value, a
+// different separator) is rejected.
+function isClock(value) {
+  return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function clockMinutes(value) {
+  const [h, m] = value.split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+// The 12-hour clock ("4:12") read straight off an ISO string's time part, so it
+// shows the frame's own local time without a timezone round-trip, or null when
+// the string carries no usable time. Shared with the mirror's "Updated" caption.
+function clock12FromIso(iso) {
+  if (typeof iso !== "string") {
+    return null;
+  }
+  const match = /T(\d{2}):(\d{2})/.exec(iso);
+  if (!match) {
+    return null;
+  }
+  const hour24 = Number(match[1]);
+  const hour12 = ((hour24 + 11) % 12) + 1;
+  return `${hour12}:${match[2]}`;
 }

@@ -43,6 +43,14 @@ import {
   openInLinks,
   pageCount,
   pageSlice,
+  screenFromHash,
+  SCREENS,
+  FRAME_KINDS,
+  frameControlAfterFetch,
+  pinSummary,
+  validateFrameSettings,
+  framePinBody,
+  frameUnpinBody,
 } from "./rooms-model.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -61,6 +69,7 @@ const TICK_MS = 1000;
 // The frame mirror and the art library documents the hub publishes, refreshed on
 // the same slow cadence as the frame history and re-read after every action.
 const FRAME_MS = 30000;
+const FRAME_CONTROL_MS = 30000;
 const LIBRARY_MS = 30000;
 // The default library filter: every folder. Matches the model's "all" sentinel.
 const ALL_FOLDERS = "all";
@@ -77,6 +86,14 @@ const els = {
   menuButton: document.getElementById("menu-button"),
   drawer: document.getElementById("drawer"),
   drawerNav: document.getElementById("drawer-nav"),
+  screenTitle: document.getElementById("screen-title"),
+
+  screens: {
+    listen: document.getElementById("screen-listen"),
+    frame: document.getElementById("screen-frame"),
+    art: document.getElementById("screen-art"),
+    settings: document.getElementById("screen-settings"),
+  },
 
   health: document.getElementById("health"),
   connection: document.getElementById("connection"),
@@ -94,6 +111,31 @@ const els = {
   frameShow: document.getElementById("frame-show"),
   frameDelete: document.getElementById("frame-delete"),
   frameHint: document.getElementById("frame-hint"),
+
+  pin: document.getElementById("pin"),
+  pinStatus: document.getElementById("pin-status"),
+  pinCurrent: document.getElementById("pin-current"),
+  pinUnpin: document.getElementById("pin-unpin"),
+  pinForm: document.getElementById("pin-form"),
+  pinWhat: document.getElementById("pin-what"),
+  pinDuration: document.getElementById("pin-duration"),
+  pinSet: document.getElementById("pin-set"),
+  pinUnavailable: document.getElementById("pin-unavailable"),
+
+  frameSettings: document.getElementById("frame-settings"),
+  fsUnavailable: document.getElementById("fs-unavailable"),
+  fsBody: document.getElementById("fs-body"),
+  fsKinds: document.getElementById("fs-kinds"),
+  fsQuietStart: document.getElementById("fs-quiet-start"),
+  fsQuietEnd: document.getElementById("fs-quiet-end"),
+  fsMorningEnabled: document.getElementById("fs-morning-enabled"),
+  fsMorningTimes: document.getElementById("fs-morning-times"),
+  fsWeekdayStart: document.getElementById("fs-weekday-start"),
+  fsWeekdayEnd: document.getElementById("fs-weekday-end"),
+  fsWeekendStart: document.getElementById("fs-weekend-start"),
+  fsWeekendEnd: document.getElementById("fs-weekend-end"),
+  fsSave: document.getElementById("fs-save"),
+  fsError: document.getElementById("fs-error"),
 
   npSection: document.getElementById("now-playing"),
   npArtImg: document.getElementById("np-art-img"),
@@ -188,6 +230,14 @@ const state = {
   artIntervalBuilt: false,
   artRefreshPending: false,
   toastTimer: null,
+
+  // The current screen (hash-routed), and the hub's parsed /frame-control.json
+  // (settings and the current pin), null until read once. `available` is false
+  // when the document is missing or malformed, so the page shows the frame
+  // settings as unknown rather than wrong.
+  screen: "listen",
+  frameControl: null,
+  fsKindsBuilt: false,
 };
 
 // The JSON-RPC endpoint and its WebSocket twin, both relative to this page so
@@ -207,19 +257,27 @@ async function start() {
   connect();
   wireChrome();
   wireArtManager();
+  wireFrameControl();
+  showScreen(screenFromHash(window.location.hash));
   refreshHealth();
   refreshFrame();
+  refreshFrameControl();
   refreshArt();
   refreshLibrary();
   refreshNowPlaying();
   refreshHistory();
   setInterval(refreshHealth, HEALTH_MS);
   setInterval(refreshFrame, FRAME_MS);
+  setInterval(refreshFrameControl, FRAME_CONTROL_MS);
   setInterval(refreshArt, HEALTH_MS);
   setInterval(() => refreshLibrary({ periodic: true }), LIBRARY_MS);
   setInterval(refreshNowPlaying, NOW_PLAYING_MS);
   setInterval(refreshHistory, HISTORY_MS);
   setInterval(tickNowPlaying, TICK_MS);
+
+  // The URL hash is the screen: Back, forward, and a shared link all land on
+  // the right one.
+  window.addEventListener("hashchange", () => showScreen(screenFromHash(window.location.hash)));
 
   // A phone that was asleep comes back with a dead socket and stale cards. On
   // return to the foreground, reconnect if needed, re-read the status, and
@@ -236,6 +294,7 @@ async function start() {
     }
     refreshHealth();
     refreshFrame();
+    refreshFrameControl();
     refreshArt();
     refreshLibrary();
     refreshNowPlaying();
@@ -257,21 +316,17 @@ function reducedMotion() {
 }
 
 // --------------------------------------------------------------------------- //
-// Page chrome: the section drawer and the "Open in" sheet, both real dialogs
-// (focus trapped, Escape closes).
+// Page chrome: the screen drawer and the "Open in" sheet, both real dialogs
+// (focus trapped, Escape closes). The hamburger switches between four screens,
+// each addressed by the URL hash so Back and refresh keep the screen.
 // --------------------------------------------------------------------------- //
 
-const SECTIONS = [
-  { id: "frame", label: "Frame" },
-  { id: "now-playing", label: "Now playing" },
-  { id: "rooms-section", label: "Rooms" },
-  { id: "library", label: "Library" },
-  { id: "art-history-section", label: "Art history" },
-  { id: "play-history-section", label: "Play history" },
-  { id: "rotation", label: "Rotation" },
-  { id: "upload", label: "Upload" },
-  { id: "trash", label: "Trash" },
-];
+const SCREEN_LABELS = {
+  listen: "Listen",
+  frame: "Frame",
+  art: "Art",
+  settings: "Settings",
+};
 
 function wireChrome() {
   els.menuButton.addEventListener("click", openDrawer);
@@ -290,24 +345,39 @@ function wireChrome() {
   });
 }
 
+// Show one screen and hide the others, mark the title, and scroll to the top so
+// switching screens starts at the beginning, not wherever the last one was
+// scrolled.
+function showScreen(name) {
+  const screen = SCREENS.includes(name) ? name : "listen";
+  state.screen = screen;
+  for (const key of SCREENS) {
+    els.screens[key].hidden = key !== screen;
+  }
+  els.screenTitle.textContent = SCREEN_LABELS[screen];
+  window.scrollTo({ top: 0, behavior: "auto" });
+}
+
 function openDrawer() {
   els.drawerNav.replaceChildren();
   const title = document.createElement("p");
   title.className = "drawer-title";
-  title.textContent = "Jump to";
+  title.textContent = "Screens";
   els.drawerNav.append(title);
-  for (const section of SECTIONS) {
-    const target = document.getElementById(section.id);
-    if (!target || target.hidden) {
-      continue;
-    }
+  for (const name of SCREENS) {
     const link = document.createElement("button");
     link.className = "drawer-link";
     link.type = "button";
-    link.textContent = section.label;
+    link.textContent = SCREEN_LABELS[name];
+    if (name === state.screen) {
+      link.setAttribute("aria-current", "page");
+      link.classList.add("current");
+    }
     link.addEventListener("click", () => {
       els.drawer.close();
-      target.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+      // Setting the hash routes through hashchange, which calls showScreen, so
+      // the history entry and the screen stay in step.
+      window.location.hash = `#${name}`;
     });
     els.drawerNav.append(link);
   }
@@ -618,6 +688,196 @@ function renderMirror(json) {
     els.mirrorCaption.hidden = true;
     els.mirrorCaption.textContent = "";
   }
+}
+
+// --------------------------------------------------------------------------- //
+// Frame control: the hub's /frame-control.json drives the Pin control on the
+// Frame screen and the frame settings on the Settings screen. A missing or
+// malformed document (it 404s until the hub ships the feature, or a bad body)
+// reads as unavailable: the page shows the settings as unknown and leaves the
+// frame running on its own, rather than inventing values (Review Focus 1).
+// --------------------------------------------------------------------------- //
+
+const KIND_LABELS = { music: "Music", podcast: "Podcasts", audiobook: "Audiobooks" };
+
+function wireFrameControl() {
+  els.pinSet.addEventListener("click", pinCurrent);
+  els.pinUnpin.addEventListener("click", unpinFrame);
+  els.fsSave.addEventListener("click", saveFrameTimes);
+  els.fsMorningEnabled.addEventListener("change", () => {
+    els.fsMorningTimes.classList.toggle("disabled", !els.fsMorningEnabled.checked);
+  });
+}
+
+async function refreshFrameControl() {
+  let json = null;
+  let threw = false;
+  try {
+    const response = await fetch("frame-control.json", { cache: "no-store" });
+    if (response.ok) {
+      json = safeJsonParse(await response.text());
+    }
+  } catch (err) {
+    threw = true;
+  }
+  // A 404, a malformed body, and a network throw all land on the unavailable
+  // state rather than the HTML form defaults; a throw over a good render keeps
+  // the last-good document. See frameControlAfterFetch.
+  state.frameControl = frameControlAfterFetch(state.frameControl, { threw, json });
+  renderFrameControl();
+}
+
+function renderFrameControl() {
+  const fc = state.frameControl;
+  const available = Boolean(fc && fc.available);
+
+  // Pin control (Frame screen).
+  els.pinForm.hidden = !available;
+  els.pinUnavailable.hidden = available;
+  if (available) {
+    const summary = pinSummary(fc.pin, Date.now());
+    if (summary) {
+      els.pinStatus.textContent = summary;
+      els.pinStatus.hidden = false;
+      els.pinCurrent.hidden = false;
+    } else {
+      els.pinStatus.hidden = true;
+      els.pinStatus.textContent = "";
+      els.pinCurrent.hidden = true;
+    }
+  } else {
+    els.pinStatus.hidden = true;
+    els.pinStatus.textContent = "";
+    els.pinCurrent.hidden = true;
+  }
+
+  // Frame settings (Settings screen).
+  els.fsUnavailable.hidden = available;
+  els.fsBody.hidden = !available;
+  if (available) {
+    renderFrameSettings(fc.settings);
+  }
+}
+
+function renderFrameSettings(settings) {
+  const kinds = new Set(settings.now_playing_kinds);
+  if (!state.fsKindsBuilt) {
+    els.fsKinds.replaceChildren();
+    for (const kind of FRAME_KINDS) {
+      const chip = document.createElement("button");
+      chip.className = "chip";
+      chip.type = "button";
+      chip.dataset.kind = kind;
+      chip.textContent = KIND_LABELS[kind];
+      chip.addEventListener("click", () => toggleKind(kind));
+      els.fsKinds.append(chip);
+    }
+    state.fsKindsBuilt = true;
+  }
+  for (const chip of els.fsKinds.querySelectorAll(".chip")) {
+    const on = kinds.has(chip.dataset.kind);
+    chip.classList.toggle("on", on);
+    chip.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  els.fsQuietStart.value = settings.quiet_hours.start;
+  els.fsQuietEnd.value = settings.quiet_hours.end;
+  els.fsMorningEnabled.checked = settings.morning_weather.enabled;
+  els.fsMorningTimes.classList.toggle("disabled", !settings.morning_weather.enabled);
+  els.fsWeekdayStart.value = settings.morning_weather.weekday[0];
+  els.fsWeekdayEnd.value = settings.morning_weather.weekday[1];
+  els.fsWeekendStart.value = settings.morning_weather.weekend[0];
+  els.fsWeekendEnd.value = settings.morning_weather.weekend[1];
+}
+
+// Toggle one now-playing kind and save, like the rotation folder chips: the
+// change is immediate and always valid, so there is no form to submit.
+async function toggleKind(kind) {
+  const fc = state.frameControl;
+  if (!fc || !fc.available) {
+    return;
+  }
+  const current = new Set(fc.settings.now_playing_kinds);
+  if (current.has(kind)) {
+    current.delete(kind);
+  } else {
+    current.add(kind);
+  }
+  const next = FRAME_KINDS.filter((k) => current.has(k));
+  await postFrameSettings({ now_playing_kinds: next });
+}
+
+// Save quiet hours and morning weather together, validated the way the hub
+// validates them, so a bad time is caught here and explained in place rather
+// than posted.
+async function saveFrameTimes() {
+  clearFsError();
+  const subset = {
+    quiet_hours: { start: els.fsQuietStart.value, end: els.fsQuietEnd.value },
+    morning_weather: {
+      enabled: els.fsMorningEnabled.checked,
+      weekday: [els.fsWeekdayStart.value, els.fsWeekdayEnd.value],
+      weekend: [els.fsWeekendStart.value, els.fsWeekendEnd.value],
+    },
+  };
+  const check = validateFrameSettings(subset);
+  if (!check.ok) {
+    showFsError(check.error);
+    return;
+  }
+  const result = await postFrameSettings(check.value);
+  if (result.ok) {
+    showToast("Frame settings saved.");
+  }
+}
+
+// Validate a settings subset and post it, showing the server's error on failure.
+// Returns { ok } so a caller can confirm. Always refreshes afterwards so the
+// form reflects what the hub actually stored.
+async function postFrameSettings(subset) {
+  const check = validateFrameSettings(subset);
+  if (!check.ok) {
+    showFsError(check.error);
+    return { ok: false };
+  }
+  const result = await postApi("/api/frame/settings", check.value);
+  if (!result.ok) {
+    showToast(result.error);
+  }
+  await refreshFrameControl();
+  return result;
+}
+
+async function pinCurrent() {
+  const body = framePinBody(els.pinWhat.value, els.pinDuration.value);
+  if (!body) {
+    return;
+  }
+  const result = await postApi("/api/frame/pin", body);
+  if (!result.ok) {
+    showToast(result.error);
+  }
+  await refreshFrameControl();
+  refreshFrame();
+}
+
+async function unpinFrame() {
+  const result = await postApi("/api/frame/unpin", frameUnpinBody());
+  if (!result.ok) {
+    showToast(result.error);
+  }
+  await refreshFrameControl();
+  refreshFrame();
+}
+
+function showFsError(message) {
+  els.fsError.textContent = message;
+  els.fsError.hidden = false;
+}
+
+function clearFsError() {
+  els.fsError.hidden = true;
+  els.fsError.textContent = "";
 }
 
 // --------------------------------------------------------------------------- //
@@ -1211,6 +1471,7 @@ function renderLibraryGrid() {
 function libraryTile(piece, index) {
   const li = document.createElement("li");
   li.className = "tile";
+  li.dataset.pieceId = piece.id;
 
   const wrap = document.createElement("div");
   wrap.className = "tile-thumb-wrap";
@@ -1428,7 +1689,6 @@ function showInLibrary(current) {
     return;
   }
   const piece = index.pieces.find((p) => (current.id && p.id === current.id) || p.file === current.file);
-  els.library.hidden = false;
   els.libraryDetails.open = true;
   if (piece) {
     state.artFilter = piece.folder;
@@ -1437,7 +1697,48 @@ function showInLibrary(current) {
     state.libPage = idx >= 0 ? Math.floor(idx / 24) : 0;
     renderLibrary();
   }
-  els.library.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+
+  // The library lives on the Art screen. Routing through the hash calls
+  // showScreen, which scrolls the body to the top, so the scroll to the piece
+  // has to run after that lands or it is immediately overridden. When the hash
+  // actually changes, scroll on the next hashchange (after showScreen); when we
+  // are already on #art, no hashchange fires, so scroll now.
+  const target = piece ? piece.id : null;
+  if (window.location.hash === "#art") {
+    scrollToPiece(target);
+  } else {
+    window.addEventListener(
+      "hashchange",
+      () => scrollToPiece(target),
+      { once: true },
+    );
+    window.location.hash = "#art";
+  }
+}
+
+// Scroll the piece's tile into view and flash it so "Show in library" lands on
+// the piece, not just the top of the library. Falls back to the library heading
+// when the tile is not on the page (no match, or the piece has no id).
+function scrollToPiece(pieceId) {
+  const behavior = reducedMotion() ? "auto" : "smooth";
+  const tile = pieceId
+    ? els.artGrid.querySelector(`[data-piece-id="${CSS.escape(pieceId)}"]`)
+    : null;
+  if (tile) {
+    tile.scrollIntoView({ behavior, block: "center" });
+    tile.classList.remove("tile-flash");
+    // Reading offsetWidth restarts the animation if the same tile is targeted
+    // again before the class has been cleared.
+    void tile.offsetWidth;
+    tile.classList.add("tile-flash");
+    tile.addEventListener(
+      "animationend",
+      () => tile.classList.remove("tile-flash"),
+      { once: true },
+    );
+    return;
+  }
+  els.library.scrollIntoView({ behavior, block: "start" });
 }
 
 function uploadOne(file, folder) {
@@ -1600,6 +1901,10 @@ function updateSections() {
   els.frameControls.hidden = !managerActive;
   els.frameHint.hidden = !managerActive;
   els.frameCaption.hidden = !state.artCurrent;
+
+  // The Pin control shows whenever there is a frame to pin; its own body shows
+  // the pin form or the "unavailable" note from the frame-control document.
+  els.pin.hidden = !frameVisible;
 
   els.library.hidden = !managerActive;
   els.rotation.hidden = !managerActive;
