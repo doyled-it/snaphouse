@@ -11,6 +11,7 @@ re-export is caught in review rather than at the printer.
 """
 
 import ast
+import math
 import struct
 import zipfile
 from pathlib import Path
@@ -89,3 +90,83 @@ def test_3mf_is_a_valid_model_package():
         assert "3D/3dmodel.model" in names, "perch.3mf is missing 3D/3dmodel.model"
         model_xml = package.read("3D/3dmodel.model").decode("utf-8", "replace")
     assert "<vertex" in model_xml and "<triangle" in model_xml, "perch.3mf model has no mesh"
+
+
+def _stl_vertices():
+    """Every triangle vertex in the binary STL as (x, y, z) tuples."""
+    data = PERCH_STL.read_bytes()
+    (count,) = struct.unpack("<I", data[80:84])
+    vertices = []
+    for i in range(count):
+        base = 84 + i * 50
+        for j in range(3):
+            start = base + 12 + j * 12
+            vertices.append(struct.unpack("<3f", data[start : start + 12]))
+    return vertices
+
+
+def _default_bounding_box():
+    """The wall-screw envelope derived from perch.py's default parameters.
+
+    These must track the model: if a parameter changes and the STL is not
+    re-exported, the measured box below stops matching and this test fails.
+    """
+    p = _module_level_assignments()
+    length = (
+        p["usb_a_plug_length"]
+        + p["extension_cable_diameter"]
+        + p["wall_thickness"]
+        + p["adapter_body_length"]
+        + 4 * p["clearance"]
+    )
+    # Outer trough width plus a screw ear on each side; each ear is
+    # mount_ear_width + wall_thickness wide, centred mount_ear_width / 2 out.
+    outer_w = p["adapter_body_width"] + 2 * p["clearance"] + 2 * p["wall_thickness"]
+    width = outer_w + 2 * p["mount_ear_width"] + p["wall_thickness"]
+    height = p["base_thickness"] + p["cradle_wall_height"]
+    return length, width, height
+
+
+def test_stl_bounding_box_matches_parameters():
+    """The shipped STL's envelope must match the current default parameters, so
+    a parameter edit without a re-export is caught here rather than at the
+    printer."""
+    xs = [v[0] for v in _stl_vertices()]
+    ys = [v[1] for v in _stl_vertices()]
+    zs = [v[2] for v in _stl_vertices()]
+    measured = (max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs))
+    expected = _default_bounding_box()
+    for axis, got, want in zip("xyz", measured, expected):
+        assert abs(got - want) < 0.3, (
+            f"perch.stl {axis} span is {got:.2f} mm, expected {want:.2f} mm from "
+            "perch.py defaults; re-export the STL after changing a parameter"
+        )
+
+
+def test_stl_countersink_opens_upward():
+    """A countersink must widen toward the top face where the screw head sits.
+
+    The screw ears are the only void in the part, so on a face plane the vertex
+    nearest the hole axis is the hole rim. The rim radius at the top face
+    (z = base_thickness) must be clearly larger than at the bottom face (z = 0).
+    This fails if the countersink cone is inverted.
+    """
+    p = _module_level_assignments()
+    floor = p["base_thickness"]
+    outer_w = p["adapter_body_width"] + 2 * p["clearance"] + 2 * p["wall_thickness"]
+    hole_y = outer_w / 2 + p["mount_ear_width"] * 0.55
+
+    def rim_radius(z_target):
+        radii = []
+        for x, y, z in _stl_vertices():
+            if abs(x) < 6 and hole_y - 6.5 < y < hole_y + 6.5 and abs(z - z_target) < 0.2:
+                radii.append(math.hypot(x, y - hole_y))
+        assert radii, f"no STL vertices found on the z={z_target:.1f} face near the hole"
+        return min(radii)
+
+    bottom_r = rim_radius(0.0)
+    top_r = rim_radius(floor)
+    assert top_r > bottom_r + 1.0, (
+        f"countersink is inverted in perch.stl: top-face rim radius {top_r:.2f} "
+        f"must exceed bottom-face rim radius {bottom_r:.2f}"
+    )

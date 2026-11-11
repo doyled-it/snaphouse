@@ -4,21 +4,25 @@
 """Printable perch for a USB Bluetooth adapter on an extension cable.
 
 The perch is a small cradle that holds a USB Bluetooth adapter (the default
-numbers fit a TP-Link UB500 Plus) upright in a trough so its antenna end points
-clear of the desk. The adapter plugs into a USB-A extension cable whose round
-lead drops out through a groove at the back, which lets the antenna sit away
-from the metal and noise of the machine it serves. Every dimension below is a
-top-level parameter: measure your own adapter and cable, change the number, and
-rebuild. The README explains how to measure and print it.
+numbers fit a TP-Link UB500 Plus) in a horizontal trough, with its antenna end
+pointing out of the open end of the trough and clear of the desk. The adapter
+plugs into a USB-A extension cable through a full-height notch in the end wall;
+the plug and the round lead sit in a recessed relief channel in line with the
+body, so the body seats flat. This keeps the antenna away from the metal and
+noise of the machine it serves. Every dimension below is a top-level parameter:
+measure your own adapter and cable, change the number, and rebuild. The README
+explains how to measure and print it.
 
-FDM 3D printed in PLA or PETG, 0.2 mm layers, no supports by design. The default
-(wall-screw) mount prints base-down with no overhang past 45 degrees.
+FDM 3D printed in PLA or PETG, 0.2 mm layers. The default (wall-screw) mount
+prints base-down with no supports and no overhang past 45 degrees; the
+shelf-clip mount needs a little support under the hook (see the README).
 
 Build and check:
   cad run perch.py
+  cad run check_perch.py
   cad model dfm "<id>" --process printing --technology fdm --material pla --layer-height 0.2
 Export the committed artifacts:
-  cad model export "<id>" perch.stl perch.3mf
+  cad model export "<id>" perch.stl perch.3mf --tolerance 0.06
 """
 
 import build123d as bd
@@ -59,13 +63,16 @@ base_thickness = 5.0      # floor under the adapter, and the mounting foot
 cradle_wall_height = 11.0 # how far the side walls rise around the body
 
 # --- Mount ------------------------------------------------------------------
-# "wall-screw": two countersunk holes through side ears, for fastening the
-#   perch down to a shelf or flat against a wall. Prints base-down, supports off.
+# The adapter sits in an open-top trough and is held by gravity, so the perch is
+# meant for a horizontal surface; the mount keeps it from sliding.
+# "wall-screw": two countersunk holes through side ears, for fastening the perch
+#   down onto a shelf, desk, or the top of a cabinet. Prints base-down,
+#   supports off.
 # "shelf-clip": a hook that straddles the front edge of a shelf, no screws.
 #   The hook wraps under the shelf, so this variant needs a little support under
 #   the hook; see the README. Use wall-screw for a no-support print.
 mount_style = "wall-screw"
-screw_hole_diameter = 4.0     # clearance hole for an M4 wood screw
+screw_hole_diameter = 4.5     # clearance hole for an M4 screw (M4 wants ~4.5 mm)
 screw_head_diameter = 8.0     # countersink across the flats of the head
 mount_ear_width = 11.0        # how far each screw ear sticks out past a wall
 shelf_thickness = 25.0        # the shelf lip the clip hooks over
@@ -146,21 +153,27 @@ def perch_body(
 
     part = floor_slab + walls + stop
 
-    # Connector relief: a shallow recess in the floor at the plug end, so the
-    # USB-A plug and the mating extension receptacle nest below the body and let
-    # it seat flat. It runs from inside the body zone, across the stop wall, and
-    # on into the open cable zone where the receptacle and round cable sit.
+    # Connector relief: a shallow recess in the top of the floor at the plug
+    # end, so the USB-A plug and the mating extension receptacle nest below the
+    # body and let it seat flat. It runs from inside the body zone, across the
+    # stop wall (where the full-height notch has already cleared the centre),
+    # and on into the open cable zone where the receptacle and round cable sit.
     relief_depth = min(plug_height + fit, floor - 2.0)
     relief_w = max(plug_width, cable_diameter) + 2 * fit
     relief_len = plug_length + 2 * fit + cable_zone
+    # The cut box bottom sits at floor - relief_depth (the floor below the
+    # recess stays intact) and its top a small overshoot above the floor top,
+    # so the top face cuts cleanly. That overshoot is the same width as the
+    # stop-wall notch, so it removes no extra material from the stop wall.
+    overshoot = 0.5
     relief = bd.Box(
-        relief_len, relief_w, relief_depth * 2,
-        align=(bd.Align.MAX, bd.Align.CENTER, bd.Align.CENTER),
+        relief_len, relief_w, relief_depth + overshoot,
+        align=(bd.Align.MAX, bd.Align.CENTER, bd.Align.MAX),
     )
     # MAX on X puts its +X face at the reference; place that just inside the
-    # body zone, and sink it so it only cuts the top `relief_depth` of the floor.
+    # body zone. MAX on Z puts the box top at floor + overshoot.
     relief_x = stop_x + wall / 2 + plug_length * 0.4
-    relief = bd.Pos(relief_x, 0, floor) * relief
+    relief = bd.Pos(relief_x, 0, floor + overshoot) * relief
     part = part - relief
 
     if mount == "wall-screw":
@@ -196,11 +209,14 @@ def _screw_holes(length, outer_w, floor, ear_width, screw_d, screw_head_d):
         floor * 3,
         align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.CENTER),
     )
-    # Countersink: a cone widening to the top face (82 degree head is ~ a cone
-    # whose radius grows by its depth; a floor-deep cone is self-supporting).
+    # Countersink: a cone that widens to the top face where the screw head
+    # seats. bd.Cone(bottom_radius, top_radius, height) with Align.MIN spans
+    # z=0..floor, so the shank radius is at the bottom face and the wider head
+    # radius at the top. A top-widening cut leaves an upward-facing slope, so it
+    # prints without support base-down.
     cone = bd.Cone(
-        screw_head_d / 2,
         screw_d / 2,
+        screw_head_d / 2,
         floor,
         align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN),
     )
@@ -232,7 +248,11 @@ def _shelf_clip(length, outer_w, floor, shelf, clip_gap, clip_wall):
         clip_wall,
         align=(bd.Align.MAX, bd.Align.CENTER, bd.Align.MAX),
     )
-    under = bd.Pos(-length / 2 + clip_wall + length * 0.28, 0, floor - slot) * under
+    # The base underside (the top jaw) is at z=0, so the under jaw top sits at
+    # -slot to leave a clear gap of shelf + clip_gap. Its bottom then lands at
+    # -slot - clip_wall, the same as the back wall bottom, so nothing hangs
+    # below the jaw.
+    under = bd.Pos(-length / 2 + clip_wall + length * 0.28, 0, -slot) * under
     return back + under
 
 

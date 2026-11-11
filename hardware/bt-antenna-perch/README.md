@@ -4,9 +4,11 @@ A small printed cradle that holds a USB Bluetooth adapter on the end of a USB-A
 extension cable, so the adapter's antenna sits up and away from the metal and
 electrical noise of the machine it serves. The adapter drops into an open trough
 with its antenna end clear; it plugs into the extension cable through a notch in
-the end wall, and the round cable runs out the back along a recessed channel.
-Mount it to a shelf or wall with two screws, or print the screwless clip variant
-that hooks over a shelf edge.
+the end wall, and the plug and round cable sit in a recessed channel in line
+with the body. The adapter is held by gravity in the open-top trough, so the
+perch is meant for a horizontal surface. Screw it down to a shelf, desk, or the
+top of a cabinet, or print the screwless clip variant that hooks over a shelf
+edge.
 
 The defaults fit a TP-Link UB500 Plus on a common USB 2.0 extension cable. Every
 dimension is a top-level variable in `perch.py`: measure your own parts, change
@@ -15,6 +17,9 @@ the number, and rebuild.
 ## Files
 
 - `perch.py` - the parametric model (build123d, built with the `cad` command).
+- `check_perch.py` - geometry regression checks (single solid, countersink
+  orientation, shelf-clip slot gap), run with `cad run` rather than in CI
+  because build123d is not a repo dependency.
 - `perch.stl`, `perch.3mf` - the default (wall-screw) mount, rendered from the
   defaults below. The 3MF is the better choice for Bambu Studio or Bambu
   Connect; the STL works anywhere.
@@ -78,8 +83,10 @@ Set each number in the top block of `perch.py` and rebuild.
 `mount_style` selects how the perch fastens:
 
 - `"wall-screw"` (default): two countersunk holes through side ears, for an M4
-  wood or machine screw into a shelf or a wall. This is the shipped `perch.stl`
-  and `perch.3mf`. It prints base-down with no supports.
+  wood or machine screw down into a horizontal surface (a shelf, desk, or the
+  top of a cabinet). The hole is a 4.5 mm clearance hole and the countersink
+  widens toward the top face so the screw head seats flush. This is the shipped
+  `perch.stl` and `perch.3mf`. It prints base-down with no supports.
 - `"shelf-clip"`: a screwless hook that straddles the front edge of a shelf (set
   `shelf_thickness` to your shelf). Because the hook has to wrap under the shelf
   lip, this variant cannot print entirely support-free: when printed cradle-up
@@ -95,10 +102,11 @@ The model is built with the text-to-cad `cad` command (installed at
 cad run perch.py
 ```
 
-That rebuilds both mounts and prints a viewer link and an id for each. Check that
-the part prints clean:
+That rebuilds both mounts and prints a viewer link and an id for each. Run the
+geometry checks, then check that the part prints clean:
 
 ```sh
+cad run check_perch.py
 cad model dfm "<id>" --process printing --technology fdm --material pla --layer-height 0.2
 ```
 
