@@ -21,12 +21,14 @@ from snaphouse.housestatus import (
     publish_art_history,
     publish_frame_image,
     publish_frame_meta,
+    publish_frames,
     select_art_history,
     select_frame_meta,
     select_status,
     write_art_history,
     write_house_status,
 )
+from snaphouse.housestatus import _load_config
 
 NOW = datetime(2026, 11, 6, 21, 15, 0, tzinfo=timezone(-timedelta(hours=8)))
 
@@ -638,3 +640,207 @@ def test_main_completes_the_status_poll_when_the_frame_step_fails(tmp_path, monk
     assert json.loads(house_out.read_text())["machines"][0]["status"]["host"] == "house"
     # The last good mirror image is untouched.
     assert frame_png.read_bytes() == seeded
+
+
+# The hub now republishes several frames, each by its inventory id, into
+# <frames root>/<id>/{art-history.json, frame.png, frame.json}. The old single
+# paths keep serving the nightstand's copy for this release (tested above); these
+# cover the per-frame fan-out: every frame's three files, an id validated before
+# any path is built (Review Focus 5), and one unreachable or not-yet-installed
+# frame skipped without disturbing the others or the poll (Review Focus 1).
+
+
+def _frame_fetchers(have_data):
+    """Fake http_fetch and fetch_frame_image keyed on the frame id in the URL.
+
+    `have_data` is the set of frame ids whose fetches succeed; any other id's
+    fetches yield None (unreachable or not yet installed).
+    """
+
+    def fake_http_fetch(url, *, timeout=0, select=select_status):
+        frame_id = url.split("/frames-src/", 1)[1].split("/", 1)[0]
+        if frame_id not in have_data:
+            return None
+        if select is select_art_history:
+            return {"current": _piece(), "history": [_piece()]}
+        if select is select_frame_meta:
+            return dict(_FRAME_META)
+        return None
+
+    def fake_fetch_image(url, *, timeout=0):
+        frame_id = url.split("/frames-src/", 1)[1].split("/", 1)[0]
+        if frame_id not in have_data:
+            return None
+        return housestatus.PNG_SIGNATURE + b"mirror-" + frame_id.encode()
+
+    return fake_http_fetch, fake_fetch_image
+
+
+def _frame(frame_id):
+    # The source base the hub fetches from; a /frames-src/<id>/ path the fakes key
+    # on (the real base is http://<id>.local/nightstand/).
+    return {"id": frame_id, "base": f"http://{frame_id}.local/frames-src/{frame_id}/"}
+
+
+def test_publish_frames_republishes_each_frame_by_id(tmp_path, monkeypatch):
+    root = tmp_path / "frames"
+    http, image = _frame_fetchers(have_data={"nightstand", "office"})
+    monkeypatch.setattr(housestatus, "http_fetch", http)
+    monkeypatch.setattr(housestatus, "fetch_frame_image", image)
+
+    publish_frames([_frame("nightstand"), _frame("office")], root)
+
+    for frame_id in ("nightstand", "office"):
+        art = json.loads((root / frame_id / "art-history.json").read_text())
+        assert art["current"]["file"] == "aic-12345.jpg"
+        assert (root / frame_id / "frame.png").read_bytes().startswith(housestatus.PNG_SIGNATURE)
+        assert json.loads((root / frame_id / "frame.json").read_text()) == _FRAME_META
+        # world-readable so nginx can serve it.
+        assert ((root / frame_id / "frame.json").stat().st_mode & 0o777) == 0o644
+
+
+def test_publish_frames_skips_an_unreachable_frame_and_still_publishes_others(
+    tmp_path, monkeypatch
+):
+    # Review Focus 1: the office before its Inky arrives 404s every file. It is
+    # skipped (no files written) and the nightstand is published normally.
+    root = tmp_path / "frames"
+    http, image = _frame_fetchers(have_data={"nightstand"})
+    monkeypatch.setattr(housestatus, "http_fetch", http)
+    monkeypatch.setattr(housestatus, "fetch_frame_image", image)
+
+    publish_frames([_frame("nightstand"), _frame("office")], root)
+
+    assert (root / "nightstand" / "frame.png").exists()
+    # The unreachable frame left no files behind (an empty dir or no dir are both
+    # fine; what matters is nginx 404s the files so the page shows it offline).
+    office = root / "office"
+    assert not office.exists() or not any(office.iterdir())
+
+
+def test_publish_frames_does_not_raise_when_one_frame_fetch_errors(tmp_path, monkeypatch):
+    root = tmp_path / "frames"
+
+    def boom_http(url, *, timeout=0, select=select_status):
+        if "office" in url:
+            raise RuntimeError("surprising failure")
+        if select is select_art_history:
+            return {"current": _piece(), "history": [_piece()]}
+        if select is select_frame_meta:
+            return dict(_FRAME_META)
+        return None
+
+    monkeypatch.setattr(housestatus, "http_fetch", boom_http)
+    monkeypatch.setattr(housestatus, "fetch_frame_image", lambda url, *, timeout=0: None)
+
+    # A raising fetch for one frame must not stop the loop or escape.
+    publish_frames([_frame("office"), _frame("nightstand")], root)
+    assert (root / "nightstand" / "art-history.json").exists()
+
+
+def test_publish_frames_rejects_an_invalid_frame_id(tmp_path, monkeypatch):
+    # Review Focus 5: a malformed id (traversal, path separator, uppercase, too
+    # long) is rejected before any path is built, so nothing is ever written
+    # outside the frames root.
+    root = tmp_path / "frames"
+    root.mkdir()
+    called = []
+    monkeypatch.setattr(
+        housestatus,
+        "http_fetch",
+        lambda url, *, timeout=0, select=None: called.append(url) or None,
+    )
+    monkeypatch.setattr(
+        housestatus, "fetch_frame_image", lambda url, *, timeout=0: called.append(url) or None
+    )
+
+    bad = [
+        {"id": "../evil", "base": "http://x.local/nightstand/"},
+        {"id": "a/b", "base": "http://x.local/nightstand/"},
+        {"id": "Office", "base": "http://x.local/nightstand/"},
+        {"id": "9lead", "base": "http://x.local/nightstand/"},
+        {"id": "x" * 40, "base": "http://x.local/nightstand/"},
+        {"id": "ok\n", "base": "http://x.local/nightstand/"},
+        {"id": "ok", "base": "ftp://x.local/nightstand/"},
+        {"id": "ok", "base": 7},
+        "not a dict",
+    ]
+    publish_frames(bad, root)
+
+    # No fetch was attempted for any rejected frame, and nothing escaped the root.
+    assert called == []
+    assert not (tmp_path / "evil").exists()
+    assert list(root.iterdir()) == []
+
+
+def test_load_config_accepts_a_bare_list_as_targets_with_no_frames(tmp_path):
+    path = tmp_path / "targets.json"
+    path.write_text(json.dumps([{"name": "house", "url": "http://house.local/status.json"}]))
+    targets, frames = _load_config(path)
+    assert targets == [{"name": "house", "url": "http://house.local/status.json"}]
+    assert frames == []
+
+
+def test_load_config_reads_targets_and_frames_from_an_object(tmp_path):
+    path = tmp_path / "targets.json"
+    path.write_text(
+        json.dumps(
+            {
+                "targets": [{"name": "house", "url": "http://house.local/status.json"}],
+                "frames": [{"id": "nightstand", "base": "http://nightstand.local/nightstand/"}],
+            }
+        )
+    )
+    targets, frames = _load_config(path)
+    assert targets[0]["name"] == "house"
+    assert frames[0]["id"] == "nightstand"
+
+
+def test_main_republishes_every_frame(tmp_path, monkeypatch):
+    house_out = tmp_path / "house-status.json"
+    frames_root = tmp_path / "frames"
+    targets = tmp_path / "targets.json"
+    targets.write_text(
+        json.dumps(
+            {
+                "targets": [{"name": "house", "url": "http://house.local/status.json"}],
+                "frames": [_frame("nightstand"), _frame("office")],
+            }
+        )
+    )
+    http, image = _frame_fetchers(have_data={"nightstand", "office"})
+
+    def fake_http(url, *, timeout=0, select=select_status):
+        if "/frames-src/" in url:
+            return http(url, timeout=timeout, select=select)
+        if select is select_art_history or select is select_frame_meta:
+            return None
+        return _status("house")
+
+    monkeypatch.setattr(housestatus, "http_fetch", fake_http)
+    monkeypatch.setattr(
+        housestatus,
+        "fetch_frame_image",
+        lambda url, *, timeout=0: image(url) if "/frames-src/" in url else None,
+    )
+
+    code = main(
+        [
+            "--targets",
+            str(targets),
+            "--out",
+            str(house_out),
+            "--art-history-out",
+            str(tmp_path / "art-history.json"),
+            "--frame-image-out",
+            str(tmp_path / "frame.png"),
+            "--frame-meta-out",
+            str(tmp_path / "frame.json"),
+            "--frames-root",
+            str(frames_root),
+        ]
+    )
+    assert code == 0
+    assert json.loads(house_out.read_text())["machines"][0]["status"]["host"] == "house"
+    for frame_id in ("nightstand", "office"):
+        assert (frames_root / frame_id / "frame.png").exists()

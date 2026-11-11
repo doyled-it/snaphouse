@@ -82,24 +82,29 @@ git clone git@github.com:doyled-it/nightstand.git
   cycle and follows it; a missing or malformed document falls back to local config and no pin
   (the page shows the settings as unknown rather than wrong). The "Frame control file" contract
   below pins its shape.
-- **Art history (nightstand produces, snaphouse consumes).** nightstand writes an
+- **Art history (nightstand produces, snaphouse consumes).** Each frame host (one whose
+  snaphouse roles include `nightstand_bootstrap`: `nightstand`, `office`) writes an
   art-history file each time it pushes the ART screen to the panel, served by snaphouse's
-  nginx on the `nightstand` host at `http://nightstand.local/nightstand/art-history.json`
-  (the "Art history file" contract below). The hub's house-status timer fetches it with the
-  same hardening as the status poll and republishes it same-origin at
-  `http://house.local/art-history.json`, so the room-picker page shows what is on the frame
-  without the browser resolving the frame's `.local` name. A change to the file's shape
-  updates the contract below and both repos in the same PR set.
-- **Frame mirror (nightstand produces, snaphouse consumes).** After each push to the panel
-  nightstand writes the image it sent, passed through its panel simulation, as `frame.png`
+  nginx at `http://<frame>.local/nightstand/art-history.json` (the "Art history file"
+  contract below). The hub's house-status timer fetches every frame's file with the same
+  hardening as the status poll and republishes each same-origin per frame at
+  `http://house.local/frames/<id>/art-history.json`, so the room-picker page shows what is
+  on each frame without the browser resolving the frame's `.local` name. For one release the
+  timer also keeps serving the nightstand's copy at the old single path
+  `http://house.local/art-history.json`. A change to the file's shape updates the contract
+  below and both repos in the same PR set.
+- **Frame mirror (nightstand produces, snaphouse consumes).** After each push to the panel a
+  frame writes the image it sent, passed through its panel simulation, as `frame.png`
   (800x480 PNG) plus `frame.json` (`{"updated_at", "screen"}`), served by snaphouse's nginx
-  on the `nightstand` host at `http://nightstand.local/nightstand/frame.png` and
-  `/frame.json` (the "Frame mirror file" contract below). The hub's house-status timer
-  republishes both same-origin at `http://house.local/frame.png` and `/frame.json` (into a
+  at `http://<frame>.local/nightstand/frame.png` and `/frame.json` (the "Frame mirror file"
+  contract below). The hub's house-status timer republishes each frame's pair same-origin
+  per frame at `http://house.local/frames/<id>/frame.png` and `/frame.json` (into a
   timer-owned subdir of the public root, never chowning the shared root), with the same
   hardening as the art-history poll: a size cap, a PNG-signature or JSON-shape check, an
-  atomic write, and the last good copy kept when a fetch fails. A missing file hides the
-  mirror on the page.
+  atomic write, and the last good copy kept when a fetch fails. For one release the timer
+  also keeps serving the nightstand's copy at the old single paths
+  `http://house.local/frame.png` and `/frame.json`. A missing file hides that frame's mirror
+  on the page.
 - **Device ownership on `nightstand`.** snaphouse bootstrap installs the OS base and
   audio, clones nightstand, and runs its installer once. Both repos self-update on their
   own timers. Neither repo's playbook or installer may change files the other owns.
@@ -142,10 +147,10 @@ with nginx `autoindex on; autoindex_format json;`. Each entry is
 mirrors files one level deep and ignores directories. Sidecar captions are files named
 `<image file>.txt` (line 1 title, line 2 artist) in the same folder.
 
-**Art history file.** nightstand produces, snaphouse consumes. nightstand writes
+**Art history file.** nightstand produces, snaphouse consumes. Each frame host writes
 `/var/lib/nightstand/public/art-history.json` atomically (0644) each time the ART screen
-is actually pushed to the panel; snaphouse's nginx on the `nightstand` host serves it at
-`http://nightstand.local/nightstand/art-history.json`. Shape:
+is actually pushed to its panel; snaphouse's nginx on that host serves it at
+`http://<frame>.local/nightstand/art-history.json`. Shape:
 
 ```json
 {
@@ -171,16 +176,19 @@ consumer falls back to `file`. `source_url` is an https URL to the museum object
 `null`; consumers drop a non-https value. Captions come from the sidecar `<image file>.txt`
 files of the "Art listing" contract (line 1 title, line 2 artist, optional line 3 an https
 source URL that is ignored unless it parses as https). The hub republishes a validated copy
-same-origin at `http://house.local/art-history.json`, keeping only these fields (an `id`
-that is unsafe, a traversal, more than one folder deep, prefixed with the reserved
-`Collection` folder, or whose last segment is not the entry's `file` becomes `null`),
-capping history at 50, and keeping the last good copy when a fetch fails.
+of each frame's file same-origin per frame at `http://house.local/frames/<id>/art-history.json`
+(`<id>` is the frame's inventory key, matching `^[a-z][a-z0-9-]{0,31}$` and validated before
+any path is built), keeping only these fields (an `id` that is unsafe, a traversal, more than
+one folder deep, prefixed with the reserved `Collection` folder, or whose last segment is not
+the entry's `file` becomes `null`), capping history at 50, and keeping the last good copy when
+a fetch fails. For one release it also republishes the nightstand's copy at the old single
+path `http://house.local/art-history.json`.
 
 **Frame mirror file.** nightstand produces, snaphouse consumes. After each push to the
-panel nightstand writes the image it sent (passed through its panel simulation) atomically
+panel a frame writes the image it sent (passed through its panel simulation) atomically
 (0644) as `/var/lib/nightstand/public/frame.png`, an 800x480 PNG, plus
-`/var/lib/nightstand/public/frame.json`; snaphouse's nginx on the `nightstand` host serves
-them at `http://nightstand.local/nightstand/frame.png` and `/frame.json`. `frame.json`:
+`/var/lib/nightstand/public/frame.json`; snaphouse's nginx on that host serves
+them at `http://<frame>.local/nightstand/frame.png` and `/frame.json`. `frame.json`:
 
 ```json
 {
@@ -191,12 +199,14 @@ them at `http://nightstand.local/nightstand/frame.png` and `/frame.json`. `frame
 
 `updated_at` is an ISO-8601 stamp with offset of when the frame last drew; `screen` names
 what is on the panel (`"art"`, `"now_playing"`, or another screen name), a non-empty
-string. The hub's house-status timer republishes both same-origin at
-`http://house.local/frame.png` and `http://house.local/frame.json`: the image fetch is
-capped at 2 MB and the body must start with the PNG signature, `frame.json` is validated to
-exactly these two fields, both are written atomically into a timer-owned subdir of the
-public root, and the last good copy is kept when a fetch fails or a body is malformed. The
-room-picker page reads the same-origin copies and hides the mirror when either is missing.
+string. The hub's house-status timer republishes each frame's pair same-origin per frame at
+`http://house.local/frames/<id>/frame.png` and `/frames/<id>/frame.json` (`<id>` validated
+as above): the image fetch is capped at 2 MB and the body must start with the PNG signature,
+`frame.json` is validated to exactly these two fields, both are written atomically into a
+timer-owned subdir of the public root, and the last good copy is kept when a fetch fails or a
+body is malformed. For one release it also republishes the nightstand's pair at the old
+single paths `http://house.local/frame.png` and `/frame.json`. The room-picker page reads the
+same-origin copies and hides a frame's mirror when either is missing.
 
 **Now-playing file.** snaphouse produces, nightstand and the room-picker page consume. The
 hub's `snaphouse-nowplaying` service writes `/var/lib/snaphouse/public/nowplaying/now-playing.json`

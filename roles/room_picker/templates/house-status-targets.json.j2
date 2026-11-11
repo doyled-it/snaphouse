@@ -1,18 +1,25 @@
 {#
-  The machines the hub's house-status poll fetches, built from the inventory so
-  no hostname is hardcoded: every host's own status file, by its inventory key,
-  plus the nightstand frame's status file that the hub serves on the bedroom
-  machine. The bedroom machine is found by its stable host_id (unchanged by any
-  hostname rename), so this follows a rename of the key automatically.
+  What the hub's house-status poll reads, built from the inventory so no hostname
+  is hardcoded. An object with two lists:
 
-  The frame is labelled "nightstand-frame", not "nightstand", so it does not
-  collide with the bedroom machine once that machine's key is renamed to
-  nightstand. The "/nightstand/" path is the nginx alias the web role serves and
-  is unrelated to the hostname.
+  "targets": every host's own status file, by its inventory key, plus the
+  nightstand frame's status file that the hub serves on the bedroom machine. The
+  bedroom machine is found by its stable host_id (unchanged by any hostname
+  rename), so this follows a rename of the key automatically. The frame is
+  labelled "nightstand-frame", not "nightstand", so it does not collide with the
+  bedroom machine once that machine's key is renamed to nightstand. The
+  "/nightstand/" path is the nginx alias the web role serves and is unrelated to
+  the hostname.
 
-  snaphouse.housestatus reads this file and writes house-status.json, which the
-  room-picker page reads same-origin. Hostnames are mDNS .local names from the
-  cross-repo status contract; nothing identifying.
+  "frames": every frame host (one whose roles include nightstand_bootstrap), as
+  {"id", "base"}. The hub republishes each frame's art history and mirror from
+  base under /frames/<id>/. base is the "/nightstand/" alias the frame serves its
+  own files at.
+
+  snaphouse.housestatus reads this file and writes house-status.json plus the
+  per-frame mirrors. It still accepts the old bare-list shape, so a hub updated
+  before this template is re-rendered keeps working. Hostnames are mDNS .local
+  names from the cross-repo status contract; nothing identifying.
 #}
 {% set targets = [] %}
 {% for name in snaphouse_hosts.keys() %}
@@ -20,4 +27,10 @@
 {% endfor %}
 {% set bedroom_host = (snaphouse_hosts | dict2items | selectattr('value.host_id', 'equalto', 'bedroom') | map(attribute='key') | first) %}
 {% set _ = targets.append({'name': 'nightstand-frame', 'url': 'http://' ~ bedroom_host ~ '.local/nightstand/status.json'}) %}
-{{ targets | to_nice_json }}
+{% set frames = [] %}
+{% for name, spec in snaphouse_hosts.items() %}
+{% if 'nightstand_bootstrap' in spec.roles %}
+{% set _ = frames.append({'id': name, 'base': 'http://' ~ name ~ '.local/nightstand/'}) %}
+{% endif %}
+{% endfor %}
+{{ {'targets': targets, 'frames': frames} | to_nice_json }}

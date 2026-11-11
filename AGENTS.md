@@ -71,6 +71,23 @@ another name (the ZimaBlade shipped as `casaos`) is named with
 `bootstrap.sh --host <key>`, which validates the key against `vars/hosts.yml`
 and sets the hostname before applying.
 
+## Frames and the `frame_hardware` flag
+
+A frame host is one whose `roles` include `nightstand_bootstrap` (currently
+`nightstand` and `office`). The hub lists every such host in its frame inventory,
+so the room-picker page shows it as a frame and the house-status timer
+republishes it under `/frames/<id>/` (offline until a real frame answers).
+
+Whether a frame host actually installs the nightstand frame app is a separate,
+per-host boolean: `frame_hardware` in `vars/hosts.yml`. `nightstand_bootstrap`
+installs nothing (no clone, no installer, no service, no verify check, just a
+debug line) where `frame_hardware` is `false`. This keeps a frame host's
+self-update from running nightstand's installer before the display is wired: a
+host can be in the frame list first and gain its hardware later (the office Pi 5
+runs its audio with `frame_hardware: false` until its Inky is attached). When the
+display is attached, flip that host's `frame_hardware` to `true` in a one-line PR;
+its next self-update then clones and installs the frame app.
+
 ## Snapserver inputs hold through speech pauses
 
 The two alsa sources in `roles/hub_input/templates/snapserver.conf.j2` (AirPlay

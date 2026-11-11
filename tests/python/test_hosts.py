@@ -94,6 +94,37 @@ def test_every_named_role_exists():
             )
 
 
+def test_every_frame_host_declares_a_boolean_frame_hardware():
+    # A host that carries nightstand_bootstrap is a frame. frame_hardware gates
+    # whether the role installs the frame app: it must install nothing until the
+    # display is wired (the office before its Inky), so the flag is required and
+    # boolean on every frame host, and absent on non-frame hosts.
+    hosts = load_hosts()
+    for name, spec in hosts.items():
+        is_frame = "nightstand_bootstrap" in spec["roles"]
+        if is_frame:
+            assert "frame_hardware" in spec, (
+                f"{name} is a frame host (nightstand_bootstrap) but sets no "
+                "frame_hardware flag"
+            )
+            assert isinstance(spec["frame_hardware"], bool), (
+                f"{name}.frame_hardware must be a bool, got "
+                f"{spec['frame_hardware']!r}"
+            )
+        else:
+            assert "frame_hardware" not in spec, (
+                f"{name} is not a frame host but sets frame_hardware"
+            )
+
+
+def test_frame_hardware_is_true_only_where_the_display_is_wired():
+    # The nightstand has its Inky; the office does not yet (installed at the last
+    # rollout step). Flip the office to true in a one-line PR once wired.
+    hosts = load_hosts()
+    assert hosts["nightstand"]["frame_hardware"] is True
+    assert hosts["office"]["frame_hardware"] is False
+
+
 def test_host_ids_are_unique_and_known():
     hosts = load_hosts()
     ids = [spec["host_id"] for spec in hosts.values()]

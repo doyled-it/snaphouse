@@ -31,6 +31,14 @@ timer-owned subdir of the public root (/var/lib/snaphouse/public/frame). Each of
 these three is best-effort and runs after the health write, so a missing or
 malformed frame never sinks the poll; the last good copy stays in place.
 
+The same timer also republishes every inventory frame (the hosts whose roles
+include nightstand_bootstrap, named in the targets file's "frames" list) under
+/var/lib/snaphouse/public/frame/frames/<id>/, one subdir per frame id, with the
+same hardening. The single paths above keep serving the nightstand's copy for
+this release. A frame id is validated before any path is built from it, and a
+frame that is offline or not yet installed is skipped without disturbing the
+others (tests/python/test_housestatus.py).
+
 Stdlib only (urllib), like status.py, so no venv dependency is pulled in for it.
 The fetch and the clock are injected so the aggregation logic is unit tested with
 no network (tests/python/test_housestatus.py).
@@ -41,6 +49,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
 import urllib.parse
@@ -76,6 +85,21 @@ DEFAULT_FRAME_IMAGE_URL = "http://nightstand.local/nightstand/frame.png"
 DEFAULT_FRAME_IMAGE_OUT = Path("/var/lib/snaphouse/public/frame/frame.png")
 DEFAULT_FRAME_META_URL = "http://nightstand.local/nightstand/frame.json"
 DEFAULT_FRAME_META_OUT = Path("/var/lib/snaphouse/public/frame/frame.json")
+
+# The system now has several frames (nightstand, office), each an inventory host
+# whose roles include nightstand_bootstrap. The targets file lists them under
+# "frames" as {"id", "base"}; the timer republishes each frame's art history and
+# mirror under this root, one subdir per id (/frames/<id>/art-history.json,
+# frame.png, frame.json). It sits inside the same timer-owned frame subdir as the
+# single-frame mirror, so per-frame writes never chown the shared public root.
+# The old single paths above keep serving the nightstand's copy for one release.
+DEFAULT_FRAMES_ROOT = Path("/var/lib/snaphouse/public/frame/frames")
+
+# A frame id is an inventory key: a lowercase letter, then up to 31 lowercase
+# letters, digits, or hyphens. The id is validated against this before any path
+# is built from it, so a malformed or hostile id can never write outside the
+# frames root (no separators, no "..", no leading dot are possible).
+FRAME_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
 # The mirror is a small 800x480 PNG; cap the read well above that so a runaway or
 # hostile body can never be republished without bound.
@@ -437,11 +461,111 @@ def publish_frame_meta(url: str, out: Path, *, timeout: float = DEFAULT_TIMEOUT)
         print(f"frame.json: keeping last good copy, republish failed: {exc}", file=sys.stderr)
 
 
-def _load_targets(path: Path) -> list[dict]:
+def _valid_frame_id(value: object) -> Optional[str]:
+    """Return the frame id if it matches the inventory-key pattern, else None.
+
+    This runs before any path is built from the id (Review Focus 5), so a value
+    with a path separator, a leading dot, ``..``, an uppercase letter, or an
+    over-long body is rejected and never names a directory under the frames root.
+    """
+    if isinstance(value, str) and FRAME_ID_RE.fullmatch(value):
+        return value
+    return None
+
+
+def _frame_base(value: object) -> Optional[str]:
+    """Return an http(s) base URL ending in '/', or None if it is unusable.
+
+    The base is only ever used to build the outbound fetch URL (never a local
+    path), but it is still checked so a frame entry with a non-http scheme or no
+    host is skipped rather than fetched. A base missing its trailing slash is
+    normalised so urljoin appends the file name instead of replacing a segment.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = urllib.parse.urlparse(value)
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    return value if value.endswith("/") else value + "/"
+
+
+def publish_frame(base: str, out_dir: Path, *, timeout: float = DEFAULT_TIMEOUT) -> None:
+    """Republish one frame's art history and mirror into out_dir, best-effort.
+
+    Fetches art-history.json, frame.png, and frame.json from the frame's base URL
+    and writes them under out_dir with the same hardening as the single-frame
+    republish (no redirects, size caps, a PNG-signature or JSON-shape check, an
+    atomic write, the last good copy kept on any failure). The directory is
+    created first (root owns the timer-owned frame subdir, so this never chowns
+    the shared public root). Any failure is logged and swallowed, so one frame
+    never sinks the poll.
+    """
+    out_dir = Path(out_dir)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        print(f"frames: cannot prepare {out_dir}: {exc}", file=sys.stderr)
+        return
+    publish_art_history(
+        urllib.parse.urljoin(base, "art-history.json"), out_dir / "art-history.json", timeout=timeout
+    )
+    publish_frame_image(
+        urllib.parse.urljoin(base, "frame.png"), out_dir / "frame.png", timeout=timeout
+    )
+    publish_frame_meta(
+        urllib.parse.urljoin(base, "frame.json"), out_dir / "frame.json", timeout=timeout
+    )
+
+
+def publish_frames(frames: list, frames_root: Path, *, timeout: float = DEFAULT_TIMEOUT) -> None:
+    """Republish every inventory frame under frames_root/<id>/, best-effort.
+
+    Each frame is {"id", "base"}. The id is validated against the inventory-key
+    pattern before any path is built (Review Focus 5), and a frame whose fetches
+    all fail (offline, or not yet installed, like the office before its Inky
+    arrives) simply leaves nothing written and never disturbs the others or the
+    poll (Review Focus 1). A malformed entry is skipped with a line to stderr.
+    """
+    frames_root = Path(frames_root)
+    for frame in frames:
+        if not isinstance(frame, dict):
+            print(f"frames: skipping a non-object frame entry: {frame!r}", file=sys.stderr)
+            continue
+        frame_id = _valid_frame_id(frame.get("id"))
+        base = _frame_base(frame.get("base"))
+        if frame_id is None or base is None:
+            print(
+                f"frames: skipping a frame with an invalid id or base: {frame!r}",
+                file=sys.stderr,
+            )
+            continue
+        try:
+            publish_frame(base, frames_root / frame_id, timeout=timeout)
+        except Exception as exc:
+            print(f"frames: {frame_id}: republish failed: {exc}", file=sys.stderr)
+
+
+def _load_config(path: Path) -> tuple[list[dict], list[dict]]:
+    """Return (targets, frames) from the house-status targets file.
+
+    The file is either the old bare JSON list of targets (no frames), or the new
+    object {"targets": [...], "frames": [...]}. Accepting both keeps a hub updated
+    before its inventory is re-rendered, or a frame page loaded on the old
+    contract, working through the rollout (Review Focus 3).
+    """
     data = json.loads(Path(path).read_text())
-    if not isinstance(data, list):
-        raise ValueError(f"{path}: expected a JSON list of targets")
-    return data
+    if isinstance(data, list):
+        return data, []
+    if isinstance(data, dict):
+        targets = data.get("targets")
+        if not isinstance(targets, list):
+            raise ValueError(f"{path}: 'targets' must be a JSON list")
+        frames = data.get("frames")
+        return targets, frames if isinstance(frames, list) else []
+    raise ValueError(f"{path}: expected a JSON list or object of targets")
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -459,9 +583,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--frame-image-out", default=str(DEFAULT_FRAME_IMAGE_OUT))
     parser.add_argument("--frame-meta-url", default=DEFAULT_FRAME_META_URL)
     parser.add_argument("--frame-meta-out", default=str(DEFAULT_FRAME_META_OUT))
+    parser.add_argument("--frames-root", default=str(DEFAULT_FRAMES_ROOT))
     args = parser.parse_args(argv)
 
-    targets = _load_targets(Path(args.targets))
+    targets, frames = _load_config(Path(args.targets))
     document = aggregate(
         targets,
         lambda url: http_fetch(url, timeout=args.timeout),
@@ -481,6 +606,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     publish_frame_meta(
         args.frame_meta_url, Path(args.frame_meta_out), timeout=args.timeout
     )
+
+    # Republish every inventory frame under /frames/<id>/, same hardening, also
+    # best-effort and after the health write. The single paths above still carry
+    # the nightstand's copy for this release; a frame that is offline or not yet
+    # installed is skipped without disturbing the others.
+    publish_frames(frames, Path(args.frames_root), timeout=args.timeout)
 
     return 0
 
