@@ -514,6 +514,74 @@ def test_music_requires_artist_match(tmp_path):
     assert mismatched is None
 
 
+def _musicbrainz_release(title, credit_names, mbid="feat-mbid-1"):
+    """One MusicBrainz release with the given title and artist-credit parts."""
+    return json.dumps(
+        {
+            "count": 1,
+            "releases": [
+                {
+                    "id": mbid,
+                    "title": title,
+                    "artist-credit": [{"name": name} for name in credit_names],
+                }
+            ],
+        }
+    ).encode("utf-8")
+
+
+def test_featured_credits_share_album_cover(tmp_path):
+    # Every track on an album credited to the lead artist alone resolves to the
+    # same cover, whatever featured artists ride along on the credit, and the
+    # whole album costs one search and one cover fetch.
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", _musicbrainz_release("Great Album", ["Lead"])),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    credits = ["Lead", "Lead, A & B", "Lead & C", "Lead, A & B & C"]
+    urls = [lookup.find("Track", credit, "Great Album", "music", None) for credit in credits]
+
+    assert all(url is not None for url in urls)
+    assert len(set(urls)) == 1
+    mb_calls = [c for c in fetch.calls if "musicbrainz.org" in c]
+    caa_calls = [c for c in fetch.calls if "coverartarchive.org" in c]
+    assert len(mb_calls) == 1
+    assert len(caa_calls) == 1
+
+
+def test_band_name_with_ampersand_matches(tmp_path):
+    # A band whose own name contains "&" is the real release artist, so the full
+    # credit matches exactly even though "&" is a lead-artist separator.
+    fetch = FakeFetch(
+        [
+            ("musicbrainz.org", _musicbrainz_release("Bookends", ["Simon & Garfunkel"])),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find("America", "Simon & Garfunkel", "Bookends", "music", None)
+
+    assert url is not None
+    assert url.startswith("/cover/lookup/")
+
+
+def test_lead_artist_not_matching_release_is_miss(tmp_path):
+    # The album title matches, but the release artist is neither the full credit
+    # nor the lead artist, so it stays a miss and is cached as one.
+    fetch = FakeFetch(
+        [("musicbrainz.org", _musicbrainz_release("Shared Title", ["Different Band"]))]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    assert lookup.find("Song", "Lead, A & B", "Shared Title", "music", None) is None
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
 def test_no_artist_no_album_music_skips_lookup(tmp_path):
     fetch = FakeFetch([("", _jpeg())])
     lookup = ArtLookup(tmp_path, fetch)

@@ -96,6 +96,25 @@ _MUSICBRAINZ_MIN_INTERVAL = 1.0
 _BASE_SEPARATORS = (" - ", " | ", ": ", " (")
 _MIN_BASE_LENGTH = 3
 
+# A track's artist credit often names featured or guest artists after the lead:
+# "<Lead>, <A> & <B>", "<Lead> feat. <B>", "<Lead> x <C>". The lead artist is the
+# part before the first of these separators. Every separator carries its own
+# spaces (or trailing punctuation), so a name that merely contains these letters
+# ("Andy Stott", "Simon & Garfunkel") is only cut when the separator appears as a
+# whole token; and the full credit is tried before the lead, so such a name still
+# matches when it is itself the release artist. Matched case-insensitively.
+_CREDIT_SEPARATORS = (
+    ", ",
+    " & ",
+    " and ",
+    " feat. ",
+    " feat ",
+    " ft. ",
+    " featuring ",
+    " with ",
+    " x ",
+)
+
 _NONE_SUFFIX = ".none"
 # A podcast cover's iTunes collectionId is cached in a sidecar next to the cover,
 # so a cached hit returns the id without a network call. A ``.noid`` marker beside
@@ -664,9 +683,12 @@ class ArtLookup:
         self, artist: Optional[str], album: str
     ) -> _Resolved:
         self._await_musicbrainz_gate()
-        if artist:
+        lead = _lead_artist(artist)
+        query_artist = lead or artist
+        if query_artist:
             query = (
-                f'artist:"{_lucene_phrase(artist)}" AND release:"{_lucene_phrase(album)}"'
+                f'artist:"{_lucene_phrase(query_artist)}"'
+                f' AND release:"{_lucene_phrase(album)}"'
             )
         else:
             query = f'release:"{_lucene_phrase(album)}"'
@@ -684,7 +706,7 @@ class ArtLookup:
                 continue
             if not _names_match(release.get("title"), album):
                 continue
-            if not _artist_credit_matches(release.get("artist-credit"), artist):
+            if not _artist_credit_matches(release.get("artist-credit"), artist, lead):
                 continue
             mbid = release.get("id")
             if isinstance(mbid, str):
@@ -772,14 +794,16 @@ def _lookup_key(chosen: str, title: str, artist: Optional[str], album: Optional[
 
     The episode title never changes a podcast's or an audiobook's cover, so it is
     left out of their keys and every episode of a show shares one cached image.
-    Music is keyed by artist and album, the only fields its search and match use.
+    Music is keyed by the lead artist and album, so every track on an album shares
+    one cached cover (and one miss marker) whatever featured artists ride along on
+    its credit, and the album is searched for at most once.
     """
     if chosen == "podcast":
         parts = ["podcast", _normalize(album) or _normalize(artist)]
     elif chosen == "audiobook":
         parts = ["audiobook", _normalize(album), _normalize(artist)]
     else:
-        parts = ["music", _normalize(artist), _normalize(album)]
+        parts = ["music", _normalize(_music_cache_artist(artist)), _normalize(album)]
     raw = "\x1f".join(parts)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
@@ -834,16 +858,59 @@ def _search_list(data: Optional[bytes], field: str) -> Optional[list]:
     return value if isinstance(value, list) else []
 
 
-def _artist_credit_matches(credit, artist: Optional[str]) -> bool:
-    """Whether a MusicBrainz ``artist-credit`` names the searched artist.
+def _lead_artist(credit: Optional[str]) -> Optional[str]:
+    """The lead artist cut from a track credit, or None when the credit is one name.
+
+    Cuts at the earliest occurrence of any separator in ``_CREDIT_SEPARATORS``,
+    matched case-insensitively, and trims the part before it. Returns None when no
+    separator appears or the lead equals the whole credit, so a single-name credit
+    yields nothing extra and falls back to the full credit everywhere.
+    """
+    if not credit:
+        return None
+    lowered = credit.casefold()
+    cut = None
+    for separator in _CREDIT_SEPARATORS:
+        index = lowered.find(separator)
+        if index != -1 and (cut is None or index < cut):
+            cut = index
+    if cut is None:
+        return None
+    lead = credit[:cut].strip()
+    if not lead or lead == credit.strip():
+        return None
+    return lead
+
+
+def _music_cache_artist(artist: Optional[str]) -> str:
+    """The artist a music lookup is cached under: the lead artist, or the full
+    credit when it names a single artist. Empty when there is no artist at all."""
+    return _lead_artist(artist) or (artist or "")
+
+
+def _artist_credit_matches(
+    credit, artist: Optional[str], lead: Optional[str]
+) -> bool:
+    """Whether a MusicBrainz ``artist-credit`` names the track's artist.
 
     With no searched artist there is nothing to match against, so music with no
     artist never matches (its cover would be a guess). The credit is a list of
-    parts; their joined names are compared as one name.
+    parts. It matches when the joined parts equal the full track credit (a band
+    whose own name carries ", " or " & " matches here), when they equal the lead
+    artist, or when any single part equals the lead artist (the common case of a
+    featured credit against a release credited to the lead alone).
     """
     if not artist:
         return False
     if not isinstance(credit, list):
         return False
     names = "".join(part.get("name", "") for part in credit if isinstance(part, dict))
-    return _names_match(names, artist)
+    if _names_match(names, artist):
+        return True
+    if lead:
+        if _names_match(names, lead):
+            return True
+        for part in credit:
+            if isinstance(part, dict) and _names_match(part.get("name"), lead):
+                return True
+    return False
