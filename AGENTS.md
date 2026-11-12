@@ -30,6 +30,10 @@ the last-good commit if the apply or verify fails.
   `coverartarchive.org` and the `archive.org` hosts it and Open Library covers
   redirect to, `openlibrary.org`, `covers.openlibrary.org`; the hub also reaches
   `geocoding-api.open-meteo.com` to resolve a typed weather city to coordinates;
+  the hub's homebody Matter controller (python-matter-server) also fetches the
+  Matter PAA root certificates from the CSA Distributed Compliance Ledger
+  (`on.dcl.csa-iot.org`) and GitHub (`api.github.com` and
+  `raw.githubusercontent.com`, the project-chip development certificates);
   plus nightstand's list on the `nightstand` host). Lookup requests carry only
   track, show, book, artist, or typed place names and a User-Agent naming the
   public repo.

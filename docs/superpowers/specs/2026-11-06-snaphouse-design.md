@@ -122,7 +122,11 @@ cancels it. Tuning those offsets is what makes three rooms sound like one.
     `covers.openlibrary.org` (audiobooks, whose covers redirect to `archive.org`).
     It also reaches `geocoding-api.open-meteo.com`, Open-Meteo's keyless geocoding API,
     to resolve a typed weather city (the frame's weather location) to its coordinates and
-    IANA timezone. Requests carry only track, show, book, artist, or typed place names and
+    IANA timezone. The hub's homebody Matter controller (python-matter-server) also
+    fetches the Matter PAA root certificates it needs to commission devices, from the CSA
+    Distributed Compliance Ledger (`on.dcl.csa-iot.org`) and from GitHub
+    (`api.github.com` and `raw.githubusercontent.com`, the project-chip development
+    certificates). Requests carry only track, show, book, artist, or typed place names and
     a User-Agent naming the public repo; nothing identifying goes out.
   - `nightstand`: the same, plus what `nightstand` lists in its design (MLB Stats API,
     MLB's logo CDN, Open-Meteo, MusicBrainz and the Cover Art Archive).

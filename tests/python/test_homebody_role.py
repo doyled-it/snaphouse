@@ -132,6 +132,48 @@ def test_matter_unit_runs_the_controller_on_loopback():
     assert flag("--listen-address") == "127.0.0.1"
 
 
+def test_matter_unit_passes_the_paa_root_cert_dir():
+    # python-matter-server otherwise stores the PAA root certificates inside its
+    # own package directory, which is read-only under ProtectSystem=strict.
+    unit = _render(MATTER_UNIT)
+    argv = [l for l in unit.splitlines() if l.startswith("ExecStart=")][0].split()
+    assert argv.count("--paa-root-cert-dir") == 1
+    assert argv[argv.index("--paa-root-cert-dir") + 1] == (
+        "/var/lib/homebody/paa-root-certs"
+    )
+
+
+def test_matter_unit_binds_a_homebody_dir_onto_chip_data():
+    # The CHIP SDK writes its factory config under a hard-coded /data. A bare host
+    # has none, so a homebody-owned directory is bound there.
+    unit = _render(MATTER_UNIT)
+    binds = [ln for ln in unit.splitlines() if ln.startswith("BindPaths=")]
+    assert binds == ["BindPaths=/var/lib/homebody/chip-data:/data"]
+
+
+def test_role_creates_the_chip_data_and_paa_dirs_owned_by_homebody():
+    tasks = _tasks()
+    names = [t.get("name") for t in tasks]
+    for path in ("/var/lib/homebody/chip-data", "/var/lib/homebody/paa-root-certs"):
+        found = [
+            (i, args)
+            for i, task in enumerate(tasks)
+            for module, args in [_module(task)]
+            if module.endswith(".file") and args.get("path") == path
+        ]
+        assert found, f"no task creates {path}"
+        idx, args = found[0]
+        assert args.get("state") == "directory"
+        assert args.get("owner") == "homebody"
+        assert args.get("group") == "homebody"
+        assert args.get("mode") == "0750"
+        # Created after the installer (which makes the homebody user) and before
+        # the unit is started.
+        started = names.index("Enable and start the homebody Matter controller")
+        installer = names.index("Run the homebody installer once")
+        assert installer < idx < started
+
+
 def test_matter_unit_runs_as_homebody_and_restarts():
     unit = _render(MATTER_UNIT)
     assert "User=homebody" in unit
