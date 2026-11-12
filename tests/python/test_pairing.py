@@ -25,17 +25,33 @@ from snaphouse import pairing
 
 
 class FakeProc:
-    """A stand-in for the pairing agent subprocess.
+    """A stand-in for the single long-lived bluetoothctl process.
 
-    `exited` controls whether it looks already-finished: an exited agent reports
+    The root cause of issue #128 was running the whole window across more than
+    one bluetoothctl session: `pairable on` in a throwaway session, then a
+    separate agent process. With BlueZ AlwaysPairable=false the adapter dropped
+    bondable the moment that first session's agent went away. The fix is ONE
+    process that registers the agent and turns pairable/discoverable on, and
+    stays alive for the window. This fake records every command written to that
+    one process in `sent`, so a test can pin the ordering.
+
+    `exited` controls whether it looks already-finished: an exited process reports
     a return code from poll(), a running one reports None.
     """
 
-    def __init__(self, *, exited: bool):
+    def __init__(self, *, exited: bool = False):
         self._exited = exited
+        self.sent: list[str] = []
+        self.reader = None
         self.terminated = False
         self.killed = False
         self.waited = False
+
+    def send(self, line: str) -> None:
+        self.sent.append(line)
+
+    def start_reader(self, on_line) -> None:
+        self.reader = on_line
 
     def poll(self):
         return 0 if self._exited else None
@@ -70,44 +86,81 @@ class FakeClock:
 CONTROLLER = "AA:BB:CC:DD:EE:FF"
 
 
-def test_pairing_window_runs_full_duration_and_closes_even_if_agent_exits_early():
+def _run(session, proc, clock, **kwargs):
+    """run_pairing_window with the fakes wired in, declining any passkey."""
+    pairing.run_pairing_window(
+        CONTROLLER,
+        duration=kwargs.pop("duration", 120.0),
+        spawn=lambda: proc,
+        confirm=kwargs.pop("confirm", lambda passkey, device=None: False),
+        session=session,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+        **kwargs,
+    )
+
+
+def test_open_commands_all_go_to_one_session_with_pairable_after_default_agent():
+    # The issue #128 regression pin. The old code set `pairable on` in a throwaway
+    # bluetoothctl session and then spawned a separate agent; with
+    # AlwaysPairable=false the adapter lost bondable when that first session's
+    # agent went away, so every phone got Pairing Not Allowed (0x18). The fix runs
+    # the whole open in ONE long-lived process: register the DisplayYesNo agent,
+    # make it the default, then (in that same session) select the adapter and turn
+    # pairable and discoverable on. This test pins that the open commands all go to
+    # the one process and that pairable/discoverable come after default-agent.
+    proc = FakeProc()
+    clock = FakeClock()
     sessions: list[list[str]] = []
-    spawned: list[str] = []
-    proc = FakeProc(exited=True)  # the agent is dead from the very first tick
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        return ""
+
+    _run(session, proc, clock, duration=120.0)
+
+    assert proc.sent == [
+        f"agent {pairing.AGENT_CAPABILITY}",
+        "default-agent",
+        f"select {CONTROLLER}",
+        "pairable-timeout 120",
+        "discoverable-timeout 120",
+        "pairable on",
+        "discoverable on",
+    ]
+    # The root-cause assertions: pairable and discoverable are turned on in the
+    # agent's own session, after the agent is the default one.
+    assert proc.sent.index("default-agent") < proc.sent.index("pairable on")
+    assert proc.sent.index("default-agent") < proc.sent.index("discoverable on")
+    # And nothing turned pairable on in a separate session: the only session calls
+    # are the opening snapshot, the select preflight, the trust snapshot, and the
+    # closing lockdown, none of which open pairing.
+    assert all("pairable on" not in s for s in sessions)
+    # The window still closed the adapter at the end.
+    assert any("discoverable off" in s and "pairable off" in s for s in sessions)
+
+
+def test_pairing_window_runs_full_duration_and_closes_even_if_the_process_exits_early():
+    sessions: list[list[str]] = []
+    proc = FakeProc(exited=True)  # the process is dead from the very first tick
     clock = FakeClock()
 
     def session(commands, timeout=None):
         sessions.append(list(commands))
         return ""
 
-    def spawn_agent(controller):
-        spawned.append(controller)
-        return proc
-
     start = clock.t
-    pairing.run_pairing_window(
-        CONTROLLER,
-        duration=120.0,
-        session=session,
-        spawn_agent=spawn_agent,
-        monotonic=clock.monotonic,
-        sleep=clock.sleep,
-    )
+    _run(session, proc, clock, duration=120.0)
 
-    # The window stayed open the whole 120 s despite the agent being dead.
+    # The window stayed open the whole 120 s despite the process being dead: the
+    # clock drives it, so a process that exits early does not shorten it.
     assert clock.t - start >= 120.0
-    # The agent was started on the chosen controller.
-    assert spawned == [CONTROLLER]
-    # One session selected the right controller, then made it discoverable and
-    # pairable. Selecting in the same session is what targets the receive adapter
-    # and not the hub's other dongle.
-    opened = next(i for i, s in enumerate(sessions) if "discoverable on" in s)
-    assert f"select {CONTROLLER}" in sessions[opened]
-    assert "pairable on" in sessions[opened]
-    # A later session closed the adapter again.
+    # The open ran on the chosen controller inside the one process.
+    assert f"select {CONTROLLER}" in proc.sent
+    assert "pairable on" in proc.sent
+    # A later session closed the adapter again, selecting it by address.
     closed = next(i for i, s in enumerate(sessions) if "discoverable off" in s)
-    assert closed > opened
-    assert f"select {CONTROLLER}" in sessions[closed]
+    assert sessions[closed][0] == f"select {CONTROLLER}"
     assert "pairable off" in sessions[closed]
 
 
@@ -132,14 +185,7 @@ def test_pairing_window_trusts_only_devices_paired_during_the_window():
         return ""
 
     clock = FakeClock()
-    pairing.run_pairing_window(
-        CONTROLLER,
-        duration=120.0,
-        session=session,
-        spawn_agent=lambda controller: FakeProc(exited=True),
-        monotonic=clock.monotonic,
-        sleep=clock.sleep,
-    )
+    _run(session, FakeProc(exited=True), clock, duration=120.0)
 
     trust_sessions = [s for s in sessions if any(c.startswith("trust ") for c in s)]
     assert len(trust_sessions) == 1
@@ -150,8 +196,9 @@ def test_pairing_window_trusts_only_devices_paired_during_the_window():
 def test_pairing_window_trusts_nothing_when_the_opening_snapshot_fails():
     # If reading the paired set fails before the window opens, the window never
     # opens and nothing is trusted: a failed snapshot must not fall through to
-    # trusting the devices that were already paired.
+    # trusting the devices that were already paired, nor open the adapter.
     sessions: list[list[str]] = []
+    proc = FakeProc()
 
     def session(commands, timeout=None):
         sessions.append(list(commands))
@@ -161,17 +208,10 @@ def test_pairing_window_trusts_nothing_when_the_opening_snapshot_fails():
 
     clock = FakeClock()
     with pytest.raises(RuntimeError):
-        pairing.run_pairing_window(
-            CONTROLLER,
-            duration=120.0,
-            session=session,
-            spawn_agent=lambda controller: FakeProc(exited=True),
-            monotonic=clock.monotonic,
-            sleep=clock.sleep,
-        )
+        _run(session, proc, clock, duration=120.0)
 
-    # The window never opened and nothing was trusted or closed: the only session
-    # attempted was the snapshot read that raised.
+    # The window never opened: no process was driven and nothing closed or trusted.
+    assert proc.sent == []
     assert all("discoverable on" not in s for s in sessions)
     assert all("discoverable off" not in s for s in sessions)
     assert all(not any(c.startswith("trust ") for c in s) for s in sessions)
@@ -204,8 +244,9 @@ def test_pairing_window_never_sleeps_negative_when_the_deadline_passes_mid_check
     pairing.run_pairing_window(
         CONTROLLER,
         duration=10.0,
+        spawn=lambda: FakeProc(exited=True),
+        confirm=lambda passkey, device=None: False,
         session=session,
-        spawn_agent=lambda controller: FakeProc(exited=True),
         monotonic=clock.monotonic,
         sleep=clock.sleep,
         poll_interval=1.0,
@@ -231,18 +272,53 @@ def test_pairing_window_closes_the_adapter_even_when_the_wait_is_interrupted():
         pairing.run_pairing_window(
             CONTROLLER,
             duration=120.0,
+            spawn=lambda: proc,
+            confirm=lambda passkey, device=None: False,
             session=session,
-            spawn_agent=lambda controller: proc,
             monotonic=clock.monotonic,
             sleep=interrupt,
         )
     except KeyboardInterrupt:
         pass
 
-    # Interrupted mid-window, the adapter is still closed and the live agent is
+    # Interrupted mid-window, the adapter is still closed and the live process is
     # stopped: Ctrl-C must never leave the hub discoverable.
     assert any("discoverable off" in s for s in sessions)
     assert any("pairable off" in s for s in sessions)
+    assert proc.terminated
+
+
+def test_pairing_window_stops_early_when_the_stop_event_is_set():
+    # The web service closes the window early (on a stop, or once a phone paired)
+    # by setting a stop event. The loop observes it and ends, and the finally still
+    # closes the adapter and stops the process.
+    import threading
+
+    sessions: list[list[str]] = []
+    proc = FakeProc(exited=False)
+    stop = threading.Event()
+    stop.set()
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        return ""
+
+    clock = FakeClock()
+    start = clock.t
+    pairing.run_pairing_window(
+        CONTROLLER,
+        duration=120.0,
+        spawn=lambda: proc,
+        confirm=lambda passkey, device=None: False,
+        session=session,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+        stop_event=stop,
+    )
+
+    # It did not wait out the duration, and it closed the adapter.
+    assert clock.t - start < 120.0
+    assert any("discoverable off" in s for s in sessions)
     assert proc.terminated
 
 
@@ -252,28 +328,24 @@ def test_pairing_window_raises_but_still_closes_on_the_right_adapter_when_select
     # adapter still has to be closed on the intended controller, selected by
     # address, so Ctrl-C safety and the standing lockdown are never undermined.
     sessions: list[list[str]] = []
+    proc = FakeProc()
 
     def session(commands, timeout=None):
         sessions.append(list(commands))
         if "paired-devices" in commands:
             return ""  # the opening snapshot reads cleanly
-        if "discoverable on" in commands:
-            # The open session cannot select the adapter.
+        if "show" in commands:
+            # The select preflight cannot select the adapter.
             return f"Controller {CONTROLLER} not available\n"
         return ""
 
     clock = FakeClock()
     with pytest.raises(pairing.AdapterSelectFailed):
-        pairing.run_pairing_window(
-            CONTROLLER,
-            duration=120.0,
-            session=session,
-            spawn_agent=lambda controller: FakeProc(exited=True),
-            monotonic=clock.monotonic,
-            sleep=clock.sleep,
-        )
+        _run(session, proc, clock, duration=120.0)
 
-    # The finally ran and closed the adapter, selecting it by address.
+    # The preflight failed, so the window never opened the process.
+    assert proc.sent == []
+    # The finally still ran and closed the adapter, selecting it by address.
     closed = [s for s in sessions if "discoverable off" in s]
     assert closed
     for commands in closed:
@@ -551,3 +623,109 @@ def test_write_speaker_leaves_the_original_intact_when_dump_fails(tmp_path, monk
     # The original survived untouched and no temp file was left behind.
     assert path.read_text() == original
     assert list(tmp_path.iterdir()) == [path]
+
+
+ESC2 = "\x1b"
+
+
+def test_open_commands_order_registers_the_agent_before_opening():
+    # The ordered open sequence the single session runs. agent/default-agent first
+    # so the DisplayYesNo agent is the default before pairable/discoverable go on in
+    # that same session (the issue #128 fix); select targets the receive adapter;
+    # the bluez-side timeouts match the window so the adapter self-closes even if
+    # this process is killed.
+    commands = pairing._open_commands("AA:BB:CC:DD:EE:FF", 120)
+    assert commands == [
+        "agent DisplayYesNo",
+        "default-agent",
+        "select AA:BB:CC:DD:EE:FF",
+        "pairable-timeout 120",
+        "discoverable-timeout 120",
+        "pairable on",
+        "discoverable on",
+    ]
+
+
+def test_parse_device_name_reads_a_name_through_ansi_and_the_name_field_form():
+    # The window tracks the phone's name so the web page can show whose pairing
+    # request it is. bluetoothctl prints it two ways: a plain "Device <addr> <name>"
+    # line and a "[CHG] Device <addr> Name: <name>" change line. Both are parsed
+    # through the same ANSI stripping as the scan listing.
+    assert pairing._parse_device_name(
+        f"{ESC2}[0;92m[NEW]{ESC2}[0m Device AA:BB:CC:DD:EE:01 Pixel 7"
+    ) == "Pixel 7"
+    assert pairing._parse_device_name(
+        "[CHG] Device AA:BB:CC:DD:EE:01 Name: Pixel 7"
+    ) == "Pixel 7"
+    # An address-as-name line carries no real name, and an unrelated line none.
+    assert pairing._parse_device_name("Device AA:BB:CC:DD:EE:01 AA-BB-CC-DD-EE-01") is None
+    assert pairing._parse_device_name("[agent] Confirm passkey 123456 (yes/no): ") is None
+
+
+def test_parse_pair_result_reads_success_and_failure_through_ansi():
+    # The window reports a terminal result to the web state machine from the
+    # process output: "Pairing successful" means paired, the failure lines mean
+    # failed. Anything else is not a result.
+    assert pairing._parse_pair_result("Pairing successful") == "ok"
+    assert pairing._parse_pair_result(
+        f"{ESC2}[0;91mFailed to pair{ESC2}[0m: org.bluez.Error.AuthenticationFailed"
+    ) == "fail"
+    assert pairing._parse_pair_result("Pairing Not Allowed") == "fail"
+    assert pairing._parse_pair_result("[CHG] Device AA:BB:CC:DD:EE:01 Connected: yes") is None
+
+
+def test_trusting_a_new_phone_prints_no_address(capsys):
+    # The web service runs the window under systemd, so stdout is the journal.
+    # The trust line must name the phone but never carry its Bluetooth address.
+    phone = "11:22:33:44:55:66"
+    calls = {"n": 0}
+
+    def session(commands, timeout=None):
+        if "paired-devices" in commands:
+            calls["n"] += 1
+            return "" if calls["n"] == 1 else f"Device {phone} Pat's Phone\n"
+        return ""
+
+    _run(session, FakeProc(), FakeClock(), duration=2.0)
+
+    out = capsys.readouterr().out
+    assert "Pat's Phone" in out
+    assert phone not in out
+    import re
+
+    assert not re.search(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", out)
+
+
+def test_window_aborts_and_closes_when_the_long_lived_select_fails():
+    # The preflight can pass and the adapter still vanish before the real open.
+    # The long-lived session then reports "not available" and would leave
+    # pairable/discoverable on the default controller. The window must notice,
+    # abort with AdapterSelectFailed, and still close on the intended adapter.
+    sessions: list[list[str]] = []
+    proc = FakeProc()
+    clock = FakeClock()
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        return ""
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        if proc.reader is not None:
+            proc.reader(f"Controller {CONTROLLER} not available\n")
+
+    with pytest.raises(pairing.AdapterSelectFailed):
+        pairing.run_pairing_window(
+            CONTROLLER,
+            duration=120.0,
+            spawn=lambda: proc,
+            confirm=lambda passkey, device=None: False,
+            session=session,
+            monotonic=clock.monotonic,
+            sleep=sleep,
+        )
+
+    assert clock.t - 1000.0 < 120.0
+    assert proc.terminated
+    closed = [s for s in sessions if "discoverable off" in s]
+    assert closed and closed[0][0] == f"select {CONTROLLER}"

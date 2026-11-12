@@ -45,6 +45,12 @@ stream_priority:
 # meta member agree. The hub_input verify check asserts snapserver reports it.
 house_sample_format: "44100:16:2"
 
+# The hub's loopback port for the web pairing service (hub_pairing role,
+# snaphouse-pairing.service). It serves the /api/pair/ window API nginx proxies on
+# the hub, bound to 127.0.0.1 only. 8781 is the art admin service; pairing takes
+# the next port. Pinned here so the unit and the nginx proxy agree on one value.
+pairing_port: 8782
+
 # Idle threshold for the two alsa inputs, in milliseconds. snapserver's default
 # (100 ms) treats the digital silence between spoken sentences as the stream
 # stopping, which flaps the House meta stream and chops every room during

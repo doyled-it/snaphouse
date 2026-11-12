@@ -99,13 +99,32 @@ without that firmware the adapter stays down.
 
 To swap adapters, plug in the new one, set `bt_receive_adapter` in the untracked
 `/etc/snaphouse/local.yml` to its address (see `local.example.yml`), let the next update apply,
-then run `snaphouse pair phone` to pair the phone to it. A different chipset may need a
-different firmware package.
+then pair the phone to it (below). A different chipset may need a different firmware package.
 
 The receive adapter advertises itself to phones as the house stream name ("House"). To use a
 household-specific Bluetooth name instead, set `bt_receive_alias` in the untracked
 `/etc/snaphouse/local.yml` (see `local.example.yml`). It is optional, an empty value means the
 default, and it changes the Bluetooth name only: AirPlay and the stream names stay as they are.
+
+### Pairing a phone
+
+A phone pairs once before it can stream. Open the room-picker Settings on the hub and tap
+"Pair a phone": the hub becomes discoverable and pairable for 120 seconds, and when the phone
+asks to pair, the page shows the same six-digit code the phone shows, with "Code matches" and
+"Decline". A code nobody answers within 60 seconds is declined. Paired phones are trusted, so
+they reconnect on their own. The window always closes again (on a time out, a stop, or a
+service restart), so the hub is never left discoverable.
+
+`snaphouse pair phone` does the same thing from a terminal on the hub, confirming the code at
+the keyboard. Both share one window driver, which runs the whole thing in a single long-lived
+`bluetoothctl` session: the pairing agent that makes pairing allowed stays registered for the
+whole window. An earlier version set pairable in a throwaway session and then started a separate
+agent, and with BlueZ's `AlwaysPairable=false` the adapter dropped bondable the moment that
+first session's agent went away, so every phone was refused with "Pairing Not Allowed" (Android
+showed "incorrect PIN"). The web side is served by the `snaphouse-pairing` service, a loopback
+HTTP API nginx proxies on the hub at `/api/pair/`; it runs on the hub only (the host with a
+`bt_receive_adapter` set) and is LAN-only, like every other hub service. The phone's and the
+adapter's addresses are never logged.
 
 ## Now playing
 
