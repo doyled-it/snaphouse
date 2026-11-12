@@ -2,9 +2,10 @@
 # The hub's audio inputs. Only `house` runs this role. It brings up the two
 # ways audio reaches the house and the Snapcast server that mixes them:
 #
-#   - AirPlay: a standalone shairport-sync (snaphouse-airplay-in) plays into the
-#     ALSA loopback with soxr rate matching; snapserver captures the other end as
-#     its "AirPlay" source. Apple devices see one receiver named "House"; a
+#   - AirPlay: the official AirPlay 2 shairport-sync container
+#     (snaphouse-airplay-in, a pinned image run by systemd under Docker) plays
+#     into the ALSA loopback with soxr rate matching; snapserver captures the
+#     other end as its "AirPlay" source. Apple devices see one receiver named "House"; a
 #     control script turns shairport's metadata pipe into stream properties.
 #   - Bluetooth: the phone's A2DP audio is decoded by bluealsa-aplay into the
 #     ALSA loopback; snapserver captures the other end of the loopback. The
@@ -16,22 +17,44 @@
 # Hardware (module load) and service (start/restart) steps are tagged and gated
 # on common_systemd_init so the CI container apply stays green.
 
-- name: Install shairport-sync for the AirPlay source
+# The hub's AirPlay 2 receiver is the official shairport-sync container image
+# (Debian bookworm's 3.3.8 package is AirPlay 1 only). The packaged shairport-sync
+# and its standalone service go away so only the container holds the AirPlay name
+# and RTSP port; removing the package also stops its service.
+- name: Remove the Debian shairport-sync package
   ansible.builtin.apt:
     name: shairport-sync
+    state: absent
+    purge: true
+  tags:
+    - hardware
+
+- name: Install Docker for the AirPlay 2 receiver container
+  ansible.builtin.apt:
+    name: docker.io
     state: present
     update_cache: true
     cache_valid_time: 3600
+  tags:
+    - hardware
 
-# The hub runs its own shairport-sync (snaphouse-airplay-in.service) for the
-# AirPlay input, so the packaged standalone service must not also hold the
-# AirPlay name and RTSP port.
-- name: Stop and mask the standalone shairport-sync service
-  ansible.builtin.systemd_service:
-    name: shairport-sync.service
-    state: stopped
-    masked: true
+- name: Check whether the pinned shairport-sync image is already present
+  ansible.builtin.command: docker image inspect {{ shairport_image | quote }}
+  register: hub_input_airplay_image
+  changed_when: false
+  failed_when: false
+  check_mode: false
   when: common_systemd_init
+  tags:
+    - service
+
+# Pulled by digest, so the bytes are the pinned ones. Only when missing, so a
+# second apply changes nothing; a bumped digest pulls once and restarts the input.
+- name: Pull the pinned shairport-sync image
+  ansible.builtin.command: docker pull {{ shairport_image | quote }}
+  when: common_systemd_init and hub_input_airplay_image.rc != 0
+  changed_when: true
+  notify: Restart the AirPlay input
   tags:
     - service
 
@@ -72,16 +95,6 @@
   # bluealsa-aplay reads this at start, so pick up a format change on restart.
   notify: Restart the Bluetooth input
 
-- name: Install the AirPlay loopback ALSA device
-  ansible.builtin.template:
-    src: snaphouse-airplay-loop.conf.j2
-    dest: /etc/alsa/conf.d/99-snaphouse-airplay-loop.conf
-    owner: root
-    group: root
-    mode: "0644"
-  # shairport-sync opens this device at start, so pick up a change on restart.
-  notify: Restart the AirPlay input
-
 - name: Install the Bluetooth-input service unit
   ansible.builtin.template:
     src: snaphouse-bt-in.service.j2
@@ -103,8 +116,8 @@
   notify: Restart the AirPlay input
 
 - name: Install the AirPlay-input service unit
-  ansible.builtin.copy:
-    src: snaphouse-airplay-in.service
+  ansible.builtin.template:
+    src: snaphouse-airplay-in.service.j2
     dest: /etc/systemd/system/snaphouse-airplay-in.service
     owner: root
     group: root

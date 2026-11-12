@@ -1,0 +1,45 @@
+# snaphouse AirPlay input. Runs the official shairport-sync container image (AirPlay 2
+# and NQPTP) as the house's AirPlay receiver, playing straight into the ALSA
+# loopback subdevice hw:Loopback,0,1 where snapserver captures the other end
+# (hw:Loopback,1,1) as the "AirPlay" stream. The image is pinned by tag and
+# digest in vars/all.yml. The Debian shairport-sync package is removed
+# (roles/hub_input), so only this container holds the AirPlay name and RTSP port.
+# Installed by roles/hub_input.
+#
+# Host networking: AirPlay 2 needs the LAN address, mDNS, and NQPTP's UDP ports.
+# ENABLE_AVAHI=0 is REQUIRED while the host's D-Bus is mounted: with it unset the
+# image's startup runs its own dbus-daemon, which destroyed the host's system bus
+# socket in testing (issue #138). With it off, the image uses the host's
+# avahi-daemon over the mounted D-Bus and avahi sockets. The mounts are given at
+# both /run and /var/run because the image's tools look under either.
+# tests/python/test_hub_input.py pins this pairing.
+[Unit]
+Description=snaphouse AirPlay input (AirPlay 2 shairport-sync container into the Snapcast loopback)
+After=docker.service sound.target network-online.target avahi-daemon.service dbus.service
+Requires=docker.service
+Wants=network-online.target avahi-daemon.service
+
+[Service]
+Type=simple
+# The metadata pipe lives under /run/snaphouse (tmpfs, cleared on boot); make sure
+# the directory exists before it is mounted into the container. The leading dash
+# clears any container left behind by an unclean stop.
+ExecStartPre=/bin/mkdir -p /run/snaphouse
+ExecStartPre=-/usr/bin/docker rm -f snaphouse-airplay
+ExecStart=/usr/bin/docker run --rm --name snaphouse-airplay \
+    --network host \
+    --device /dev/snd \
+    -e ENABLE_AVAHI=0 \
+    -v /run/dbus:/run/dbus \
+    -v /run/dbus:/var/run/dbus \
+    -v /run/avahi-daemon:/run/avahi-daemon \
+    -v /run/avahi-daemon:/var/run/avahi-daemon \
+    -v /run/snaphouse:/run/snaphouse \
+    -v /etc/snaphouse/shairport-airplay.conf:/etc/shairport-sync.conf:ro \
+    {{ shairport_image }}
+ExecStop=/usr/bin/docker stop snaphouse-airplay
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

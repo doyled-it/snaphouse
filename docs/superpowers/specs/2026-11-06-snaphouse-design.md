@@ -126,7 +126,9 @@ cancels it. Tuning those offsets is what makes three rooms sound like one.
     fetches the Matter PAA root certificates it needs to commission devices, from the CSA
     Distributed Compliance Ledger (`on.dcl.csa-iot.org`) and from GitHub
     (`api.github.com` and `raw.githubusercontent.com`, the project-chip development
-    certificates). Requests carry only track, show, book, artist, or typed place names and
+    certificates). It also pulls its pinned AirPlay 2 receiver container image from Docker
+    Hub (`registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com`).
+    Requests carry only track, show, book, artist, or typed place names and
     a User-Agent naming the public repo; nothing identifying goes out.
   - `nightstand`: the same, plus what `nightstand` lists in its design (MLB Stats API,
     MLB's logo CDN, Open-Meteo, MusicBrainz and the Cover Art Archive).

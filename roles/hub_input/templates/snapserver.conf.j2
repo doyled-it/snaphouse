@@ -22,9 +22,9 @@
 # See house_sample_format in vars/all.yml.
 sampleformat = {{ house_sample_format }}
 
-# AirPlay in: a standalone shairport-sync (roles/hub_input, snaphouse-airplay-in
-# service) plays into the loopback with soxr rate matching (hw:Loopback,0,1 via
-# the snaphouse_airplay_input plug); this captures the other end (hw:Loopback,1,1)
+# AirPlay in: the AirPlay 2 shairport-sync container (roles/hub_input, snaphouse-airplay-in
+# service) plays into the loopback with soxr rate matching (hw:Loopback,0,1);
+# this captures the other end (hw:Loopback,1,1)
 # at the same format. snapserver does NOT launch shairport here: its own airplay
 # source used shairport's stdout backend, which does no rate matching and drifts
 # until snapserver resyncs (issue #38). The control script reads shairport's
