@@ -1592,3 +1592,145 @@ function clock12FromIso(iso) {
   const hour12 = ((hour24 + 11) % 12) + 1;
   return `${hour12}:${match[2]}`;
 }
+
+// --------------------------------------------------------------------------- //
+// Pair a phone (Settings): the pure model behind the Bluetooth pairing window.
+//
+// The page starts a window, polls GET /api/pair/state about once a second while
+// a window is open or the Settings screen is visible, shows the 6-digit code
+// when a phone asks, and answers "Code matches" or "Decline". Every write POST
+// carries the X-Snaphouse guard header (apiRequest). All copy and timing lives
+// in one place; the view glue in rooms.js stays a thin DOM layer over these.
+// --------------------------------------------------------------------------- //
+
+// The states GET /api/pair/state can report (contract). `idle` is also the safe
+// fallback for anything unexpected.
+const PAIR_STATES = ["idle", "open", "confirm", "paired", "declined", "failed"];
+
+// A passkey is exactly six digits, zero-padded. The service sends it only in
+// `confirm`; the page shows a code only then, so a passkey arriving in any other
+// state is dropped rather than shown.
+const PASSKEY_RE = /^\d{6}$/;
+
+// The sentence shown while a window is open, built so the speaker name is a
+// single point of change. The page cannot learn the hub's Bluetooth name today
+// (it is in the untracked local config, never published to the page), so the
+// fallback "the house speaker" is what shows; pass a real name here the day the
+// page can read one.
+export function pairInstruction(speakerName) {
+  const speaker =
+    typeof speakerName === "string" && speakerName.trim().length > 0
+      ? speakerName.trim()
+      : "the house speaker";
+  return `On your phone, open Bluetooth, Pair new device, and tap ${speaker}.`;
+}
+
+// A plain non-empty string, trimmed, or null. The device the phone reports and
+// the failure message both reach the DOM as text, so a non-string or empty value
+// is treated as absent.
+function plainStringOrNull(value) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+// Read GET /api/pair/state. Returns a normalized record, always with every
+// field, so the view never has to guard a missing key. A body that will not
+// parse, is not an object, or carries an unknown state collapses to idle: the
+// page then shows the start view rather than a broken one. The passkey is kept
+// only when the state is `confirm` and it is a real six-digit string.
+export function parsePairState(raw) {
+  const data = typeof raw === "string" ? safeJsonParse(raw) : null;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return { state: "idle", until: null, passkey: null, device: null, message: null };
+  }
+  const state = PAIR_STATES.includes(data.state) ? data.state : "idle";
+  const until = typeof data.until === "string" && data.until.length > 0 ? data.until : null;
+  const passkey =
+    state === "confirm" && typeof data.passkey === "string" && PASSKEY_RE.test(data.passkey)
+      ? data.passkey
+      : null;
+  return {
+    state,
+    until,
+    passkey,
+    device: plainStringOrNull(data.device),
+    message: plainStringOrNull(data.message),
+  };
+}
+
+// The POST that opens a window. apiRequest sets the method and the X-Snaphouse
+// guard header; the body is empty.
+export function pairStartRequest() {
+  return apiRequest("/api/pair/start", {});
+}
+
+// The POST that answers the code: accept true pairs, false declines. The flag is
+// coerced to a real boolean so the body always matches the service's check.
+export function pairConfirmRequest(accept) {
+  return apiRequest("/api/pair/confirm", { accept: Boolean(accept) });
+}
+
+// The POST that closes a window now (idempotent).
+export function pairStopRequest() {
+  return apiRequest("/api/pair/stop", {});
+}
+
+// Map a pairing POST's HTTP status and body to a result the page can act on.
+// 200/202 carry the new state. 409 is a conflict (a window is already open, or a
+// confirm arrived when the window was no longer in confirm); 403 is the guard
+// rejecting the request. Any other non-2xx is a plain failure. The service's own
+// `error` string is used when present, with a short fallback otherwise.
+export function interpretPairResponse(status, text) {
+  if (status === 200 || status === 202) {
+    return { ok: true, state: parsePairState(text) };
+  }
+  const body = safeJsonParse(text);
+  const reason = body && typeof body.error === "string" && body.error.length > 0 ? body.error : null;
+  if (status === 403) {
+    return { ok: false, forbidden: true, error: reason || "The pairing service refused the request." };
+  }
+  if (status === 409) {
+    return { ok: false, conflict: true, error: reason || "The pairing window is already open." };
+  }
+  return { ok: false, error: reason || `The pairing service could not be reached (${status}).` };
+}
+
+// Whole seconds left until an ISO-8601 deadline, never below zero, or null when
+// there is no usable deadline. A fractional second rounds up so the final tick
+// still reads 1 rather than flashing 0 early.
+export function pairCountdown(until, nowMs) {
+  const deadline = typeof until === "string" ? Date.parse(until) : NaN;
+  if (!Number.isFinite(deadline)) {
+    return null;
+  }
+  return Math.max(0, Math.ceil((deadline - nowMs) / 1000));
+}
+
+// A seconds count as m:ss with a zero-padded seconds field. A missing or
+// negative value reads as 0:00.
+export function formatCountdown(seconds) {
+  const total = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+// Reduce a parsed state plus whether this page opened a window to the phase the
+// view renders. The live and terminal states pass through. `idle` means the
+// start view before a window, but a window we opened that returns to idle (timed
+// out, stopped, or the service restarted) reads as closed, so the outcome is
+// never silently lost.
+export function pairPhase(parsed, { started } = {}) {
+  const state = parsed && typeof parsed.state === "string" ? parsed.state : "idle";
+  if (state !== "idle") {
+    return state;
+  }
+  return started ? "closed" : "idle";
+}
+
+// Whether the page may poll GET /api/pair/state. It polls only while the tab is
+// visible, and then only when the Settings screen is showing or a window is live
+// (open or confirm). A hidden tab never polls, so the page never polls in the
+// background (contract).
+export function shouldPollPair({ documentVisible, settingsVisible, windowActive } = {}) {
+  return Boolean(documentVisible) && Boolean(settingsVisible || windowActive);
+}

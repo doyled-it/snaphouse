@@ -60,6 +60,16 @@ import {
   frameUrls,
   artCommandBody,
   frameQuietHoursBody,
+  parsePairState,
+  pairStartRequest,
+  pairConfirmRequest,
+  pairStopRequest,
+  interpretPairResponse,
+  pairCountdown,
+  formatCountdown,
+  pairPhase,
+  pairInstruction,
+  shouldPollPair,
 } from "./rooms-model.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -82,6 +92,11 @@ const FRAME_CONTROL_MS = 30000;
 const LIBRARY_MS = 30000;
 // The default library filter: every folder. Matches the model's "all" sentinel.
 const ALL_FOLDERS = "all";
+// The pairing window moves fast (a 120 s window, a 60 s confirm), so its state is
+// polled about once a second, but only while the tab is visible and either the
+// Settings screen is showing or a window is live (shouldPollPair). The same tick
+// re-renders the countdown so it counts down smoothly between fetches.
+const PAIR_MS = 1000;
 // How long a toast lingers before it clears itself.
 const TOAST_MS = 7000;
 
@@ -151,6 +166,27 @@ const els = {
   fsWeatherSave: document.getElementById("fs-weather-save"),
   fsWeatherClear: document.getElementById("fs-weather-clear"),
   fsWeatherError: document.getElementById("fs-weather-error"),
+
+  pairing: document.getElementById("pairing"),
+  pairIdle: document.getElementById("pair-idle"),
+  pairStart: document.getElementById("pair-start"),
+  pairOpen: document.getElementById("pair-open"),
+  pairInstruction: document.getElementById("pair-instruction"),
+  pairOpenCount: document.getElementById("pair-open-count"),
+  pairStop: document.getElementById("pair-stop"),
+  pairConfirm: document.getElementById("pair-confirm"),
+  pairDeviceName: document.getElementById("pair-device-name"),
+  pairCode: document.getElementById("pair-code"),
+  pairCodeA: document.getElementById("pair-code-a"),
+  pairCodeB: document.getElementById("pair-code-b"),
+  pairAccept: document.getElementById("pair-accept"),
+  pairDecline: document.getElementById("pair-decline"),
+  pairConfirmCount: document.getElementById("pair-confirm-count"),
+  pairOutcome: document.getElementById("pair-outcome"),
+  pairOutcomeText: document.getElementById("pair-outcome-text"),
+  pairOutcomeDetail: document.getElementById("pair-outcome-detail"),
+  pairAgain: document.getElementById("pair-again"),
+  pairError: document.getElementById("pair-error"),
 
   frameQuiet: document.getElementById("frame-quiet"),
   fqFrameField: document.getElementById("fq-frame-field"),
@@ -269,6 +305,16 @@ const state = {
   screen: "listen",
   frameControl: null,
   fsKindsBuilt: false,
+
+  // The pairing window: the last parsed GET /api/pair/state, whether this page
+  // opened a window (so a window that times out back to idle reads as closed,
+  // not as the start view), and whether a start/confirm/stop POST is in flight
+  // (a poll never overwrites an action's own result mid-flight).
+  pair: {
+    parsed: { state: "idle", until: null, passkey: null, device: null, message: null },
+    started: false,
+    pending: false,
+  },
   // A fingerprint of the frame context the mirror and history were last fetched
   // for (the legacy flag, the known frame ids, and the chosen frame). When it
   // changes, the per-frame URLs changed, so those must be re-fetched even if the
@@ -295,8 +341,10 @@ async function start() {
   wireChrome();
   wireArtManager();
   wireFrameControl();
+  wirePairing();
   resolveSelectedFrame();
   showScreen(screenFromHash(window.location.hash));
+  renderPairing();
   refreshHealth();
   // Read the frame-control document first (it sets the legacy flag and the frame
   // list), then fetch the mirror and history with the right per-frame URLs. The
@@ -314,6 +362,9 @@ async function start() {
   setInterval(refreshNowPlaying, NOW_PLAYING_MS);
   setInterval(refreshHistory, HISTORY_MS);
   setInterval(tickNowPlaying, TICK_MS);
+  // Poll the pairing state and tick its countdown once a second; pairTick itself
+  // polls only when shouldPollPair allows it, so a hidden tab never polls.
+  setInterval(pairTick, PAIR_MS);
 
   // The URL hash is the screen and the chosen frame: Back, forward, and a shared
   // link all land on the right one.
@@ -339,6 +390,7 @@ async function start() {
     refreshLibrary();
     refreshNowPlaying();
     refreshHistory();
+    maybePollPairing();
   });
 }
 
@@ -396,6 +448,9 @@ function showScreen(name) {
   }
   els.screenTitle.textContent = SCREEN_LABELS[screen];
   window.scrollTo({ top: 0, behavior: "auto" });
+  // Entering Settings shows the pairing state, so fetch it now rather than
+  // waiting up to a second for the next tick.
+  maybePollPairing();
 }
 
 // The known frame ids (from the parsed frame-control document), and whether the
@@ -1235,6 +1290,213 @@ function showWeatherError(message) {
 function clearWeatherError() {
   els.fsWeatherError.hidden = true;
   els.fsWeatherError.textContent = "";
+}
+
+// --------------------------------------------------------------------------- //
+// Pair a phone: start a Bluetooth window, show the 6-digit code when a phone
+// asks, and confirm or decline it. The state comes from GET /api/pair/state,
+// polled about once a second while a window is live or the Settings screen is
+// visible (never in the background). Every write POST carries the guard header.
+// --------------------------------------------------------------------------- //
+
+const PAIR_OUTCOME_PHASES = ["paired", "declined", "failed", "closed"];
+
+function wirePairing() {
+  els.pairStart.addEventListener("click", startPairing);
+  els.pairAgain.addEventListener("click", startPairing);
+  els.pairStop.addEventListener("click", stopPairing);
+  els.pairAccept.addEventListener("click", () => confirmPairing(true));
+  els.pairDecline.addEventListener("click", () => confirmPairing(false));
+}
+
+// Whether a window is live (open or waiting for the code). A live window is
+// polled even off the Settings screen, so returning to Settings shows its true
+// state rather than a stale one.
+function pairWindowActive() {
+  const current = state.pair.parsed.state;
+  return current === "open" || current === "confirm";
+}
+
+function pairPollAllowed() {
+  return shouldPollPair({
+    documentVisible: document.visibilityState === "visible",
+    settingsVisible: state.screen === "settings",
+    windowActive: pairWindowActive(),
+  });
+}
+
+// The once-a-second tick: re-render so the countdown counts down smoothly, and
+// poll the state when allowed.
+function pairTick() {
+  renderPairing();
+  if (pairPollAllowed()) {
+    pollPairing();
+  }
+}
+
+function maybePollPairing() {
+  if (pairPollAllowed()) {
+    pollPairing();
+  }
+}
+
+// Read the current state. A POST in flight owns the state, so a poll never
+// overwrites an action's own result mid-flight. A transient error keeps the last
+// good render rather than wiping the view.
+async function pollPairing() {
+  if (state.pair.pending) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/pair/state", { cache: "no-store" });
+    if (!response.ok) {
+      return;
+    }
+    state.pair.parsed = parsePairState(await response.text());
+    renderPairing();
+  } catch (err) {
+    // Keep the last render; the next tick tries again.
+  }
+}
+
+// Send one pairing POST and interpret the reply. A network failure returns a
+// plain error so the caller can show it without throwing.
+async function pairPost(request) {
+  state.pair.pending = true;
+  try {
+    const response = await fetch(request.url, request.init);
+    return interpretPairResponse(response.status, await response.text());
+  } catch (err) {
+    return { ok: false, error: "Could not reach the pairing service." };
+  } finally {
+    state.pair.pending = false;
+  }
+}
+
+async function startPairing() {
+  clearPairError();
+  const result = await pairPost(pairStartRequest());
+  if (!result.ok) {
+    showPairError(result.error);
+    // A 409 means a window is already open (this tab, another tab, or the CLI);
+    // mark it started and read its real state rather than leaving the start view.
+    if (result.conflict) {
+      state.pair.started = true;
+      await pollPairing();
+    }
+    return;
+  }
+  state.pair.started = true;
+  state.pair.parsed = result.state;
+  renderPairing();
+}
+
+async function confirmPairing(accept) {
+  clearPairError();
+  const result = await pairPost(pairConfirmRequest(accept));
+  if (!result.ok) {
+    showPairError(result.error);
+    // A 409 means the window already moved on (timed out, or another answer won
+    // the race); read where it actually is.
+    if (result.conflict) {
+      await pollPairing();
+    }
+    return;
+  }
+  state.pair.parsed = result.state;
+  renderPairing();
+}
+
+async function stopPairing() {
+  clearPairError();
+  const result = await pairPost(pairStopRequest());
+  if (!result.ok) {
+    showPairError(result.error);
+    return;
+  }
+  state.pair.parsed = result.state;
+  renderPairing();
+}
+
+// Paint the one view the current phase calls for and hide the rest. Re-run every
+// second, so it only sets text and toggles `hidden`; the buttons are static, so
+// focus is never lost mid-window.
+function renderPairing() {
+  const parsed = state.pair.parsed;
+  const phase = pairPhase(parsed, { started: state.pair.started });
+  const now = Date.now();
+
+  els.pairIdle.hidden = phase !== "idle";
+  els.pairOpen.hidden = phase !== "open";
+  els.pairConfirm.hidden = phase !== "confirm";
+  els.pairOutcome.hidden = !PAIR_OUTCOME_PHASES.includes(phase);
+
+  if (phase === "open") {
+    els.pairInstruction.textContent = pairInstruction();
+    setPairCount(els.pairOpenCount, parsed.until, now, "Discoverable for");
+  } else if (phase === "confirm") {
+    renderPairCode(parsed.passkey);
+    els.pairDeviceName.textContent = parsed.device || "your phone";
+    setPairCount(els.pairConfirmCount, parsed.until, now, "Declines on its own in");
+  } else if (!els.pairOutcome.hidden) {
+    renderPairOutcome(phase, parsed);
+  }
+}
+
+// A countdown line like "Discoverable for 1:58.", hidden when there is no usable
+// deadline so the UI never shows a stuck 0:00.
+function setPairCount(node, until, now, label) {
+  const seconds = pairCountdown(until, now);
+  if (seconds === null) {
+    node.hidden = true;
+    node.textContent = "";
+    return;
+  }
+  node.hidden = false;
+  node.textContent = `${label} ${formatCountdown(seconds)}.`;
+}
+
+// The 6-digit code, split into two groups of three for the eye, with an
+// accessible label that reads each digit in turn.
+function renderPairCode(passkey) {
+  const code = typeof passkey === "string" && /^\d{6}$/.test(passkey) ? passkey : "";
+  els.pairCodeA.textContent = code.slice(0, 3);
+  els.pairCodeB.textContent = code.slice(3);
+  els.pairCode.setAttribute(
+    "aria-label",
+    code ? `Pairing code ${code.split("").join(" ")}` : "Pairing code",
+  );
+}
+
+function renderPairOutcome(phase, parsed) {
+  els.pairOutcomeText.classList.remove("ok", "bad");
+  els.pairOutcomeDetail.hidden = true;
+  els.pairOutcomeDetail.textContent = "";
+  if (phase === "paired") {
+    els.pairOutcomeText.textContent = parsed.device ? `Paired with ${parsed.device}.` : "Phone paired.";
+    els.pairOutcomeText.classList.add("ok");
+  } else if (phase === "declined") {
+    els.pairOutcomeText.textContent = "Pairing declined.";
+  } else if (phase === "failed") {
+    els.pairOutcomeText.textContent = "Pairing failed.";
+    els.pairOutcomeText.classList.add("bad");
+    if (parsed.message) {
+      els.pairOutcomeDetail.textContent = parsed.message;
+      els.pairOutcomeDetail.hidden = false;
+    }
+  } else {
+    els.pairOutcomeText.textContent = "Pairing window closed.";
+  }
+}
+
+function showPairError(message) {
+  els.pairError.textContent = message;
+  els.pairError.hidden = false;
+}
+
+function clearPairError() {
+  els.pairError.hidden = true;
+  els.pairError.textContent = "";
 }
 
 // --------------------------------------------------------------------------- //
