@@ -1,12 +1,18 @@
 """The hub's web pairing service: a loopback HTTP API over the pairing window.
 
 The hub receives audio from a phone over Bluetooth, and a phone must pair once
-before it can stream. Pairing is supervised (numeric comparison): the hub shows a
-six-digit code and a person confirms it matches the phone. This service opens the
-inbound pairing window on the hub's receive adapter and exposes the small POST/GET
-API the room-picker page drives through nginx (``/api/pair/``), so the window can
-be opened and the code confirmed from the web app instead of a terminal. The CLI
-(``snaphouse pair phone``) shares the same window driver (``snaphouse.pairing``).
+before it can stream. This service opens the inbound pairing window on the hub's
+receive adapter and exposes the small POST/GET API the room-picker page drives
+through nginx (``/api/pair/``), so the window can be opened from the web app
+instead of a terminal.
+
+The person opening a window is the person holding the phone, and Android drops
+its own pairing dialog the moment they switch to the browser to read a code. So
+the web flow does not ask for a confirmation: a window opened here accepts the
+FIRST pairing request (the numeric comparison is answered yes by the hub), declines
+any further request in the same window, trusts the new device, and closes itself.
+The CLI (``snaphouse pair phone``) shares the same window driver
+(``snaphouse.pairing``) but keeps its interactive confirm.
 
 It is a separate service from the art admin one on purpose: pairing needs BlueZ
 rights (register a pairing agent, set adapter properties) that the art service,
@@ -18,9 +24,9 @@ and widening that policy would add attack surface. It is LAN-only, bound to
 127.0.0.1, reachable only through nginx; there is no inbound access from the
 internet (AGENTS.md).
 
-The state machine (idle, open, confirm, paired, declined, failed, with the window
-and confirm timeouts, a stop, and a restart) is driven entirely by the injected
-window driver and clocks, so it is fully tested without BlueZ. The phone's and the
+The state machine (idle, open, paired, failed, with the window timeout, a stop, and
+a restart) is driven entirely by the injected window driver and clocks, so it is
+fully tested without BlueZ. The phone's and the
 adapter's addresses are never logged or returned; the phone's advertised name is
 returned only on the LAN page and never logged.
 """
@@ -50,11 +56,9 @@ from snaphouse import pairing
 #: 127.0.0.1. 8781 is the art admin service; pairing gets the next port.
 DEFAULT_PORT = 8782
 
-#: How long the pairing window stays open, and how long a shown code waits for an
-#: answer before it is declined. Both live in snaphouse.pairing so the CLI and the
-#: web service share one source of truth.
+#: How long the pairing window stays open. It lives in snaphouse.pairing so the
+#: CLI and the web service share one source of truth.
 WINDOW_SECONDS = pairing.PAIRING_WINDOW_SECONDS
-CONFIRM_SECONDS = pairing.CONFIRM_TIMEOUT
 
 #: The custom header every write must carry. A cross-site form cannot set it
 #: without a CORS preflight the server never answers, so it blocks CSRF.
@@ -64,10 +68,10 @@ GUARD_VALUE = "1"
 _API_PREFIX = "/api/pair/"
 
 #: The terminal states: once set they stay readable until the next start.
-_TERMINAL = ("paired", "declined", "failed")
+_TERMINAL = ("paired", "failed")
 
 #: The states in which a window is still live, so a second start is a conflict.
-_LIVE = ("open", "confirm")
+_LIVE = ("open",)
 
 
 class Conflict(Exception):
@@ -92,12 +96,11 @@ class PairingService:
     """The pairing window's state, driven by one background window at a time.
 
     ``start`` opens a window (a background thread running the injected window
-    driver). The driver calls back into this service to ask the operator to
-    confirm a passkey (``_confirm_cb``, which blocks until the page answers or the
-    confirm timeout elapses) and to report the terminal result (``_report_cb``).
-    ``state`` is a snapshot the page polls; ``confirm`` answers the shown code;
-    ``stop`` closes the window now. One condition guards every field, so the
-    threaded HTTP server and the window thread never race on the state.
+    driver). The driver calls back into this service when a phone asks to pair
+    (``_request_cb``: the first request is accepted, later ones declined) and to
+    report the terminal result (``_report_cb``). ``state`` is a snapshot the page
+    polls; ``stop`` closes the window now. One condition guards every field, so
+    the threaded HTTP server and the window thread never race on the state.
     """
 
     def __init__(
@@ -106,7 +109,6 @@ class PairingService:
         *,
         run_window: Callable[..., None] = pairing.run_pairing_window,
         window_seconds: float = WINDOW_SECONDS,
-        confirm_seconds: float = CONFIRM_SECONDS,
         monotonic: Callable[[], float] = time.monotonic,
         wall_now: Callable[[], datetime] = _utc_now,
         log: Optional[logging.Logger] = None,
@@ -114,7 +116,6 @@ class PairingService:
         self._controller = controller
         self._run_window = run_window
         self._window_seconds = window_seconds
-        self._confirm_seconds = confirm_seconds
         self._monotonic = monotonic
         self._wall_now = wall_now
         self._log = log or logging.getLogger("snaphouse.pairservice")
@@ -125,7 +126,7 @@ class PairingService:
         self._passkey: Optional[str] = None
         self._device: Optional[str] = None
         self._message: Optional[str] = None
-        self._decision: Optional[bool] = None  # None while awaiting an answer
+        self._accepted = False  # the one request this window has accepted
         self._stopping = False
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -150,7 +151,7 @@ class PairingService:
             self._passkey = None
             self._device = None
             self._message = None
-            self._decision = None
+            self._accepted = False
             self._stopping = False
             self._stop_event = threading.Event()
             self._until = _iso(self._wall_now() + timedelta(seconds=self._window_seconds))
@@ -171,16 +172,12 @@ class PairingService:
             return self._snapshot_locked()
 
     def confirm(self, accept: bool) -> dict:
-        """Answer the shown code. 409 if not currently awaiting a confirmation."""
-        with self._cond:
-            if self._state != "confirm":
-                raise Conflict("not awaiting confirmation")
-            self._decision = bool(accept)
-            if not accept:
-                # Decline takes effect at once, so the returned snapshot is final.
-                self._enter_terminal_locked("declined", "You declined the pairing.")
-            self._cond.notify_all()
-            return self._snapshot_locked()
+        """Kept for API compatibility: nothing is ever awaiting a confirmation.
+
+        The window answers the first phone itself, so the state is never
+        ``confirm`` and POST /api/pair/confirm always conflicts (HTTP 409).
+        """
+        raise Conflict("not awaiting confirmation")
 
     def stop(self) -> dict:
         """Close the window now. Idempotent; always answers idle."""
@@ -197,51 +194,24 @@ class PairingService:
 
     # -- window callbacks (called from the window/reader threads) ----------- #
 
-    def _confirm_cb(self, generation: int, passkey: int, device: Optional[str]) -> bool:
-        """Enter confirm, block for the answer, and return accept/decline.
+    def _request_cb(self, generation: int, passkey: int, device: Optional[str]) -> bool:
+        """Answer a phone's pairing request: accept the first, decline the rest.
 
-        The window's reader calls this when the phone's passkey prompt arrives. It
-        shows the code (sets state=confirm) and waits for the page to answer or for
-        the confirm timeout, returning True only on an explicit accept. A stop
-        unblocks it with a decline. The generation guard ignores a prompt from a
-        window that has already been superseded.
+        The window's reader calls this when a phone's passkey prompt arrives. The
+        first request in a live window is accepted at once (the person who opened
+        the window is the one pairing) and the phone's name is recorded so the page
+        can say who is pairing; every later request, a request after a stop, and a
+        request from a superseded window are declined. The passkey is not kept.
         """
-        deadline = self._monotonic() + self._confirm_seconds
         with self._cond:
             if self._stopping or generation != self._generation:
                 return False
-            self._state = "confirm"
-            self._passkey = f"{passkey:06d}"
+            if self._accepted or self._state != "open":
+                return False
+            self._accepted = True
             self._device = device
-            self._message = None
-            self._decision = None
-            self._until = _iso(self._wall_now() + timedelta(seconds=self._confirm_seconds))
             self._cond.notify_all()
-
-            while (
-                self._decision is None
-                and not self._stopping
-                and generation == self._generation
-                and not self._stop_event.is_set()
-            ):
-                remaining = deadline - self._monotonic()
-                if remaining <= 0:
-                    break
-                self._cond.wait(timeout=remaining)
-
-            if self._stopping or generation != self._generation:
-                return False
-            if self._decision is None:
-                # Timed out, or the window closed under us while awaiting an
-                # answer: either way no one confirmed, so decline.
-                self._enter_terminal_locked(
-                    "declined", "No one confirmed the code in time."
-                )
-                return False
-            accept = self._decision
-            # On decline, confirm() already set the terminal state. On accept, the
-            # window drives the result (paired, failed) through _report_cb.
-            return accept
+            return True
 
     def _report_cb(self, generation: int, event: str, info: dict) -> None:
         """Record the window's terminal result (paired or failed) and close early."""
@@ -263,7 +233,7 @@ class PairingService:
         try:
             self._run_window(
                 self._controller,
-                confirm=lambda passkey, device: self._confirm_cb(
+                confirm=lambda passkey, device: self._request_cb(
                     generation, passkey, device
                 ),
                 report=lambda event, info: self._report_cb(generation, event, info),
@@ -280,10 +250,10 @@ class PairingService:
                 # The window closed. Settle only if this is still the current
                 # window: a superseded run must never touch the next one's state.
                 # If it never reached a terminal result, an accepted-but-incomplete
-                # confirm is a failure, and an idle open window that timed out
+                # pairing is a failure, and an idle open window that timed out
                 # returns to idle.
                 if generation == self._generation and not self._stopping:
-                    if self._state == "confirm":
+                    if self._state == "open" and self._accepted:
                         self._enter_terminal_locked(
                             "failed", "Pairing did not complete."
                         )

@@ -202,8 +202,9 @@
 
       <!-- Settings: what takes the frame, rotation, quiet hours, morning weather. -->
       <section class="screen" id="screen-settings" aria-label="Settings" hidden>
-        <!-- Pair a phone: make the hub discoverable for a short window, show the
-             6-digit code when a phone asks, and confirm or decline it. -->
+        <!-- Pair a phone: make the hub discoverable for a short window. The hub
+             accepts the first phone that asks, so there is no code to read here:
+             the person finishes on the phone and comes back for the outcome. -->
         <section id="pairing" class="section" aria-labelledby="pair-h">
           <h2 id="pair-h" class="section-h">Pair a phone</h2>
 
@@ -222,25 +223,11 @@
                shared #pair-announce region instead. -->
           <div id="pair-open" class="pair-view" hidden>
             <p id="pair-instruction" class="pair-instruction"></p>
-            <p id="pair-open-count" class="pair-count"></p>
+            <p id="pair-progress" class="pair-progress" hidden></p>
+            <p id="pair-open-count" class="pair-count" hidden>
+              Open for <span id="pair-clock" class="pair-clock"></span>
+            </p>
             <button id="pair-stop" class="btn btn-ghost" type="button">Stop</button>
-          </div>
-
-          <!-- A phone is asking: the code is the one loud element here. -->
-          <div id="pair-confirm" class="pair-view" hidden>
-            <p id="pair-confirm-intro" class="settings-note">
-              Check that this code matches the one on <span id="pair-device-name">your phone</span>.
-            </p>
-            <p id="pair-code" class="pair-code" role="img" aria-label="Pairing code">
-              <span id="pair-code-a" class="pair-code-group" aria-hidden="true"></span>
-              <span id="pair-code-b" class="pair-code-group" aria-hidden="true"></span>
-            </p>
-            <p id="pair-accept-note" class="settings-note" hidden></p>
-            <div class="pair-actions">
-              <button id="pair-accept" class="btn pair-accept" type="button">Code matches</button>
-              <button id="pair-decline" class="btn danger" type="button">Decline</button>
-            </div>
-            <p id="pair-confirm-count" class="pair-count"></p>
           </div>
 
           <!-- Contact with the pairing service is lost (it restarted or crashed):
@@ -254,7 +241,7 @@
             </div>
           </div>
 
-          <!-- After a window: paired, declined, failed, or closed, and a restart. -->
+          <!-- After a window: paired, failed, or closed with nobody paired, and a restart. -->
           <div id="pair-outcome" class="pair-view" hidden>
             <p id="pair-outcome-text" class="pair-outcome" role="status" aria-live="polite"></p>
             <p id="pair-outcome-detail" class="settings-note" hidden></p>

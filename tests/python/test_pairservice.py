@@ -3,8 +3,8 @@
 The service opens the inbound pairing window on the hub's receive adapter and
 exposes the small loopback HTTP API the room-picker page drives through nginx
 (/api/pair/). It never touches BlueZ in a test: the window driver is injected, so
-the whole state machine (idle, open, confirm, paired, declined, failed, the two
-timeouts, stop, and restart) runs in no real time against a scripted window.
+the whole state machine (idle, open, paired, failed, the window timeout, stop,
+and restart) runs in no real time against a scripted window.
 
 Two layers are exercised:
   - The PairingService state machine, driven by a fake window that calls the
@@ -82,7 +82,6 @@ def state_is(service, target):
 
 def make_service(script=None, **kwargs):
     window = ScriptedWindow(script)
-    kwargs.setdefault("confirm_seconds", 0.2)
     kwargs.setdefault("window_seconds", 5.0)
     service = pairservice.PairingService(CONTROLLER, run_window=window, **kwargs)
     return service, window
@@ -129,94 +128,98 @@ def test_start_while_open_conflicts():
     service.stop()
 
 
-def test_confirm_then_accept_pairs():
+def test_the_first_pairing_request_is_accepted_and_the_window_closes_itself():
+    # Round 2 (owner decision): the hub answers the first phone's numeric
+    # comparison itself. The page never shows a code, because switching to the
+    # browser dismisses Android's own pairing dialog.
+    answers = {}
+
     def script(confirm, report, stop):
-        accepted = confirm(123456, DEVICE)
-        if accepted:
-            report("paired", {"device": DEVICE})
+        answers["first"] = confirm(123456, DEVICE)
+        report("paired", {"device": DEVICE})
+        answers["stop_set"] = stop.is_set()
 
     service, _ = make_service(script=script)
     service.start()
-    assert wait_for(state_is(service, "confirm"))
-    snap = service.state()
-    # The passkey is a zero-padded six-digit string, present only in confirm, with
-    # the phone's reported name.
-    assert snap["passkey"] == "123456"
-    assert snap["device"] == DEVICE
-    assert snap["until"] is not None
-
-    service.confirm(True)
     assert wait_for(state_is(service, "paired"))
+    assert answers["first"] is True
     snap = service.state()
-    assert snap["passkey"] is None
     assert snap["device"] == DEVICE
+    assert snap["passkey"] is None
     assert snap["until"] is None
+    # Reporting paired also ends the window (the stop event the real window waits on).
+    assert wait_for(lambda: answers.get("stop_set") is True)
 
 
-def test_confirm_with_a_short_passkey_is_zero_padded():
-    service, _ = make_service(
-        script=lambda confirm, report, stop: confirm(42, DEVICE)
-    )
+def test_the_state_never_enters_confirm():
+    seen = []
+
+    def script(confirm, report, stop):
+        seen.append(confirm(123456, DEVICE))
+        stop.wait(0.3)
+
+    service, _ = make_service(script=script)
     service.start()
-    assert wait_for(state_is(service, "confirm"))
-    assert service.state()["passkey"] == "000042"
+    assert wait_for(lambda: seen)
+    for _ in range(20):
+        assert service.state()["state"] != "confirm"
+        time.sleep(0.005)
     service.stop()
 
 
-def test_decline_sets_declined_and_answers_no():
-    answered = {}
+def test_while_pairing_is_under_way_the_open_state_names_the_device():
+    release = threading.Event()
 
     def script(confirm, report, stop):
-        answered["accept"] = confirm(123456, DEVICE)
+        confirm(123456, DEVICE)
+        release.wait(2)
 
     service, _ = make_service(script=script)
     service.start()
-    assert wait_for(state_is(service, "confirm"))
-    snap = service.confirm(False)
-    assert snap["state"] == "declined"
-    assert wait_for(lambda: "accept" in answered)
-    assert answered["accept"] is False
-    assert service.state()["state"] == "declined"
-    assert service.state()["passkey"] is None
+    assert wait_for(lambda: service.state()["device"] == DEVICE)
+    snap = service.state()
+    assert snap["state"] == "open"
+    assert snap["passkey"] is None
+    release.set()
+    service.stop()
 
 
-def test_confirm_timeout_declines_on_its_own():
-    # A code nobody answers within the confirm timeout is declined, so a stray
-    # pairing attempt is never accepted by inaction.
-    answered = {}
+def test_a_second_pairing_request_in_the_same_window_is_declined():
+    answers = []
 
     def script(confirm, report, stop):
-        answered["accept"] = confirm(123456, DEVICE)
+        answers.append(confirm(111111, "First phone"))
+        answers.append(confirm(222222, "Second phone"))
+        answers.append(confirm(333333, "Third phone"))
+        report("paired", {"device": "First phone"})
 
-    service, _ = make_service(script=script, confirm_seconds=0.15)
+    service, _ = make_service(script=script)
     service.start()
-    assert wait_for(state_is(service, "confirm"))
-    # No one answers; the service declines after confirm_seconds.
-    assert wait_for(state_is(service, "declined"), timeout=2.0)
-    assert wait_for(lambda: "accept" in answered)
-    assert answered["accept"] is False
-    assert service.state()["message"]
+    assert wait_for(state_is(service, "paired"))
+    assert answers == [True, False, False]
+    # The declined phones never overwrite the one that was accepted.
+    assert service.state()["device"] == "First phone"
 
 
-def test_confirm_when_not_in_confirm_conflicts():
+def test_confirm_is_never_awaited_so_it_always_conflicts():
+    # POST /api/pair/confirm stays for compatibility and answers 409.
     service, _ = make_service(script=lambda confirm, report, stop: stop.wait(5))
     service.start()
     assert wait_for(state_is(service, "open"))
     with pytest.raises(pairservice.Conflict):
         service.confirm(True)
     service.stop()
+    with pytest.raises(pairservice.Conflict):
+        service.confirm(False)
 
 
 def test_window_reporting_failed_sets_failed():
     def script(confirm, report, stop):
-        accepted = confirm(123456, DEVICE)
-        if accepted:
+        if confirm(123456, DEVICE):
             report("failed", {"device": DEVICE})
 
     service, _ = make_service(script=script)
     service.start()
-    assert wait_for(state_is(service, "confirm"))
-    service.confirm(True)
     assert wait_for(state_is(service, "failed"))
     assert service.state()["message"]
     assert service.state()["passkey"] is None
@@ -241,16 +244,14 @@ def test_window_that_closes_without_pairing_returns_to_idle():
     assert wait_for(state_is(service, "idle"))
 
 
-def test_accept_but_no_result_ends_as_failed():
-    # The operator accepted, but the window ended without a paired or failed
-    # report (pairing silently did not complete). That is a failure, not a
-    # success and not idle.
+def test_accepted_but_no_result_ends_as_failed():
+    # The hub accepted the first request, but the window ended without a paired
+    # or failed report (pairing silently did not complete). That is a failure,
+    # not a success and not idle.
     service, _ = make_service(
         script=lambda confirm, report, stop: confirm(123456, DEVICE) and None
     )
     service.start()
-    assert wait_for(state_is(service, "confirm"))
-    service.confirm(True)
     assert wait_for(state_is(service, "failed"))
 
 
@@ -272,20 +273,23 @@ def test_stop_closes_the_window_and_is_idempotent():
     assert service.stop()["state"] == "idle"
 
 
-def test_stop_while_confirming_declines_the_in_flight_request():
-    answered = {}
+def test_stop_then_a_late_request_is_declined():
+    answers = []
+    stopped = threading.Event()
 
     def script(confirm, report, stop):
-        answered["accept"] = confirm(123456, DEVICE)
+        stopped.wait(2)
+        answers.append(confirm(123456, DEVICE))
 
     service, _ = make_service(script=script)
     service.start()
-    assert wait_for(state_is(service, "confirm"))
+    assert wait_for(state_is(service, "open"))
     service.stop()
-    assert wait_for(state_is(service, "idle"))
-    assert wait_for(lambda: "accept" in answered)
-    # The in-flight confirmation was answered no, never silently accepted.
-    assert answered["accept"] is False
+    stopped.set()
+    assert wait_for(lambda: answers)
+    # A request that arrives after the window was stopped is never accepted.
+    assert answers == [False]
+    assert service.state()["state"] == "idle"
 
 
 def test_a_terminal_result_stays_readable_until_the_next_start():

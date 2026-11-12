@@ -2,7 +2,7 @@
 # The hub's web pairing service (design: "Web pairing", issue #128). It opens the
 # inbound Bluetooth pairing window on the hub's receive adapter and exposes the
 # loopback HTTP API the room-picker page drives through nginx (/api/pair/) to open
-# the window and confirm the six-digit code. The CLI (`snaphouse pair phone`)
+# the window; the hub accepts the first phone that asks. The CLI (`snaphouse pair phone`)
 # shares the same window driver. LAN-only; there is no inbound access from the
 # internet (AGENTS.md).
 #

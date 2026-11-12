@@ -6,7 +6,8 @@
 #
 #   /api/pair/   the pairing window API, proxied to the loopback pairing service.
 #
-# The room picker POSTs start/confirm/stop here and polls state; without this
+# The room picker POSTs start and stop here and polls state (confirm still
+# answers 409, kept for compatibility); without this
 # block those requests fall through to the room-picker `location /` prefix and
 # nginx answers 404 (the same reason the art and frame APIs each have a block).
 # The bodies are tiny JSON, so a small upload cap is plenty. The port is the one

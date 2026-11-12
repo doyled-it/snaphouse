@@ -1596,21 +1596,19 @@ function clock12FromIso(iso) {
 // --------------------------------------------------------------------------- //
 // Pair a phone (Settings): the pure model behind the Bluetooth pairing window.
 //
-// The page starts a window, polls GET /api/pair/state about once a second while
-// a window is open or the Settings screen is visible, shows the 6-digit code
-// when a phone asks, and answers "Code matches" or "Decline". Every write POST
-// carries the X-Snaphouse guard header (apiRequest). All copy and timing lives
-// in one place; the view glue in rooms.js stays a thin DOM layer over these.
+// The page starts a window and polls GET /api/pair/state about once a second
+// while a window is open or the Settings screen is visible. The hub answers the
+// first phone's pairing request itself (a code shown here could never be read:
+// switching to the browser dismisses Android's own pairing dialog), so the page
+// shows no code and has nothing to confirm: it tells the person what to do on the
+// phone, counts the window down, and reports the outcome when they come back.
+// Every write POST carries the X-Snaphouse guard header (apiRequest). All copy and
+// timing lives in one place; the view glue in rooms.js stays a thin DOM layer.
 // --------------------------------------------------------------------------- //
 
-// The states GET /api/pair/state can report (contract). `idle` is also the safe
-// fallback for anything unexpected.
-const PAIR_STATES = ["idle", "open", "confirm", "paired", "declined", "failed"];
-
-// A passkey is exactly six digits, zero-padded. The service sends it only in
-// `confirm`; the page shows a code only then, so a passkey arriving in any other
-// state is dropped rather than shown.
-const PASSKEY_RE = /^\d{6}$/;
+// The states GET /api/pair/state can report. `idle` is also the safe fallback for
+// anything unexpected, which includes the retired `confirm` and `declined`.
+const PAIR_STATES = ["idle", "open", "paired", "failed"];
 
 // The sentence shown while a window is open, built so the speaker name is a
 // single point of change. The page cannot learn the hub's Bluetooth name today
@@ -1622,7 +1620,35 @@ export function pairInstruction(speakerName) {
     typeof speakerName === "string" && speakerName.trim().length > 0
       ? speakerName.trim()
       : "the house speaker";
-  return `On your phone, open Bluetooth, Pair new device, and tap ${speaker}.`;
+  return `Now open Bluetooth on this phone, tap Pair new device, choose ${speaker}, and tap Pair. You can stay there; come back here when it's done.`;
+}
+
+// Who is pairing right now, once the hub has accepted a phone and the window is
+// still finishing; null before that and in every other state.
+export function pairProgress(parsed) {
+  if (parsed && parsed.state === "open" && typeof parsed.device === "string" && parsed.device.length > 0) {
+    return `Pairing with ${parsed.device}.`;
+  }
+  return null;
+}
+
+// The outcome line, its detail, and its tone for a finished window. `phase` is
+// the pairPhase result: paired, failed, or closed (the window ended with nobody
+// paired). Tone is "ok", "bad", or null for a neutral line.
+export function pairOutcomeView(phase, parsed) {
+  const device = parsed && typeof parsed.device === "string" && parsed.device.length > 0 ? parsed.device : null;
+  const message = parsed && typeof parsed.message === "string" && parsed.message.length > 0 ? parsed.message : null;
+  if (phase === "paired") {
+    return {
+      text: device ? `Paired with ${device}.` : "Phone paired.",
+      detail: "It will reconnect on its own.",
+      tone: "ok",
+    };
+  }
+  if (phase === "failed") {
+    return { text: "Pairing failed.", detail: message, tone: "bad" };
+  }
+  return { text: "Nobody paired before the window closed.", detail: null, tone: null };
 }
 
 // A plain non-empty string, trimmed, or null. The device the phone reports and
@@ -1635,8 +1661,8 @@ function plainStringOrNull(value) {
 // Read GET /api/pair/state. Returns a normalized record, always with every
 // field, so the view never has to guard a missing key. A body that will not
 // parse, is not an object, or carries an unknown state collapses to idle: the
-// page then shows the start view rather than a broken one. The passkey is kept
-// only when the state is `confirm` and it is a real six-digit string.
+// page then shows the start view rather than a broken one. The passkey is always
+// dropped: the page shows no code.
 export function parsePairState(raw) {
   const data = typeof raw === "string" ? safeJsonParse(raw) : null;
   if (!data || typeof data !== "object" || Array.isArray(data)) {
@@ -1644,14 +1670,10 @@ export function parsePairState(raw) {
   }
   const state = PAIR_STATES.includes(data.state) ? data.state : "idle";
   const until = typeof data.until === "string" && data.until.length > 0 ? data.until : null;
-  const passkey =
-    state === "confirm" && typeof data.passkey === "string" && PASSKEY_RE.test(data.passkey)
-      ? data.passkey
-      : null;
   return {
     state,
     until,
-    passkey,
+    passkey: null,
     device: plainStringOrNull(data.device),
     message: plainStringOrNull(data.message),
   };
@@ -1663,12 +1685,6 @@ export function pairStartRequest() {
   return apiRequest("/api/pair/start", {});
 }
 
-// The POST that answers the code: accept true pairs, false declines. The flag is
-// coerced to a real boolean so the body always matches the service's check.
-export function pairConfirmRequest(accept) {
-  return apiRequest("/api/pair/confirm", { accept: Boolean(accept) });
-}
-
 // The POST that closes a window now (idempotent).
 export function pairStopRequest() {
   return apiRequest("/api/pair/stop", {});
@@ -1676,10 +1692,8 @@ export function pairStopRequest() {
 
 // Map a pairing POST's HTTP status and body to a result the page can act on.
 // 200/202 carry the new state. 409 is a conflict, but it means different things
-// per endpoint, so `endpoint` ("start" | "confirm" | "stop") picks the copy:
-//   - on start, a window is already open (this tab, another tab, or the CLI);
-//   - on confirm, the code is no longer waiting for an answer (the window timed
-//     out, or another answer won the race).
+// per endpoint, so `endpoint` ("start" | "stop"):
+//   - on start, a window is already open (this tab, another tab, or the CLI).
 // 403 is the guard rejecting the request. Any other non-2xx is a plain failure.
 // The service's own `error` string is used for a generic failure when present,
 // with a short fallback otherwise; the 409 copy is page copy, so the raw
@@ -1694,28 +1708,9 @@ export function interpretPairResponse(status, text, endpoint = "start") {
     return { ok: false, forbidden: true, error: reason || "The pairing service refused the request." };
   }
   if (status === 409) {
-    const error =
-      endpoint === "confirm"
-        ? "That code is no longer waiting for an answer. Checking the pairing state."
-        : "The pairing window is already open.";
-    return { ok: false, conflict: true, error };
+    return { ok: false, conflict: true, error: "The pairing window is already open." };
   }
   return { ok: false, error: reason || `The pairing service could not be reached (${status}).` };
-}
-
-// The confirm view, decided from the parsed state (I1). The page must never
-// offer "Code matches" without a real six-digit code on screen: parsePairState
-// drops a missing or malformed passkey to null but keeps the state "confirm", so
-// a confirm can be reached with no code, and accepting then approves a pairing
-// the owner never compared. Returns { code, canAccept, note }: a valid code with
-// accept allowed and no note, or no code, accept withheld, and a plain note that
-// the code did not arrive (Decline stays live either way).
-export function confirmView(parsed) {
-  const passkey = parsed && typeof parsed.passkey === "string" ? parsed.passkey : null;
-  if (passkey === null || !PASSKEY_RE.test(passkey)) {
-    return { code: null, canAccept: false, note: "The code did not arrive. Decline and try again." };
-  }
-  return { code: passkey, canAccept: true, note: null };
 }
 
 // After this many polls in a row with no good answer, the pairing service is
@@ -1732,7 +1727,7 @@ export function pairLostContact(failures) {
 }
 
 // Whether the action buttons are disabled while a POST is in flight (I3). A
-// second tap on "Code matches" or "Pair a phone" would otherwise reach the
+// second tap on "Pair a phone" would otherwise reach the
 // service as a duplicate and come back 409, painting a false error over a
 // successful result. The page disables the controls (and guards the handlers)
 // until the request settles.
@@ -1789,7 +1784,7 @@ export function pairPhase(parsed, { started } = {}) {
 
 // Whether the page may poll GET /api/pair/state. It polls only while the tab is
 // visible, and then only when the Settings screen is showing or a window is live
-// (open or confirm). A hidden tab never polls, so the page never polls in the
+// (open). A hidden tab never polls, so the page never polls in the
 // background (contract).
 export function shouldPollPair({ documentVisible, settingsVisible, windowActive } = {}) {
   return Boolean(documentVisible) && Boolean(settingsVisible || windowActive);

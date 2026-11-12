@@ -60,21 +60,17 @@ import {
   frameUrls,
   artCommandBody,
   frameQuietHoursBody,
-  parsePairState,
-  pairStartRequest,
-  pairConfirmRequest,
-  pairStopRequest,
-  interpretPairResponse,
   pairCountdown,
   formatCountdown,
   pairPhase,
   pairInstruction,
+  pairProgress,
+  pairOutcomeView,
   shouldPollPair,
-  confirmView,
-  pairLostContact,
   pairControlsDisabled,
   pairCountdownCue,
 } from "./rooms-model.js";
+import { createPairController } from "./pair-controller.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
 // is down, and each Server.GetStatus is a full status read, so a slow cadence
@@ -176,18 +172,10 @@ const els = {
   pairStart: document.getElementById("pair-start"),
   pairOpen: document.getElementById("pair-open"),
   pairInstruction: document.getElementById("pair-instruction"),
+  pairProgress: document.getElementById("pair-progress"),
   pairOpenCount: document.getElementById("pair-open-count"),
+  pairClock: document.getElementById("pair-clock"),
   pairStop: document.getElementById("pair-stop"),
-  pairConfirm: document.getElementById("pair-confirm"),
-  pairConfirmIntro: document.getElementById("pair-confirm-intro"),
-  pairDeviceName: document.getElementById("pair-device-name"),
-  pairCode: document.getElementById("pair-code"),
-  pairCodeA: document.getElementById("pair-code-a"),
-  pairCodeB: document.getElementById("pair-code-b"),
-  pairAcceptNote: document.getElementById("pair-accept-note"),
-  pairAccept: document.getElementById("pair-accept"),
-  pairDecline: document.getElementById("pair-decline"),
-  pairConfirmCount: document.getElementById("pair-confirm-count"),
   pairLost: document.getElementById("pair-lost"),
   pairRetry: document.getElementById("pair-retry"),
   pairClose: document.getElementById("pair-close"),
@@ -316,21 +304,11 @@ const state = {
   frameControl: null,
   fsKindsBuilt: false,
 
-  // The pairing window: the last parsed GET /api/pair/state, whether this page
-  // opened a window (so a window that times out back to idle reads as closed,
-  // not as the start view), and whether a start/confirm/stop POST is in flight
-  // (a poll never overwrites an action's own result mid-flight).
-  pair: {
-    parsed: { state: "idle", until: null, passkey: null, device: null, message: null },
-    started: false,
-    pending: false,
-    // Consecutive failed polls, and whether the service is now treated as gone
-    // (so the page stops polling and shows the lost-contact view). `lastCue` is
-    // the coarse countdown cue last spoken, so each is announced only once.
-    failures: 0,
-    lost: false,
-    lastCue: null,
-  },
+  // The pairing window lives in the pair controller (pair-controller.js): the
+  // last service answer, whether this page opened a window, whether a POST is in
+  // flight, and lost contact. `lastCue` is the coarse countdown cue last spoken,
+  // so each is announced only once.
+  pair: { lastCue: null },
   // A fingerprint of the frame context the mirror and history were last fetched
   // for (the legacy flag, the known frame ids, and the chosen frame). When it
   // changes, the per-frame URLs changed, so those must be re-fetched even if the
@@ -1309,36 +1287,39 @@ function clearWeatherError() {
 }
 
 // --------------------------------------------------------------------------- //
-// Pair a phone: start a Bluetooth window, show the 6-digit code when a phone
-// asks, and confirm or decline it. The state comes from GET /api/pair/state,
-// polled about once a second while a window is live or the Settings screen is
-// visible (never in the background). Every write POST carries the guard header.
+// Pair a phone: start a Bluetooth window, tell the person what to do on the
+// phone, and report the outcome when they come back. The hub accepts the first
+// phone that asks, so there is no code here. The state comes from GET
+// /api/pair/state, polled about once a second while a window is live or the
+// Settings screen is visible (never in the background). The requests and the
+// state live in the pair controller; this is the thin view over it.
 // --------------------------------------------------------------------------- //
 
-const PAIR_OUTCOME_PHASES = ["paired", "declined", "failed", "closed"];
+const PAIR_OUTCOME_PHASES = ["paired", "failed", "closed"];
+
+const pair = createPairController({
+  fetch: (url, init) => fetch(url, init),
+  onChange: () => renderPairing(),
+});
 
 function wirePairing() {
-  els.pairStart.addEventListener("click", startPairing);
-  els.pairAgain.addEventListener("click", startPairing);
-  els.pairStop.addEventListener("click", stopPairing);
-  els.pairAccept.addEventListener("click", () => confirmPairing(true));
-  els.pairDecline.addEventListener("click", () => confirmPairing(false));
-  els.pairRetry.addEventListener("click", retryPairing);
-  els.pairClose.addEventListener("click", closePairing);
+  els.pairStart.addEventListener("click", () => pair.start());
+  els.pairAgain.addEventListener("click", () => pair.start());
+  els.pairStop.addEventListener("click", () => pair.stop());
+  els.pairRetry.addEventListener("click", () => pair.retry());
+  els.pairClose.addEventListener("click", () => pair.close());
 }
 
-// Whether a window is live (open or waiting for the code). A live window is
-// polled even off the Settings screen, so returning to Settings shows its true
-// state rather than a stale one.
+// Whether a window is live. A live window is polled even off the Settings
+// screen, so returning to Settings shows its true state rather than a stale one.
 function pairWindowActive() {
-  const current = state.pair.parsed.state;
-  return current === "open" || current === "confirm";
+  return pair.state.parsed.state === "open";
 }
 
 function pairPollAllowed() {
   // Once contact is lost (a bounded run of failed polls), stop polling: the
   // lost-contact view owns the section until the owner retries or closes.
-  if (state.pair.lost) {
+  if (pair.state.lost) {
     return false;
   }
   return shouldPollPair({
@@ -1349,238 +1330,76 @@ function pairPollAllowed() {
 }
 
 // The once-a-second tick: re-render so the countdown counts down smoothly, and
-// poll the state when allowed.
+// poll the state when allowed. A poll never waits for a POST in flight.
 function pairTick() {
   renderPairing();
-  if (pairPollAllowed()) {
-    pollPairing();
-  }
+  maybePollPairing();
 }
 
 function maybePollPairing() {
   if (pairPollAllowed()) {
-    pollPairing();
-  }
-}
-
-// Read the current state. A POST in flight owns the state, so a poll never
-// overwrites an action's own result mid-flight. A single transient error keeps
-// the last good render, but a bounded run of them (a 5xx, a dropped connection,
-// or no answer) is a dead service: the counter trips the lost-contact view
-// rather than leaving a live-looking code with a working "Code matches" (I2).
-async function pollPairing() {
-  if (state.pair.pending) {
-    return;
-  }
-  try {
-    const response = await fetch("/api/pair/state", { cache: "no-store" });
-    if (!response.ok) {
-      registerPollFailure();
-      return;
-    }
-    state.pair.parsed = parsePairState(await response.text());
-    // A fresh state arrived, so any stale action error is no longer true (I3).
-    state.pair.failures = 0;
-    state.pair.lost = false;
-    clearPairError();
-    renderPairing();
-  } catch (err) {
-    registerPollFailure();
-  }
-}
-
-// Count one failed poll and, once the bound is reached, mark the service lost so
-// the page stops polling and shows the lost-contact view.
-function registerPollFailure() {
-  state.pair.failures += 1;
-  if (pairLostContact(state.pair.failures)) {
-    state.pair.lost = true;
-  }
-  renderPairing();
-}
-
-// Send one pairing POST and interpret the reply. `endpoint` picks the 409 copy
-// (start vs confirm). A network failure returns a plain error so the caller can
-// show it without throwing. Setting pending re-renders at once so the action
-// buttons disable while the request is in flight (I3).
-async function pairPost(request, endpoint) {
-  state.pair.pending = true;
-  renderPairing();
-  try {
-    const response = await fetch(request.url, request.init);
-    return interpretPairResponse(response.status, await response.text(), endpoint);
-  } catch (err) {
-    return { ok: false, error: "Could not reach the pairing service." };
-  } finally {
-    state.pair.pending = false;
-  }
-}
-
-async function startPairing() {
-  // A second tap while the first is in flight does nothing: it would otherwise
-  // reach the service as a duplicate and come back 409 as a false error (I3).
-  if (state.pair.pending) {
-    return;
-  }
-  clearPairError();
-  state.pair.failures = 0;
-  state.pair.lost = false;
-  const result = await pairPost(pairStartRequest(), "start");
-  if (!result.ok) {
-    // A 409 means a window is already open (this tab, another tab, or the CLI).
-    // That is not a failure: adopt the live state silently rather than painting
-    // a red error (I3).
-    if (result.conflict) {
-      state.pair.started = true;
-      await pollPairing();
-      return;
-    }
-    showPairError(result.error);
-    return;
-  }
-  state.pair.started = true;
-  state.pair.parsed = result.state;
-  renderPairing();
-}
-
-async function confirmPairing(accept) {
-  if (state.pair.pending) {
-    return;
-  }
-  clearPairError();
-  const result = await pairPost(pairConfirmRequest(accept), "confirm");
-  if (!result.ok) {
-    showPairError(result.error);
-    // A 409 means the window already moved on (timed out, or another answer won
-    // the race); read where it actually is. The poll clears the error on the
-    // fresh state, so the message only lingers if the service is also gone.
-    if (result.conflict) {
-      await pollPairing();
-    }
-    return;
-  }
-  state.pair.parsed = result.state;
-  renderPairing();
-}
-
-async function stopPairing() {
-  if (state.pair.pending) {
-    return;
-  }
-  clearPairError();
-  const result = await pairPost(pairStopRequest(), "stop");
-  if (!result.ok) {
-    showPairError(result.error);
-    return;
-  }
-  state.pair.parsed = result.state;
-  renderPairing();
-}
-
-// Try the pairing service again after contact was lost: reset the failure count
-// and poll at once, so a service that has come back repaints its real state.
-async function retryPairing() {
-  state.pair.failures = 0;
-  state.pair.lost = false;
-  clearPairError();
-  renderPairing();
-  await pollPairing();
-}
-
-// Give up on a lost window: return to the start view locally and ask the hub to
-// close the window too, best effort (it may still be unreachable, and the hub
-// closes the window on its own timeout regardless).
-async function closePairing() {
-  state.pair.failures = 0;
-  state.pair.lost = false;
-  state.pair.started = false;
-  state.pair.parsed = { state: "idle", until: null, passkey: null, device: null, message: null };
-  clearPairError();
-  renderPairing();
-  const request = pairStopRequest();
-  try {
-    await fetch(request.url, request.init);
-  } catch (err) {
-    // Already gave up; nothing more to do if the stop cannot be delivered.
+    pair.poll();
   }
 }
 
 // Paint the one view the current state calls for and hide the rest. Re-run every
 // second, so it only sets text and toggles `hidden`. When contact is lost the
 // lost-contact view takes over and every live view is hidden, so the page never
-// leaves a dead window or a live-looking code on screen (I2).
+// leaves a dead window on screen.
 function renderPairing() {
-  const parsed = state.pair.parsed;
-  const lost = state.pair.lost;
-  const phase = lost ? null : pairPhase(parsed, { started: state.pair.started });
-  const now = Date.now();
+  const parsed = pair.state.parsed;
+  const lost = pair.state.lost;
+  const phase = lost ? null : pairPhase(parsed, { started: pair.state.started });
 
   els.pairLost.hidden = !lost;
   els.pairIdle.hidden = lost || phase !== "idle";
   els.pairOpen.hidden = lost || phase !== "open";
-  els.pairConfirm.hidden = lost || phase !== "confirm";
   els.pairOutcome.hidden = lost || !PAIR_OUTCOME_PHASES.includes(phase);
 
-  // A coarse, once-only spoken cue for the active countdown (I4); null elsewhere.
+  // A coarse, once-only spoken cue for the active countdown; null elsewhere.
   let cue = null;
   if (phase === "open") {
     els.pairInstruction.textContent = pairInstruction();
-    cue = pairCountdownCue(setPairCount(els.pairOpenCount, parsed.until, now, "Discoverable for"));
-  } else if (phase === "confirm") {
-    renderConfirm(parsed, now);
-    cue = pairCountdownCue(setPairCount(els.pairConfirmCount, parsed.until, now, "Declines on its own in"));
+    const progress = pairProgress(parsed);
+    els.pairProgress.hidden = progress === null;
+    els.pairProgress.textContent = progress || "";
+    cue = pairCountdownCue(setPairCount(parsed.until, Date.now()));
   } else if (!els.pairOutcome.hidden) {
     renderPairOutcome(phase, parsed);
   }
   announcePair(cue);
 
+  if (pair.state.error) {
+    els.pairError.textContent = pair.state.error;
+    els.pairError.hidden = false;
+  } else {
+    els.pairError.hidden = true;
+    els.pairError.textContent = "";
+  }
+
   // A request in flight disables every action button, so a double tap cannot
-  // reach the service as a duplicate (I3); "Code matches" is also disabled with
-  // no valid code on screen (I1).
-  const disabled = pairControlsDisabled(state.pair.pending);
+  // reach the service as a duplicate.
+  const disabled = pairControlsDisabled(pair.state.pending);
   els.pairStart.disabled = disabled;
   els.pairAgain.disabled = disabled;
   els.pairStop.disabled = disabled;
-  els.pairDecline.disabled = disabled;
   els.pairRetry.disabled = disabled;
   els.pairClose.disabled = disabled;
 }
 
-// The confirm view. "Code matches" is offered only with a real six-digit code on
-// screen; without one (the passkey never arrived or was malformed) the code and
-// accept are hidden and a plain note stands in their place, so the owner can
-// never approve a pairing they did not compare (I1). Decline stays live.
-function renderConfirm(parsed, now) {
-  const view = confirmView(parsed);
-  els.pairDeviceName.textContent = parsed.device || "your phone";
-  const hasCode = view.code !== null;
-  els.pairConfirmIntro.hidden = !hasCode;
-  els.pairCode.hidden = !hasCode;
-  els.pairAccept.hidden = !view.canAccept;
-  els.pairAccept.disabled = pairControlsDisabled(state.pair.pending) || !view.canAccept;
-  els.pairAcceptNote.hidden = view.note === null;
-  els.pairAcceptNote.textContent = view.note || "";
-  renderPairCode(view.code);
-}
-
-// Set a countdown line like "Discoverable for 1:58." and return the whole
-// seconds left (or null), so the caller can derive the spoken cue. The line is
-// hidden when there is no usable deadline so the UI never shows a stuck 0:00.
-function setPairCount(node, until, now, label) {
+// Set the countdown figure and return the whole seconds left (or null), so the
+// caller can derive the spoken cue. The line is hidden when there is no usable
+// deadline so the UI never shows a stuck 0:00.
+function setPairCount(until, now) {
   const seconds = pairCountdown(until, now);
-  if (seconds === null) {
-    node.hidden = true;
-    node.textContent = "";
-    return null;
-  }
-  node.hidden = false;
-  node.textContent = `${label} ${formatCountdown(seconds)}.`;
+  els.pairOpenCount.hidden = seconds === null;
+  els.pairClock.textContent = seconds === null ? "" : formatCountdown(seconds);
   return seconds;
 }
 
 // Speak a coarse countdown cue through the dedicated polite region, once each:
 // the cue only changes at the marks, so a reader hears "30 seconds left." once
-// and is otherwise left to the code, not a per-second tick (I4).
+// and is otherwise left alone, not read a per-second tick.
 function announcePair(cue) {
   if (cue === state.pair.lastCue) {
     return;
@@ -1589,48 +1408,15 @@ function announcePair(cue) {
   els.pairAnnounce.textContent = cue || "";
 }
 
-// The 6-digit code, split into two groups of three for the eye, with an
-// accessible label that reads each digit in turn. A null or malformed code
-// clears the groups (the view hides the element in that case).
-function renderPairCode(passkey) {
-  const code = typeof passkey === "string" && /^\d{6}$/.test(passkey) ? passkey : "";
-  els.pairCodeA.textContent = code.slice(0, 3);
-  els.pairCodeB.textContent = code.slice(3);
-  els.pairCode.setAttribute(
-    "aria-label",
-    code ? `Pairing code ${code.split("").join(" ")}` : "Pairing code",
-  );
-}
-
 function renderPairOutcome(phase, parsed) {
+  const view = pairOutcomeView(phase, parsed);
   els.pairOutcomeText.classList.remove("ok", "bad");
-  els.pairOutcomeDetail.hidden = true;
-  els.pairOutcomeDetail.textContent = "";
-  if (phase === "paired") {
-    els.pairOutcomeText.textContent = parsed.device ? `Paired with ${parsed.device}.` : "Phone paired.";
-    els.pairOutcomeText.classList.add("ok");
-  } else if (phase === "declined") {
-    els.pairOutcomeText.textContent = "Pairing declined.";
-  } else if (phase === "failed") {
-    els.pairOutcomeText.textContent = "Pairing failed.";
-    els.pairOutcomeText.classList.add("bad");
-    if (parsed.message) {
-      els.pairOutcomeDetail.textContent = parsed.message;
-      els.pairOutcomeDetail.hidden = false;
-    }
-  } else {
-    els.pairOutcomeText.textContent = "Pairing window closed.";
+  if (view.tone) {
+    els.pairOutcomeText.classList.add(view.tone);
   }
-}
-
-function showPairError(message) {
-  els.pairError.textContent = message;
-  els.pairError.hidden = false;
-}
-
-function clearPairError() {
-  els.pairError.hidden = true;
-  els.pairError.textContent = "";
+  els.pairOutcomeText.textContent = view.text;
+  els.pairOutcomeDetail.hidden = view.detail === null;
+  els.pairOutcomeDetail.textContent = view.detail || "";
 }
 
 // --------------------------------------------------------------------------- //

@@ -4,11 +4,12 @@
 // These cover the pure functions behind the pairing window, with no DOM and no
 // network, the same split as the rest of the room model:
 //   - parsePairState: read GET /api/pair/state, tolerating malformed or missing
-//     fields and never trusting a passkey outside the confirm state.
-//   - pairStartRequest / pairConfirmRequest / pairStopRequest: the POST requests,
+//     fields. The page never shows a code (the hub answers the first phone
+//     itself), so a passkey is always dropped.
+//   - pairStartRequest / pairStopRequest: the POST requests,
 //     each carrying the X-Snaphouse guard header and the right JSON body.
 //   - interpretPairResponse: map an HTTP status and body to a result, including
-//     403 (guard) and 409 (window already open, or not in confirm).
+//     403 (guard) and 409 (window already open).
 //   - pairCountdown / formatCountdown: seconds left until a deadline, and mm:ss.
 //   - pairPhase: reduce a parsed state plus "did we start a window" to a phase,
 //     so a window that times out back to idle reads as closed, not as the start.
@@ -21,15 +22,15 @@ import assert from "node:assert/strict";
 import {
   parsePairState,
   pairStartRequest,
-  pairConfirmRequest,
   pairStopRequest,
   interpretPairResponse,
   pairCountdown,
   formatCountdown,
   pairPhase,
   pairInstruction,
+  pairProgress,
+  pairOutcomeView,
   shouldPollPair,
-  confirmView,
   pairLostContact,
   MAX_PAIR_POLL_FAILURES,
   pairControlsDisabled,
@@ -55,23 +56,18 @@ test("parsePairState reads an open window", () => {
   });
 });
 
-test("parsePairState keeps a 6-digit passkey only in confirm", () => {
-  const confirm = parsePairState(
-    JSON.stringify({ state: "confirm", until: "2026-11-12T10:01:00Z", passkey: "012345", device: "Pixel 8", message: null }),
-  );
-  assert.equal(confirm.passkey, "012345");
-  assert.equal(confirm.device, "Pixel 8");
-
-  // A passkey leaking in any other state is dropped: the UI shows a code only in
-  // confirm, and the service only sends one then.
-  const open = parsePairState(JSON.stringify({ state: "open", passkey: "123456" }));
-  assert.equal(open.passkey, null);
+test("parsePairState never keeps a passkey: the page shows no code", () => {
+  // The service may still report one, but the hub answers the first phone itself,
+  // so the page has nothing to compare and must not display it.
+  for (const state of ["open", "paired", "failed"]) {
+    const got = parsePairState(JSON.stringify({ state, passkey: "123456", device: "Pixel 8" }));
+    assert.equal(got.passkey, null, `${state} must drop the passkey`);
+  }
 });
 
-test("parsePairState rejects a passkey that is not six digits", () => {
-  for (const bad of ["12345", "1234567", "12a456", "", "  ", 123456, null]) {
-    const got = parsePairState(JSON.stringify({ state: "confirm", passkey: bad }));
-    assert.equal(got.passkey, null, `passkey ${JSON.stringify(bad)} should be dropped`);
+test("parsePairState reads the removed confirm and declined states as idle", () => {
+  for (const state of ["confirm", "declined"]) {
+    assert.deepEqual(parsePairState(JSON.stringify({ state, passkey: "123456" })), IDLE);
   }
 });
 
@@ -116,21 +112,6 @@ test("pairStartRequest posts to start with the guard header and an empty body", 
   assert.deepEqual(JSON.parse(init.body), {});
 });
 
-test("pairConfirmRequest posts the accept flag as a boolean", () => {
-  const yes = pairConfirmRequest(true);
-  assert.equal(yes.url, "/api/pair/confirm");
-  assert.equal(yes.init.headers["X-Snaphouse"], "1");
-  assert.deepEqual(JSON.parse(yes.init.body), { accept: true });
-
-  const no = pairConfirmRequest(false);
-  assert.deepEqual(JSON.parse(no.init.body), { accept: false });
-
-  // A truthy or falsy non-boolean is coerced, so the body is always a real
-  // boolean the service's 400 check accepts.
-  assert.deepEqual(JSON.parse(pairConfirmRequest(1).init.body), { accept: true });
-  assert.deepEqual(JSON.parse(pairConfirmRequest(undefined).init.body), { accept: false });
-});
-
 test("pairStopRequest posts to stop with the guard header", () => {
   const { url, init } = pairStopRequest();
   assert.equal(url, "/api/pair/stop");
@@ -166,17 +147,6 @@ test("interpretPairResponse flags a 409 on start as the window already being ope
   const bare = interpretPairResponse(409, "");
   assert.equal(bare.conflict, true);
   assert.equal(bare.error, "The pairing window is already open.");
-});
-
-test("interpretPairResponse gives a 409 on confirm its own copy (I5)", () => {
-  // The contract defines the 409 body only for start, so a 409 on confirm (the
-  // window timed out or another answer won the race) must not read as if start
-  // failed. It says the code is no longer waiting and that the page is checking.
-  const got = interpretPairResponse(409, "", "confirm");
-  assert.equal(got.ok, false);
-  assert.equal(got.conflict, true);
-  assert.match(got.error, /no longer waiting for an answer/);
-  assert.doesNotMatch(got.error, /already open/);
 });
 
 test("interpretPairResponse flags a 403 from the guard", () => {
@@ -245,7 +215,7 @@ test("formatCountdown treats a missing or negative value as zero", () => {
 // --------------------------------------------------------------------------- #
 
 test("pairPhase passes through the live and terminal states", () => {
-  for (const state of ["open", "confirm", "paired", "declined", "failed"]) {
+  for (const state of ["open", "paired", "failed"]) {
     assert.equal(pairPhase({ state }, { started: true }), state);
     assert.equal(pairPhase({ state }, { started: false }), state);
   }
@@ -260,17 +230,43 @@ test("pairPhase reads idle as the start before a window, and closed after one", 
 // pairInstruction / shouldPollPair
 // --------------------------------------------------------------------------- #
 
-test("pairInstruction names the speaker, falling back to the house speaker", () => {
+test("pairInstruction tells the person to finish on the phone and come back", () => {
   assert.equal(
     pairInstruction("Living Room"),
-    "On your phone, open Bluetooth, Pair new device, and tap Living Room.",
+    "Now open Bluetooth on this phone, tap Pair new device, choose Living Room, and tap Pair. You can stay there; come back here when it's done.",
   );
   for (const none of ["", "  ", null, undefined, 5]) {
     assert.equal(
       pairInstruction(none),
-      "On your phone, open Bluetooth, Pair new device, and tap the house speaker.",
+      "Now open Bluetooth on this phone, tap Pair new device, choose the house speaker, and tap Pair. You can stay there; come back here when it's done.",
     );
   }
+});
+
+test("pairProgress names the phone once it is being paired, and is silent before", () => {
+  assert.equal(pairProgress({ state: "open", device: null }), null);
+  assert.equal(pairProgress({ state: "open", device: "Pixel 8" }), "Pairing with Pixel 8.");
+  assert.equal(pairProgress({ state: "paired", device: "Pixel 8" }), null);
+});
+
+test("pairOutcomeView reads paired, closed with nobody, and failed", () => {
+  assert.deepEqual(pairOutcomeView("paired", { device: "Pixel 8", message: null }), {
+    text: "Paired with Pixel 8.",
+    detail: "It will reconnect on its own.",
+    tone: "ok",
+  });
+  assert.equal(pairOutcomeView("paired", { device: null }).text, "Phone paired.");
+  assert.deepEqual(pairOutcomeView("closed", {}), {
+    text: "Nobody paired before the window closed.",
+    detail: null,
+    tone: null,
+  });
+  assert.deepEqual(pairOutcomeView("failed", { message: "Pairing did not complete." }), {
+    text: "Pairing failed.",
+    detail: "Pairing did not complete.",
+    tone: "bad",
+  });
+  assert.equal(pairOutcomeView("failed", { message: null }).detail, null);
 });
 
 test("shouldPollPair polls only while visible, and only with the screen or a live window", () => {
@@ -282,29 +278,6 @@ test("shouldPollPair polls only while visible, and only with the screen or a liv
   assert.equal(shouldPollPair({ documentVisible: true, settingsVisible: false, windowActive: false }), false);
   // Hidden tab never polls, even with a live window.
   assert.equal(shouldPollPair({ documentVisible: false, settingsVisible: true, windowActive: true }), false);
-});
-
-// --------------------------------------------------------------------------- #
-// confirmView: never offer accept without a valid code on screen (I1)
-// --------------------------------------------------------------------------- #
-
-test("confirmView offers accept only with a valid six-digit code", () => {
-  const good = confirmView({ state: "confirm", passkey: "012345", device: "Pixel 8" });
-  assert.equal(good.code, "012345");
-  assert.equal(good.canAccept, true);
-  assert.equal(good.note, null);
-});
-
-test("confirmView hides the code and accept when the passkey is missing or malformed", () => {
-  // parsePairState drops a bad passkey to null but keeps state "confirm", so the
-  // confirm view can be reached with no code. Accept must not be offered then:
-  // the user could otherwise approve a pairing they never compared.
-  for (const bad of [null, undefined, "", "12345", "1234567", "12a456"]) {
-    const view = confirmView({ state: "confirm", passkey: bad });
-    assert.equal(view.code, null, `passkey ${JSON.stringify(bad)} should show no code`);
-    assert.equal(view.canAccept, false, `passkey ${JSON.stringify(bad)} must not allow accept`);
-    assert.ok(view.note && view.note.length > 0, "a bad code gives a plain note");
-  }
 });
 
 // --------------------------------------------------------------------------- #

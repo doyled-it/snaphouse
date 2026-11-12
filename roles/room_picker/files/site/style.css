@@ -1415,39 +1415,31 @@ a.row-title {
   font-variant-numeric: tabular-nums;
 }
 
-/* The code is the unmistakable hero of this section: large figures on paper, set
-   in two groups of three and widely tracked so each digit reads on its own. The
-   negative right margin absorbs the trailing letter-spacing on the last digit, so
-   the code's visual left edge still lines up with the buttons below it. */
-.pair-code {
-  display: flex;
-  gap: 0.42em;
-  margin: 2px -0.16em 2px 0;
+/* The countdown is the one loud element here: the window is short, and the
+   person is away on their phone, so on return the figure says at a glance how
+   long it has left. Tabular figures keep it from jittering as it ticks. */
+.pair-clock {
+  display: block;
+  margin-top: 2px;
   color: var(--ink);
-  font-size: 3.5rem;
+  font-size: 2.75rem;
   font-weight: 700;
   line-height: 1.1;
-  letter-spacing: 0.16em;
   font-variant-numeric: tabular-nums;
+}
+
+/* Who is pairing, once the hub has accepted a phone: it appears only for the few
+   seconds pairing takes, so it reads as news, not as standing text. */
+.pair-progress {
+  margin: 0;
+  color: var(--green-text);
+  font-weight: 600;
 }
 
 .pair-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-}
-
-/* The decisive accept is the primary action: filled in the selected-control
-   blue, the same token the room sliders and enabled folders use. */
-.pair-accept {
-  background: var(--blue);
-  color: var(--on-blue);
-  border-color: var(--blue);
-}
-
-.pair-accept:hover {
-  border-color: var(--blue);
-  filter: brightness(0.96);
 }
 
 .pair-outcome {
