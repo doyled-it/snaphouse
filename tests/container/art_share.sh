@@ -60,6 +60,7 @@ mkdir -p "${hb_stub}/deploy"
 cat > "${hb_stub}/deploy/install.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+id homebody >/dev/null 2>&1 || useradd --system --home-dir /var/lib/homebody homebody
 mkdir -p /etc/homebody
 mkdir -p /var/lib/homebody/update
 touch /var/lib/homebody/update/update.state

@@ -39,6 +39,22 @@
     chdir: /opt/homebody
     creates: /var/lib/homebody/update/update.state
 
+- name: Create the CHIP /data directory the Matter unit binds onto /data
+  ansible.builtin.file:
+    path: /var/lib/homebody/chip-data
+    state: directory
+    owner: homebody
+    group: homebody
+    mode: "0750"
+
+- name: Create the PAA root certificate directory for the Matter controller
+  ansible.builtin.file:
+    path: /var/lib/homebody/paa-root-certs
+    state: directory
+    owner: homebody
+    group: homebody
+    mode: "0750"
+
 - name: Ensure the systemd unit directory exists
   ansible.builtin.file:
     path: /etc/systemd/system

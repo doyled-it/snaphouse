@@ -49,6 +49,7 @@ TOML
 cat > "${stub}/deploy/install.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+id homebody >/dev/null 2>&1 || useradd --system --home-dir /var/lib/homebody homebody
 mkdir -p /etc/homebody
 if [ ! -f /etc/homebody/local.toml ]; then
     cp "$(dirname "$0")/local.example.toml" /etc/homebody/local.toml

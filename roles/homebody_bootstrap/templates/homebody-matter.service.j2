@@ -20,7 +20,7 @@ Wants=network-online.target
 Type=simple
 User=homebody
 Group=homebody
-ExecStart=/opt/homebody/.venv/bin/matter-server --storage-path /var/lib/homebody/matter --port 5580 --listen-address 127.0.0.1
+ExecStart=/opt/homebody/.venv/bin/matter-server --storage-path /var/lib/homebody/matter --port 5580 --listen-address 127.0.0.1 --paa-root-cert-dir /var/lib/homebody/paa-root-certs
 Restart=always
 RestartSec=5
 
@@ -33,6 +33,14 @@ ProtectSystem=strict
 NoNewPrivileges=yes
 PrivateTmp=yes
 ReadWritePaths=/var/lib/homebody
+# The CHIP SDK writes its factory config under a hard-coded /data (Home
+# Assistant's container provides it; a bare host does not). Bind a homebody-owned
+# directory there. The role creates it (and the PAA root certificate directory
+# passed on the command line, which python-matter-server would otherwise put in
+# its read-only package directory) before this unit starts. Explicit role-made
+# directories rather than StateDirectory=, which would also chown and chmod the
+# homebody-owned /var/lib/homebody parent the installer manages.
+BindPaths=/var/lib/homebody/chip-data:/data
 
 [Install]
 WantedBy=multi-user.target
