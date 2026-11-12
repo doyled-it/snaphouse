@@ -102,6 +102,11 @@ To swap adapters, plug in the new one, set `bt_receive_adapter` in the untracked
 then run `snaphouse pair phone` to pair the phone to it. A different chipset may need a
 different firmware package.
 
+The receive adapter advertises itself to phones as the house stream name ("House"). To use a
+household-specific Bluetooth name instead, set `bt_receive_alias` in the untracked
+`/etc/snaphouse/local.yml` (see `local.example.yml`). It is optional, an empty value means the
+default, and it changes the Bluetooth name only: AirPlay and the stream names stay as they are.
+
 ## Now playing
 
 The hub runs a small service, `snaphouse-nowplaying`, that is the single source of

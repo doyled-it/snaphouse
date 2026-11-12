@@ -18,6 +18,11 @@
 # bt_receive_adapter: ""
 # bt_send_adapter: ""
 
+# Optional. The name a phone sees for the hub's Bluetooth speaker. Leave unset
+# or empty to use the house stream name ("House"). Affects Bluetooth only;
+# AirPlay and the stream names are unchanged.
+# bt_receive_alias: "Living Room Speaker"
+
 # Paired speaker addresses, written by `snaphouse pair speaker <name>`. Leave the
 # values empty until pairing fills them in.
 speakers:
