@@ -182,7 +182,7 @@ def test_pairing_window_trusts_only_devices_paired_during_the_window():
 
     def session(commands, timeout=None):
         sessions.append(list(commands))
-        if "paired-devices" in commands:
+        if "devices Paired" in commands:
             return next(paired_outputs)
         return ""
 
@@ -204,7 +204,7 @@ def test_pairing_window_trusts_nothing_when_the_opening_snapshot_fails():
 
     def session(commands, timeout=None):
         sessions.append(list(commands))
-        if "paired-devices" in commands:
+        if "devices Paired" in commands:
             raise RuntimeError("bluetoothctl unavailable")
         return ""
 
@@ -334,7 +334,7 @@ def test_pairing_window_raises_but_still_closes_on_the_right_adapter_when_select
 
     def session(commands, timeout=None):
         sessions.append(list(commands))
-        if "paired-devices" in commands:
+        if "devices Paired" in commands:
             return ""  # the opening snapshot reads cleanly
         if "show" in commands:
             # The select preflight cannot select the adapter.
@@ -504,7 +504,7 @@ def test_named_devices_deduplicates_repeated_entries():
 
 
 def test_paired_devices_reads_addresses_through_ansi_and_dash_names():
-    # The trust path diffs paired-devices snapshots by address, so this parse must
+    # The trust path diffs devices Paired snapshots by address, so this parse must
     # survive the same ANSI colour and dash-form names that #40 fixed in
     # _named_devices. If it does not, both snapshots come back empty, _trust_new
     # sees no new device, and the phone just paired in the window is never trusted
@@ -683,7 +683,7 @@ def test_trusting_a_new_phone_prints_no_address(capsys):
     calls = {"n": 0}
 
     def session(commands, timeout=None):
-        if "paired-devices" in commands:
+        if "devices Paired" in commands:
             calls["n"] += 1
             return "" if calls["n"] == 1 else f"Device {phone} Pat's Phone\n"
         return ""
@@ -831,7 +831,7 @@ def _run_with_lines(lines, *, paired_before, paired_after=None):
 
     def session(commands, timeout=None):
         sessions.append(list(commands))
-        if "paired-devices" in commands:
+        if "devices Paired" in commands:
             return next(snapshots)
         return ""
 
@@ -974,3 +974,20 @@ def test_with_no_device_known_to_be_connecting_nothing_is_removed():
     )
     assert not any(c.startswith("remove ") for c in proc.sent)
     assert [event for event, _ in reports] == ["failed"]
+
+
+def test_the_paired_snapshot_asks_bluez_for_devices_paired_and_never_paired_devices():
+    # The trust path's paired snapshot must send `devices Paired`: BlueZ 5.66
+    # removed `paired-devices` and prints nothing for it (issue #136). Pin both
+    # sides: the new command is sent, and the removed one is never sent again.
+    sessions: list[list[str]] = []
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        return ""
+
+    _run(session, FakeProc(exited=True), FakeClock(), duration=2.0)
+
+    sent = [command for s in sessions for command in s]
+    assert "devices Paired" in sent
+    assert "paired-devices" not in sent

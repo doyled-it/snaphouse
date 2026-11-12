@@ -110,7 +110,7 @@ def _strip_ansi(text: str) -> str:
 
 # A bluetoothctl device line, matched anywhere on an ANSI-stripped line (it may
 # be prefixed with a status tag or prompt): "Device <addr> <name>". Shared by the
-# paired-devices snapshot (the trust path) and the scan listing.
+# devices Paired snapshot (the trust path) and the scan listing.
 _DEVICE_LINE = re.compile(
     r"Device\s+((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s+(.*)"
 )
@@ -497,7 +497,7 @@ def _stop_agent(proc) -> None:
 
 
 def _paired_devices(output: str) -> dict[str, str]:
-    """Map address to name from `paired-devices` output ("Device <mac> <name>").
+    """Map address to name from `devices Paired` output ("Device <mac> <name>").
 
     Parsed through the same ANSI stripping and anywhere-on-the-line match as the
     scan listing (issue #40): bluetoothctl colours this output too, and an
@@ -517,7 +517,7 @@ def _paired_devices(output: str) -> dict[str, str]:
 
 def _snapshot_paired(controller: str, session: Session) -> dict[str, str]:
     """The devices paired on controller right now, by address."""
-    return _paired_devices(session([f"select {controller}", "paired-devices"]))
+    return _paired_devices(session([f"select {controller}", "devices Paired"]))
 
 
 def _trust_new(controller: str, session: Session, before: dict[str, str]) -> None:

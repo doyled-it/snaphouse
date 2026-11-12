@@ -186,7 +186,7 @@ class DeviceBook:
 
     def _read(self) -> list[dict]:
         """Paired devices with a connected flag; also records connection times."""
-        out = self._run([f"select {self._controller}", "paired-devices"])
+        out = self._run([f"select {self._controller}", "devices Paired"])
         paired = pairing._paired_devices(out)
         connected: dict[str, bool] = {}
         if paired:
