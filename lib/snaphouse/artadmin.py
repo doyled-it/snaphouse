@@ -39,6 +39,7 @@ from typing import Optional
 
 from snaphouse.artlib import THUMBNAIL_BATCH, ArtError, Library
 from snaphouse.framecontrol import DEFAULT_LEGACY_FRAME, FrameControl, urllib_geocode
+from snaphouse.paths import DEFAULT_PUBLIC_ROOT, frames_root
 
 
 # --------------------------------------------------------------------------- #
@@ -623,12 +624,21 @@ def _atomic_write_json(target: Path, payload) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def frame_art_history_paths(public_root: Path, frame_ids: list) -> dict:
+    """Each frame's republished art history, where the house-status timer writes it.
+
+    The layout comes from snaphouse.paths, shared with the timer and nginx.
+    """
+    root = frames_root(public_root)
+    return {fid: root / fid / "art-history.json" for fid in frame_ids}
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="The hub's art admin service (loopback HTTP API)."
     )
     parser.add_argument("--root", default="/srv/snaphouse/art")
-    parser.add_argument("--public-root", default="/var/lib/snaphouse/public")
+    parser.add_argument("--public-root", default=str(DEFAULT_PUBLIC_ROOT))
     parser.add_argument("--state", default="/var/lib/snaphouse/art-control.json")
     parser.add_argument(
         "--frame-state", default="/var/lib/snaphouse/artadmin/frame-control.json"
@@ -661,9 +671,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     # place through Open-Meteo's keyless geocoding API. Only the city name leaves
     # the LAN; the module holds the URL, the selection, and the error handling.
     frame_ids = args.frames if args.frames else [DEFAULT_LEGACY_FRAME]
-    art_history = {
-        fid: public_root / "frames" / fid / "art-history.json" for fid in frame_ids
-    }
+    art_history = frame_art_history_paths(public_root, frame_ids)
     frame = FrameControl(
         Path(args.frame_state),
         frames=frame_ids,
