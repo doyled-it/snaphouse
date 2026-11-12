@@ -243,7 +243,9 @@
 
 # The receive adapter is the hub's Bluetooth speaker; without an alias BlueZ
 # advertises it from the hostname (for example "house #1"). Name it after the
-# house speaker so a phone sees "House", matching the AirPlay name. Only the hub
+# house speaker so a phone sees "House", matching the AirPlay name. A
+# non-empty bt_receive_alias in local.yml overrides the name for Bluetooth only.
+# AirPlay and the stream names keep house_stream_name. Only the hub
 # has a receive adapter. The alias persists in BlueZ once set. no_log keeps the
 # adapter address (read from the var) out of Ansible's output; the address lives
 # only in local.yml. system-alias needs the controller selected in the same
@@ -253,7 +255,7 @@
     cmd: |
       bluetoothctl <<EOF
       select {{ bt_receive_adapter }}
-      system-alias {{ house_stream_name }}
+      system-alias {{ bt_receive_alias | default(house_stream_name, true) }}
       EOF
   when:
     - common_systemd_init

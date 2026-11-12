@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -122,6 +122,33 @@ def test_role_names_the_receive_adapter_after_the_house_speaker():
     assert "bt_receive_adapter" in str(task.get("when"))
     assert "common_systemd_init" in str(task.get("when"))
     assert task.get("no_log") is True
+
+
+def _alias_command(**variables):
+    task = next(t for t in _tasks() if "system-alias" in str(_module(t)[1]))
+    cmd = _module(task)[1]["cmd"]
+    return Environment(undefined=StrictUndefined).from_string(cmd).render(
+        bt_receive_adapter="AA:BB:CC:DD:EE:FF", **variables
+    )
+
+
+def test_receive_alias_defaults_to_the_house_stream_name():
+    assert "system-alias House\n" in _alias_command(house_stream_name="House") + "\n"
+    # An empty override is treated as unset.
+    out = _alias_command(house_stream_name="House", bt_receive_alias="")
+    assert "system-alias House\n" in out + "\n"
+
+
+def test_receive_alias_override_names_only_the_bluetooth_adapter():
+    out = _alias_command(house_stream_name="House", bt_receive_alias="Den Speaker")
+    assert "system-alias Den Speaker\n" in out + "\n"
+    assert "system-alias House" not in out
+
+
+def test_receive_alias_is_documented_with_a_neutral_placeholder():
+    example = (REPO / "local.example.yml").read_text()
+    assert "bt_receive_alias" in example
+    assert "bt_receive_alias" in (REPO / "README.md").read_text()
 
 
 def test_lockdown_powers_each_controller_before_closing_it():
