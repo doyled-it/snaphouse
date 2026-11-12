@@ -1675,11 +1675,16 @@ export function pairStopRequest() {
 }
 
 // Map a pairing POST's HTTP status and body to a result the page can act on.
-// 200/202 carry the new state. 409 is a conflict (a window is already open, or a
-// confirm arrived when the window was no longer in confirm); 403 is the guard
-// rejecting the request. Any other non-2xx is a plain failure. The service's own
-// `error` string is used when present, with a short fallback otherwise.
-export function interpretPairResponse(status, text) {
+// 200/202 carry the new state. 409 is a conflict, but it means different things
+// per endpoint, so `endpoint` ("start" | "confirm" | "stop") picks the copy:
+//   - on start, a window is already open (this tab, another tab, or the CLI);
+//   - on confirm, the code is no longer waiting for an answer (the window timed
+//     out, or another answer won the race).
+// 403 is the guard rejecting the request. Any other non-2xx is a plain failure.
+// The service's own `error` string is used for a generic failure when present,
+// with a short fallback otherwise; the 409 copy is page copy, so the raw
+// lowercase service string (e.g. "already open") is never shown verbatim.
+export function interpretPairResponse(status, text, endpoint = "start") {
   if (status === 200 || status === 202) {
     return { ok: true, state: parsePairState(text) };
   }
@@ -1689,9 +1694,64 @@ export function interpretPairResponse(status, text) {
     return { ok: false, forbidden: true, error: reason || "The pairing service refused the request." };
   }
   if (status === 409) {
-    return { ok: false, conflict: true, error: reason || "The pairing window is already open." };
+    const error =
+      endpoint === "confirm"
+        ? "That code is no longer waiting for an answer. Checking the pairing state."
+        : "The pairing window is already open.";
+    return { ok: false, conflict: true, error };
   }
   return { ok: false, error: reason || `The pairing service could not be reached (${status}).` };
+}
+
+// The confirm view, decided from the parsed state (I1). The page must never
+// offer "Code matches" without a real six-digit code on screen: parsePairState
+// drops a missing or malformed passkey to null but keeps the state "confirm", so
+// a confirm can be reached with no code, and accepting then approves a pairing
+// the owner never compared. Returns { code, canAccept, note }: a valid code with
+// accept allowed and no note, or no code, accept withheld, and a plain note that
+// the code did not arrive (Decline stays live either way).
+export function confirmView(parsed) {
+  const passkey = parsed && typeof parsed.passkey === "string" ? parsed.passkey : null;
+  if (passkey === null || !PASSKEY_RE.test(passkey)) {
+    return { code: null, canAccept: false, note: "The code did not arrive. Decline and try again." };
+  }
+  return { code: passkey, canAccept: true, note: null };
+}
+
+// After this many polls in a row with no good answer, the pairing service is
+// treated as gone (I2). A 120 s window polled about once a second gives plenty
+// of room, so five straight failures is a real outage, not a blip.
+export const MAX_PAIR_POLL_FAILURES = 5;
+
+// Whether a run of failed polls means contact with the pairing service is lost
+// (I2). The page then stops polling and shows a plain "lost contact" view with a
+// way to retry or close, rather than leaving a dead window on screen. A
+// non-numeric count is never lost, so a missing counter degrades safely.
+export function pairLostContact(failures) {
+  return typeof failures === "number" && Number.isFinite(failures) && failures >= MAX_PAIR_POLL_FAILURES;
+}
+
+// Whether the action buttons are disabled while a POST is in flight (I3). A
+// second tap on "Code matches" or "Pair a phone" would otherwise reach the
+// service as a duplicate and come back 409, painting a false error over a
+// successful result. The page disables the controls (and guards the handlers)
+// until the request settles.
+export function pairControlsDisabled(pending) {
+  return pending === true;
+}
+
+// A coarse, spoken cue for the countdown, or null for every other second (I4).
+// The countdown text updates silently (no live region), so a screen reader is
+// not read "1:57, 1:56 ..." over the code the owner needs to hear; only these
+// marks are announced, through a dedicated polite region.
+export function pairCountdownCue(seconds) {
+  if (seconds === 30) {
+    return "30 seconds left.";
+  }
+  if (seconds === 10) {
+    return "10 seconds left.";
+  }
+  return null;
 }
 
 // Whole seconds left until an ISO-8601 deadline, never below zero, or null when

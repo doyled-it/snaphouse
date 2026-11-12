@@ -1415,14 +1415,16 @@ a.row-title {
   font-variant-numeric: tabular-nums;
 }
 
-/* The code is the one loud element on this section: large figures on paper, set
-   in two groups of three and widely tracked so each digit reads on its own. */
+/* The code is the unmistakable hero of this section: large figures on paper, set
+   in two groups of three and widely tracked so each digit reads on its own. The
+   negative right margin absorbs the trailing letter-spacing on the last digit, so
+   the code's visual left edge still lines up with the buttons below it. */
 .pair-code {
   display: flex;
   gap: 0.42em;
-  margin: 2px 0;
+  margin: 2px -0.16em 2px 0;
   color: var(--ink);
-  font-size: 2.6rem;
+  font-size: 3.5rem;
   font-weight: 700;
   line-height: 1.1;
   letter-spacing: 0.16em;
@@ -1460,6 +1462,29 @@ a.row-title {
 
 .pair-outcome.bad {
   color: var(--red-text);
+}
+
+/* Lost contact: the same weight as an outcome line, so the state reads as a
+   plain fact rather than an alarm. */
+.pair-lost-text {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* A spoken-only region for the coarse countdown cues: present to a screen reader,
+   never drawn. */
+.pair-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

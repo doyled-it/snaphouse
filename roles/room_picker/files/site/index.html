@@ -216,27 +216,42 @@
             <button id="pair-start" class="btn" type="button">Pair a phone</button>
           </div>
 
-          <!-- Window open: the phone-side steps and the countdown, with a way to stop. -->
+          <!-- Window open: the phone-side steps and the countdown, with a way to stop.
+               The countdown is not a live region: it changes every second, so a
+               reader would hear it tick over the rest. Coarse cues go through the
+               shared #pair-announce region instead. -->
           <div id="pair-open" class="pair-view" hidden>
             <p id="pair-instruction" class="pair-instruction"></p>
-            <p id="pair-open-count" class="pair-count" role="status" aria-live="polite"></p>
+            <p id="pair-open-count" class="pair-count"></p>
             <button id="pair-stop" class="btn btn-ghost" type="button">Stop</button>
           </div>
 
           <!-- A phone is asking: the code is the one loud element here. -->
           <div id="pair-confirm" class="pair-view" hidden>
-            <p class="settings-note">
+            <p id="pair-confirm-intro" class="settings-note">
               Check that this code matches the one on <span id="pair-device-name">your phone</span>.
             </p>
             <p id="pair-code" class="pair-code" role="img" aria-label="Pairing code">
               <span id="pair-code-a" class="pair-code-group" aria-hidden="true"></span>
               <span id="pair-code-b" class="pair-code-group" aria-hidden="true"></span>
             </p>
+            <p id="pair-accept-note" class="settings-note" hidden></p>
             <div class="pair-actions">
               <button id="pair-accept" class="btn pair-accept" type="button">Code matches</button>
               <button id="pair-decline" class="btn danger" type="button">Decline</button>
             </div>
-            <p id="pair-confirm-count" class="pair-count" role="status" aria-live="polite"></p>
+            <p id="pair-confirm-count" class="pair-count"></p>
+          </div>
+
+          <!-- Contact with the pairing service is lost (it restarted or crashed):
+               a plain message and a way to retry or close, never a dead window. -->
+          <div id="pair-lost" class="pair-view" hidden>
+            <p class="pair-lost-text">Lost contact with the pairing service.</p>
+            <p class="settings-note">The window may still be open on the hub. It closes on its own.</p>
+            <div class="pair-actions">
+              <button id="pair-retry" class="btn" type="button">Try again</button>
+              <button id="pair-close" class="btn btn-ghost" type="button">Close</button>
+            </div>
           </div>
 
           <!-- After a window: paired, declined, failed, or closed, and a restart. -->
@@ -247,6 +262,8 @@
           </div>
 
           <p id="pair-error" class="fs-error" role="alert" hidden></p>
+          <!-- Coarse, once-only spoken cues for the countdown (I4). -->
+          <p id="pair-announce" class="pair-sr" aria-live="polite"></p>
         </section>
 
         <!-- Now playing on the frame: one toggle per kind of audio. -->

@@ -29,6 +29,11 @@ import {
   pairPhase,
   pairInstruction,
   shouldPollPair,
+  confirmView,
+  pairLostContact,
+  MAX_PAIR_POLL_FAILURES,
+  pairControlsDisabled,
+  pairCountdownCue,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // --------------------------------------------------------------------------- #
@@ -149,11 +154,29 @@ test("interpretPairResponse reads a new state on 200 and 202", () => {
   assert.equal(stopped.state.state, "idle");
 });
 
-test("interpretPairResponse flags a 409 conflict and keeps the reason", () => {
-  const got = interpretPairResponse(409, JSON.stringify({ error: "already open" }));
+test("interpretPairResponse flags a 409 on start as the window already being open", () => {
+  // The contract gives a start 409 only for "already open"; the raw lowercase
+  // service string is mapped to plain page copy rather than shown verbatim (M1).
+  const got = interpretPairResponse(409, JSON.stringify({ error: "already open" }), "start");
   assert.equal(got.ok, false);
   assert.equal(got.conflict, true);
-  assert.equal(got.error, "already open");
+  assert.equal(got.error, "The pairing window is already open.");
+
+  // No endpoint given defaults to the start copy.
+  const bare = interpretPairResponse(409, "");
+  assert.equal(bare.conflict, true);
+  assert.equal(bare.error, "The pairing window is already open.");
+});
+
+test("interpretPairResponse gives a 409 on confirm its own copy (I5)", () => {
+  // The contract defines the 409 body only for start, so a 409 on confirm (the
+  // window timed out or another answer won the race) must not read as if start
+  // failed. It says the code is no longer waiting and that the page is checking.
+  const got = interpretPairResponse(409, "", "confirm");
+  assert.equal(got.ok, false);
+  assert.equal(got.conflict, true);
+  assert.match(got.error, /no longer waiting for an answer/);
+  assert.doesNotMatch(got.error, /already open/);
 });
 
 test("interpretPairResponse flags a 403 from the guard", () => {
@@ -259,4 +282,69 @@ test("shouldPollPair polls only while visible, and only with the screen or a liv
   assert.equal(shouldPollPair({ documentVisible: true, settingsVisible: false, windowActive: false }), false);
   // Hidden tab never polls, even with a live window.
   assert.equal(shouldPollPair({ documentVisible: false, settingsVisible: true, windowActive: true }), false);
+});
+
+// --------------------------------------------------------------------------- #
+// confirmView: never offer accept without a valid code on screen (I1)
+// --------------------------------------------------------------------------- #
+
+test("confirmView offers accept only with a valid six-digit code", () => {
+  const good = confirmView({ state: "confirm", passkey: "012345", device: "Pixel 8" });
+  assert.equal(good.code, "012345");
+  assert.equal(good.canAccept, true);
+  assert.equal(good.note, null);
+});
+
+test("confirmView hides the code and accept when the passkey is missing or malformed", () => {
+  // parsePairState drops a bad passkey to null but keeps state "confirm", so the
+  // confirm view can be reached with no code. Accept must not be offered then:
+  // the user could otherwise approve a pairing they never compared.
+  for (const bad of [null, undefined, "", "12345", "1234567", "12a456"]) {
+    const view = confirmView({ state: "confirm", passkey: bad });
+    assert.equal(view.code, null, `passkey ${JSON.stringify(bad)} should show no code`);
+    assert.equal(view.canAccept, false, `passkey ${JSON.stringify(bad)} must not allow accept`);
+    assert.ok(view.note && view.note.length > 0, "a bad code gives a plain note");
+  }
+});
+
+// --------------------------------------------------------------------------- #
+// pairLostContact: a bounded run of poll failures is a dead service (I2)
+// --------------------------------------------------------------------------- #
+
+test("pairLostContact flips only once the failures reach the bound", () => {
+  assert.ok(MAX_PAIR_POLL_FAILURES >= 1);
+  for (let n = 0; n < MAX_PAIR_POLL_FAILURES; n += 1) {
+    assert.equal(pairLostContact(n), false, `${n} failures is not yet lost`);
+  }
+  assert.equal(pairLostContact(MAX_PAIR_POLL_FAILURES), true);
+  assert.equal(pairLostContact(MAX_PAIR_POLL_FAILURES + 3), true);
+});
+
+test("pairLostContact treats a non-number as not lost", () => {
+  for (const bad of [null, undefined, NaN, "5", Infinity]) {
+    assert.equal(pairLostContact(bad), false, `${JSON.stringify(bad)} is not lost`);
+  }
+});
+
+// --------------------------------------------------------------------------- #
+// pairControlsDisabled: a request in flight disables the action buttons (I3)
+// --------------------------------------------------------------------------- #
+
+test("pairControlsDisabled is true only while a request is pending", () => {
+  assert.equal(pairControlsDisabled(true), true);
+  assert.equal(pairControlsDisabled(false), false);
+  assert.equal(pairControlsDisabled(undefined), false);
+});
+
+// --------------------------------------------------------------------------- #
+// pairCountdownCue: a screen reader hears a coarse cue, not every second (I4)
+// --------------------------------------------------------------------------- #
+
+test("pairCountdownCue announces only at the coarse marks", () => {
+  assert.match(pairCountdownCue(30), /30 seconds/);
+  assert.match(pairCountdownCue(10), /10 seconds/);
+  // Every other second is silent, so the reader is not flooded.
+  for (const quiet of [120, 60, 31, 29, 11, 9, 1, 0, null, undefined, NaN]) {
+    assert.equal(pairCountdownCue(quiet), null, `${JSON.stringify(quiet)} is silent`);
+  }
 });
