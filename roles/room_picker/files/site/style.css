@@ -1392,6 +1392,101 @@ a.row-title {
   font-weight: 600;
 }
 
+/* --- Pair a phone -------------------------------------------------------- */
+
+/* Each state of the window is one view; only one shows at a time. The views
+   stack with the same rhythm as the rest of Settings. */
+.pair-view {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+}
+
+.pair-instruction {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.45;
+}
+
+.pair-count {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The code is the unmistakable hero of this section: large figures on paper, set
+   in two groups of three and widely tracked so each digit reads on its own. The
+   negative right margin absorbs the trailing letter-spacing on the last digit, so
+   the code's visual left edge still lines up with the buttons below it. */
+.pair-code {
+  display: flex;
+  gap: 0.42em;
+  margin: 2px -0.16em 2px 0;
+  color: var(--ink);
+  font-size: 3.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.16em;
+  font-variant-numeric: tabular-nums;
+}
+
+.pair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* The decisive accept is the primary action: filled in the selected-control
+   blue, the same token the room sliders and enabled folders use. */
+.pair-accept {
+  background: var(--blue);
+  color: var(--on-blue);
+  border-color: var(--blue);
+}
+
+.pair-accept:hover {
+  border-color: var(--blue);
+  filter: brightness(0.96);
+}
+
+.pair-outcome {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.pair-outcome.ok {
+  color: var(--green-text);
+}
+
+.pair-outcome.bad {
+  color: var(--red-text);
+}
+
+/* Lost contact: the same weight as an outcome line, so the state reads as a
+   plain fact rather than an alarm. */
+.pair-lost-text {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* A spoken-only region for the coarse countdown cues: present to a screen reader,
+   never drawn. */
+.pair-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .np-fill,
   .library-summary::before {
