@@ -99,9 +99,13 @@ def test_installer_runs_once_as_homebody_first_install():
     assert runs, "no task runs homebody's installer"
     args = runs[0]
     assert args.get("chdir") == "/opt/homebody"
-    # install.sh creates /etc/homebody/local.toml from the example; the creates
-    # guard runs it exactly once, and homebody self-updates from then on.
-    assert args.get("creates") == "/etc/homebody/local.toml"
+    # Contract with homebody's deploy/install.sh: it writes
+    # /var/lib/homebody/update/update.state (HOMEBODY_STATE under the default
+    # HOMEBODY_STATE_ROOT) only at the very end of a successful install. The
+    # creates guard must be that file, not /etc/homebody/local.toml, which
+    # install.sh writes before its dependency sync: a first run that failed
+    # after that point would otherwise never be retried (issue #118).
+    assert args.get("creates") == "/var/lib/homebody/update/update.state"
 
 
 # --------------------------------------------------------------------------- #

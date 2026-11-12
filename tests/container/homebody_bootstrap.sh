@@ -5,7 +5,7 @@
 # bootstrap at a local stub repo instead of the real homebody (the repo URL is a
 # role variable for exactly this). It proves two things:
 #   1. On first apply the bootstrap clones the repo to /opt/homebody and runs its
-#      installer once, which creates /etc/homebody/local.toml, and the role
+#      installer once, which writes the update state file last, and the role
 #      templates the three systemd units.
 #   2. A second apply changes nothing (the clone and installer are guarded by
 #      creates, the templates are stable), so the role never re-touches a
@@ -38,7 +38,8 @@ cp /repo/local.example.yml /etc/snaphouse/local.yml
 # A stub homebody repo. It stands in for github.com/doyled-it/homebody so the
 # bootstrap can be exercised with no network and no real thermostat. Its
 # installer mirrors the real one's contract: idempotent, run as root, and it
-# creates /etc/homebody/local.toml from the example when that file is missing.
+# writes /var/lib/homebody/update/update.state at the end, after creating
+# /etc/homebody/local.toml from the example when that file is missing.
 stub=/srv/stub-homebody
 mkdir -p "${stub}/deploy"
 cat > "${stub}/deploy/local.example.toml" <<'TOML'
@@ -52,6 +53,8 @@ mkdir -p /etc/homebody
 if [ ! -f /etc/homebody/local.toml ]; then
     cp "$(dirname "$0")/local.example.toml" /etc/homebody/local.toml
 fi
+mkdir -p /var/lib/homebody/update
+touch /var/lib/homebody/update/update.state
 EOF
 chmod +x "${stub}/deploy/install.sh"
 git -C "${stub}" init -q
@@ -69,6 +72,7 @@ ansible-playbook site.yml -e "snaphouse_host=${host}" -e "homebody_bootstrap_rep
 echo "==> Checking the first apply cloned, installed, and templated the units"
 test -d /opt/homebody/.git
 test -f /etc/homebody/local.toml
+test -f /var/lib/homebody/update/update.state
 test -f /etc/systemd/system/homebody-matter.service
 test -f /etc/systemd/system/homebody-update.service
 test -f /etc/systemd/system/homebody-update.timer

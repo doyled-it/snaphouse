@@ -316,3 +316,22 @@ def test_failure_with_no_last_good_exits_nonzero(world):
     status = read_json(world.status)
     assert status["commit"] == v1
     assert status["verify"] == "fail"
+
+
+def test_update_timer_arms_when_started_after_boot():
+    """A timer started or restarted after boot must still have a next run.
+
+    OnBootSec only counts from boot and OnUnitActiveSec needs the service to have
+    run once, so without OnActiveSec a restart leaves nothing scheduled and the
+    host silently stops self-updating (issue #118).
+    """
+    from jinja2 import Environment, FileSystemLoader
+
+    root = Path(__file__).resolve().parents[2]
+    env = Environment(loader=FileSystemLoader(root / "roles/selfupdate/templates"))
+    out = env.get_template("snaphouse-update.timer.j2").render(
+        update_interval="15min", update_randomized_delay="120s"
+    )
+    lines = {line.strip() for line in out.splitlines()}
+    for key in ("OnBootSec", "OnActiveSec", "OnUnitActiveSec"):
+        assert f"{key}=15min" in lines, f"{key} missing from the update timer"

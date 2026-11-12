@@ -54,14 +54,15 @@ host="$(python3 -c "import yaml; h=yaml.safe_load(open('/repo/vars/hosts.yml'))[
 # The hub also carries homebody_bootstrap, which clones homebody on apply. Point
 # it at a local stub so this art-share gate stays hermetic (no network, no real
 # homebody). The stub installer mirrors the real contract: idempotent, root,
-# creates /etc/homebody/local.toml. homebody's own gate is homebody_bootstrap.sh.
+# writes /var/lib/homebody/update/update.state on success. homebody's own gate is homebody_bootstrap.sh.
 hb_stub=/srv/stub-homebody
 mkdir -p "${hb_stub}/deploy"
 cat > "${hb_stub}/deploy/install.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 mkdir -p /etc/homebody
-touch /etc/homebody/local.toml
+mkdir -p /var/lib/homebody/update
+touch /var/lib/homebody/update/update.state
 EOF
 chmod +x "${hb_stub}/deploy/install.sh"
 git -C "${hb_stub}" init -q

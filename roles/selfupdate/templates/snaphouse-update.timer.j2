@@ -2,9 +2,13 @@
 Description=Run snaphouse self-update every {{ update_interval }}
 
 [Timer]
-# First run shortly after boot, then on the shared cadence from vars/all.yml. The
-# random delay spreads the three machines so they do not all wake at once.
+# First run shortly after boot, then on the shared cadence from vars/all.yml.
+# OnActiveSec arms the timer when it is started or restarted after boot (an apply
+# or a manual stop and start); without it nothing is left to schedule until the
+# service runs once by hand. The random delay spreads the three machines so they
+# do not all wake at once.
 OnBootSec={{ update_interval }}
+OnActiveSec={{ update_interval }}
 OnUnitActiveSec={{ update_interval }}
 RandomizedDelaySec={{ update_randomized_delay }}
 Persistent=true

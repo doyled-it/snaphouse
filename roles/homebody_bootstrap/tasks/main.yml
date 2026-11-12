@@ -28,14 +28,16 @@
   # noqa command-instead-of-module
 
 - name: Run the homebody installer once
-  # homebody's installer is idempotent, runs as root, and creates
-  # /etc/homebody/local.toml from its example on first run (and the homebody user,
-  # /var/lib/homebody, and the uv venv). The creates guard means snaphouse runs it
-  # exactly once; homebody self-updates from then on.
+  # homebody's installer is idempotent, runs as root, and creates the homebody
+  # user, /etc/homebody/local.toml from its example, /var/lib/homebody, and the uv
+  # venv. It writes the update state file only at the very end of a successful
+  # install, so that file is the guard: a first run that fails partway (after
+  # local.toml exists) is retried on the next apply. Once it succeeds snaphouse
+  # never runs it again; homebody self-updates from then on.
   ansible.builtin.command:
     cmd: ./deploy/install.sh
     chdir: /opt/homebody
-    creates: /etc/homebody/local.toml
+    creates: /var/lib/homebody/update/update.state
 
 - name: Ensure the systemd unit directory exists
   ansible.builtin.file:

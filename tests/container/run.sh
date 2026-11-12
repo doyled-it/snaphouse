@@ -50,7 +50,7 @@ git -C "${stub_nightstand}" -c user.email=ci@example.invalid -c user.name=ci com
 
 # A stub homebody repo so the hub's homebody bootstrap stays hermetic here: the
 # hub's clone points at this instead of reaching out to GitHub. Its installer
-# mirrors the real contract (idempotent, root, creates /etc/homebody/local.toml).
+# mirrors the real contract (idempotent, root, writes /var/lib/homebody/update/update.state on success).
 # The focused idempotency check is in homebody_bootstrap.sh; here it only needs to
 # apply cleanly.
 stub_homebody=/srv/stub-homebody
@@ -59,7 +59,8 @@ cat > "${stub_homebody}/deploy/install.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 mkdir -p /etc/homebody
-touch /etc/homebody/local.toml
+mkdir -p /var/lib/homebody/update
+touch /var/lib/homebody/update/update.state
 EOF
 chmod +x "${stub_homebody}/deploy/install.sh"
 git -C "${stub_homebody}" init -q
