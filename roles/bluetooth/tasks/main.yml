@@ -17,6 +17,85 @@
     update_cache: true
     cache_valid_time: 3600
 
+# The hub's receive adapter is a Realtek RTL8761BU USB dongle. Its firmware
+# (rtl_bt/rtl8761bu_fw.bin) ships in firmware-realtek, from Debian's
+# non-free-firmware component (bookworm and trixie); without it the adapter stays
+# down. Everything here runs only where a receive adapter is configured, and is
+# tagged hardware so the container check skips it. A source already carrying the
+# component is left alone (the patterns skip any line that names it), so a second
+# apply changes nothing and a fresh trixie install, which enables the component
+# itself, is not rewritten.
+- name: Find the Debian apt source files
+  ansible.builtin.find:
+    paths:
+      - /etc/apt
+      - /etc/apt/sources.list.d
+    patterns:
+      - sources.list
+      - "*.sources"
+      - "*.list"
+    contains: '.*debian\.org.*'
+  register: bluetooth_apt_sources
+  when:
+    - bt_receive_adapter is defined
+    - bt_receive_adapter | length > 0
+  tags:
+    - hardware
+
+- name: Enable non-free-firmware in one-line apt sources
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^(deb(?:-src)?\s(?!.*non-free-firmware)[^#\n]*debian[^#\n]*\smain\b)'
+    replace: '\1 non-free-firmware'
+  loop: "{{ bluetooth_apt_sources.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: bluetooth_apt_list_sources
+  when:
+    - bt_receive_adapter is defined
+    - bt_receive_adapter | length > 0
+    - item.path is not search('\\.sources$')
+  tags:
+    - hardware
+
+- name: Enable non-free-firmware in deb822 apt sources
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^(Components:(?!.*non-free-firmware)[^\n]*\bmain\b[^\n]*?)[ \t]*$'
+    replace: '\1 non-free-firmware'
+  loop: "{{ bluetooth_apt_sources.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: bluetooth_apt_deb822_sources
+  when:
+    - bt_receive_adapter is defined
+    - bt_receive_adapter | length > 0
+    - item.path is search('\\.sources$')
+  tags:
+    - hardware
+
+- name: Refresh apt after enabling non-free-firmware
+  ansible.builtin.apt:
+    update_cache: true
+  when:
+    - bt_receive_adapter is defined
+    - bt_receive_adapter | length > 0
+    - bluetooth_apt_list_sources is changed or bluetooth_apt_deb822_sources is changed
+  tags:
+    - hardware
+
+- name: Install the Realtek Bluetooth firmware for the receive adapter
+  ansible.builtin.apt:
+    name: firmware-realtek
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when:
+    - bt_receive_adapter is defined
+    - bt_receive_adapter | length > 0
+  tags:
+    - hardware
+
 # bluez-alsa-utils ships and enables its own bluealsa-aplay.service, which grabs
 # every incoming A2DP stream and plays it to the default ALSA device. That takes
 # the device before snaphouse-bt-in.service can, so ours fails with "Device or
