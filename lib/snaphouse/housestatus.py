@@ -58,6 +58,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
+from snaphouse import paths
+
 # The list of machines to poll and the output file, both overridable on the CLI.
 # The targets file is written from the inventory by the room_picker role.
 DEFAULT_TARGETS = Path("/etc/snaphouse/house-status-targets.json")
@@ -93,7 +95,7 @@ DEFAULT_FRAME_META_OUT = Path("/var/lib/snaphouse/public/frame/frame.json")
 # frame.png, frame.json). It sits inside the same timer-owned frame subdir as the
 # single-frame mirror, so per-frame writes never chown the shared public root.
 # The old single paths above keep serving the nightstand's copy for one release.
-DEFAULT_FRAMES_ROOT = Path("/var/lib/snaphouse/public/frame/frames")
+DEFAULT_FRAMES_ROOT = paths.DEFAULT_FRAMES_ROOT
 
 # A frame id is an inventory key: a lowercase letter, then up to 31 lowercase
 # letters, digits, or hyphens. The id is validated against this before any path
