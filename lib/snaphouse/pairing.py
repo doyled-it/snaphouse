@@ -161,6 +161,9 @@ _PAIR_FAIL = re.compile(
 
 # The authentication failures that mean "the hub holds a key the phone no longer
 # has". Android reports it as "couldn't communicate".
+_CONNECTED_LINE = re.compile(
+    r"Device\s+((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s+Connected:\s+(yes|no)"
+)
 _STALE_AUTH = re.compile(r"Authentication Failed|AuthenticationFailed")
 
 
@@ -214,6 +217,14 @@ def _parse_device_address(line: str) -> Optional[str]:
     """
     match = _DEVICE_LINE.search(_strip_ansi(line))
     return match.group(1) if match else None
+
+
+def _parse_connection_change(line: str) -> Optional[tuple[str, bool]]:
+    """(address, connected) from a "[CHG] Device <addr> Connected: yes|no" line."""
+    match = _CONNECTED_LINE.search(_strip_ansi(line))
+    if match is None:
+        return None
+    return match.group(1), match.group(2) == "yes"
 
 
 def _is_auth_failure(line: str) -> bool:
@@ -428,7 +439,11 @@ def _make_line_handler(
     memory, to match lines, and is dropped from `known` on removal so the fresh
     pairing is trusted like a new one.
     """
-    tracked = {"device": None, "address": None}
+    tracked = {"device": None}
+    # Addresses a [CHG] line says are connected right now. The auth-failure line
+    # usually names no device, so the one that failed is the only device that is
+    # connecting; with none or several, nobody is blamed.
+    connected: set[str] = set()
     removed: set[str] = set()
 
     def on_line(line: str) -> None:
@@ -440,13 +455,15 @@ def _make_line_handler(
         name = _parse_device_name(line)
         if name:
             tracked["device"] = name
-        address = _parse_device_address(line)
-        if address:
-            tracked["address"] = address
+        state = _parse_connection_change(line)
+        if state is not None:
+            (connected.add if state[1] else connected.discard)(state[0])
         result = _parse_pair_result(line)
         if result == "fail" and known is not None and _is_auth_failure(line):
-            stale = tracked["address"]
-            if stale in known and stale not in removed:
+            stale = _parse_device_address(line)
+            if stale is None and len(connected) == 1:
+                stale = next(iter(connected))
+            if stale is not None and stale in known and stale not in removed:
                 removed.add(stale)
                 _safe_send(proc, f"remove {stale}")
                 del known[stale]

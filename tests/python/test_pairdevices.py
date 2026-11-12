@@ -196,6 +196,27 @@ def test_a_device_no_longer_paired_is_dropped_from_the_persisted_times(bluez, tm
     assert len(stored) == 0
 
 
+def test_a_device_named_not_available_still_lists(bluez, tmp_path):
+    # Only the controller select line can mean the adapter is gone. A phone whose
+    # name contains the phrase must not turn the whole list into a 503.
+    bluez.devices[NAMELESS] = {"name": "not available", "connected": False}
+    names = [d["name"] for d in make_book(bluez, tmp_path).devices()]
+    assert "not available" in names
+
+
+def test_a_device_gone_between_the_list_and_info_does_not_fail_the_listing(bluez, tmp_path):
+    real = bluez.__call__
+
+    def racing(commands, timeout=None):
+        out = real(commands, timeout)
+        if "paired-devices" in commands:
+            bluez.devices.pop(IPHONE, None)  # removed before the info call
+        return out
+
+    book = pairdevices.DeviceBook(CONTROLLER, state_dir=tmp_path, session=racing, wall_now=Clock())
+    assert [d["name"] for d in book.devices()] == ["Pixel 7", "Alex's iPhone"]
+
+
 def test_a_failed_listing_raises_unavailable_and_keeps_the_stored_times(bluez, tmp_path):
     book = make_book(bluez, tmp_path)
     book.devices()
@@ -227,7 +248,7 @@ def test_disconnect_of_a_device_that_is_not_connected_conflicts(bluez, tmp_path)
 
 def test_disconnect_of_an_unknown_id_is_unknown(bluez, tmp_path):
     with pytest.raises(pairdevices.UnknownDevice):
-        make_book(bluez, tmp_path).disconnect("0" * 16)
+        make_book(bluez, tmp_path).disconnect("0" * 32)
 
 
 def test_forget_removes_the_pairing_and_its_stored_time(bluez, tmp_path):
@@ -245,13 +266,13 @@ def test_forget_of_an_unknown_id_is_unknown_and_removes_nothing(bluez, tmp_path)
     book = make_book(bluez, tmp_path)
     book.devices()
     with pytest.raises(pairdevices.UnknownDevice):
-        book.forget("f" * 16)
+        book.forget("f" * 32)
     assert not any(c.startswith("remove ") for c in bluez.commands())
 
 
 def test_malformed_ids_are_rejected(bluez, tmp_path):
     book = make_book(bluez, tmp_path)
-    for bad in (None, 5, "", "x" * 200, "not hex!"):
+    for bad in (None, 5, "", "x" * 200, "not hex!", "a" * 16):
         with pytest.raises(pairdevices.BadId):
             book.forget(bad)
 

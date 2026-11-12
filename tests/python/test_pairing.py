@@ -909,3 +909,68 @@ def test_a_second_authentication_failure_for_the_same_phone_is_reported_not_remo
     )
     assert proc.sent.count(f"remove {KNOWN}") == 1
     assert [event for event, _ in reports] == ["failed"]
+
+
+def test_the_failure_is_attributed_to_the_device_on_the_failure_line_itself():
+    # The failure event names the stranger; the known phone is merely connected.
+    # Nothing is removed and the failure is reported.
+    proc, reports, _ = _run_with_lines(
+        [
+            f"[CHG] Device {KNOWN} Connected: yes",
+            f"[CHG] Device {STRANGER} Connected: yes",
+            f"Device {STRANGER} {AUTH_FAIL}",
+        ],
+        paired_before=f"Device {KNOWN} Pat's Phone\n",
+    )
+    assert not any(c.startswith("remove ") for c in proc.sent)
+    assert [event for event, _ in reports] == ["failed"]
+
+
+def test_the_address_on_the_failure_line_selects_the_stale_pairing():
+    proc, reports, _ = _run_with_lines(
+        [
+            f"[CHG] Device {KNOWN} Connected: yes",
+            f"[CHG] Device {STRANGER} Connected: yes",
+            f"Device {KNOWN} {AUTH_FAIL}",
+        ],
+        paired_before=f"Device {KNOWN} Pat's Phone\n",
+    )
+    assert f"remove {KNOWN}" in proc.sent
+    assert reports == []
+
+
+def test_an_unrelated_device_line_does_not_change_who_failed():
+    # Only the stranger is connecting. A later chatter line mentioning the known
+    # (idle, paired) phone must not make it the one blamed for the failure.
+    proc, reports, _ = _run_with_lines(
+        [
+            f"[CHG] Device {STRANGER} Connected: yes",
+            f"[CHG] Device {KNOWN} RSSI: -60",
+            AUTH_FAIL,
+        ],
+        paired_before=f"Device {KNOWN} Pat's Phone\n",
+    )
+    assert not any(c.startswith("remove ") for c in proc.sent)
+    assert [event for event, _ in reports] == ["failed"]
+
+
+def test_with_two_devices_connecting_and_no_address_nothing_is_removed():
+    proc, reports, _ = _run_with_lines(
+        [
+            f"[CHG] Device {KNOWN} Connected: yes",
+            f"[CHG] Device {STRANGER} Connected: yes",
+            AUTH_FAIL,
+        ],
+        paired_before=f"Device {KNOWN} Pat's Phone\n",
+    )
+    assert not any(c.startswith("remove ") for c in proc.sent)
+    assert [event for event, _ in reports] == ["failed"]
+
+
+def test_with_no_device_known_to_be_connecting_nothing_is_removed():
+    proc, reports, _ = _run_with_lines(
+        [AUTH_FAIL],
+        paired_before=f"Device {KNOWN} Pat's Phone\n",
+    )
+    assert not any(c.startswith("remove ") for c in proc.sent)
+    assert [event for event, _ in reports] == ["failed"]

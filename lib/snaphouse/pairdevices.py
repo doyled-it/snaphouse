@@ -44,7 +44,8 @@ TICK_SECONDS = 30.0
 #: Shown for a device that never advertised a name (the address is never shown).
 UNNAMED = "Unnamed device"
 
-_ID = re.compile(r"[0-9a-f]{8,64}")
+_ID = re.compile(r"[0-9a-f]{32}")
+_SELECT_FAILED = re.compile(r"Controller\s+\S+\s+not available")
 _INFO_HEADER = re.compile(r"^\s*Device\s+((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\b")
 _CONNECTED = re.compile(r"^\s*Connected:\s*(yes|no)\b")
 
@@ -173,11 +174,15 @@ class DeviceBook:
 
     def _run(self, commands: list[str]) -> str:
         try:
-            return pairing._check_select(self._session(commands))
-        except pairing.AdapterSelectFailed as exc:
-            raise Unavailable("bluetooth is not available") from exc
+            out = self._session(commands)
         except OSError as exc:
             raise Unavailable("bluetooth is not available") from exc
+        # Only the controller select line can mean the adapter is gone. A device
+        # line (a phone named "not available", or one removed mid-read) must not.
+        for line in out.splitlines():
+            if _SELECT_FAILED.match(pairing._strip_ansi(line).strip()):
+                raise Unavailable("bluetooth is not available")
+        return out
 
     def _read(self) -> list[dict]:
         """Paired devices with a connected flag; also records connection times."""
