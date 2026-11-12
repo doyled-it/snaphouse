@@ -1789,3 +1789,157 @@ export function pairPhase(parsed, { started } = {}) {
 export function shouldPollPair({ documentVisible, settingsVisible, windowActive } = {}) {
   return Boolean(documentVisible) && Boolean(settingsVisible || windowActive);
 }
+
+// --------------------------------------------------------------------------- //
+// Bluetooth devices (Settings): the phones paired to the hub.
+//
+// GET /api/pair/devices lists them (name, connected, when last connected) and two
+// guarded POSTs act on one by its opaque id: disconnect drops the current
+// connection and keeps the pairing; forget removes the pairing, after an inline
+// confirm. The id is a keyed hash the hub makes; the page never sees an address.
+// The list is polled under the same rule as the pairing section (visible tab,
+// Settings showing), so shouldPollPair is reused as is.
+// --------------------------------------------------------------------------- //
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Read GET /api/pair/devices. Returns the devices in the order the hub sent them
+// (connected first, then by name), each normalized, or null when the body is not
+// a device list so the caller can keep what it had. An entry with no id cannot be
+// acted on and is dropped.
+export function parseDevices(raw) {
+  const data = typeof raw === "string" ? safeJsonParse(raw) : null;
+  if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.devices)) {
+    return null;
+  }
+  const out = [];
+  for (const entry of data.devices) {
+    const device = normalizeDevice(entry);
+    if (device) {
+      out.push(device);
+    }
+  }
+  return out;
+}
+
+function normalizeDevice(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return null;
+  }
+  const id = typeof entry.id === "string" ? entry.id : "";
+  if (id.length === 0) {
+    return null;
+  }
+  const lastRaw = typeof entry.last_connected === "string" ? entry.last_connected : null;
+  return {
+    id,
+    name: plainStringOrNull(entry.name) || "Unnamed device",
+    connected: entry.connected === true,
+    lastConnected: lastRaw !== null && Number.isFinite(Date.parse(lastRaw)) ? lastRaw : null,
+  };
+}
+
+export function deviceStatus(device) {
+  return device && device.connected ? "Connected" : "Not connected";
+}
+
+// The "last connected" line for a device that is not connected now; null while it
+// is connected (the status already says so). A time ahead of the page's clock
+// reads as just now.
+export function lastConnectedText(device, nowMs) {
+  if (!device || device.connected) {
+    return null;
+  }
+  const at = typeof device.lastConnected === "string" ? Date.parse(device.lastConnected) : NaN;
+  if (!Number.isFinite(at)) {
+    return "Not seen connected yet";
+  }
+  const seconds = Math.floor((nowMs - at) / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (minutes < 1) {
+    return "Last connected just now";
+  }
+  if (hours < 1) {
+    return `Last connected ${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
+  }
+  if (days < 1) {
+    return `Last connected ${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+  }
+  if (days === 1) {
+    return "Last connected yesterday";
+  }
+  if (days < 7) {
+    return `Last connected ${days} days ago`;
+  }
+  const when = new Date(at);
+  const sameYear = when.getFullYear() === new Date(nowMs).getFullYear();
+  const dayText = `${MONTHS[when.getMonth()]} ${when.getDate()}`;
+  return `Last connected ${sameYear ? dayText : `${dayText}, ${when.getFullYear()}`}`;
+}
+
+export function deviceDisconnectRequest(id) {
+  return apiRequest("/api/pair/devices/disconnect", { id });
+}
+
+export function deviceForgetRequest(id) {
+  return apiRequest("/api/pair/devices/forget", { id });
+}
+
+// Map a device POST's status and body to a result. `kind` is "disconnect" or
+// "forget". 200 carries the updated device (disconnect) or nothing more (forget).
+// 404 means the phone is no longer paired (another tab or the CLI got there
+// first) and 409 that it was not connected after all; both tell the caller to
+// refresh rather than show a raw service string.
+export function interpretDeviceResponse(status, text, kind = "disconnect") {
+  if (status === 200) {
+    if (kind === "forget") {
+      return { ok: true };
+    }
+    return { ok: true, device: normalizeDevice(safeJsonParse(text)) };
+  }
+  const body = safeJsonParse(text);
+  const reason = body && typeof body.error === "string" && body.error.length > 0 ? body.error : null;
+  if (status === 403) {
+    return { ok: false, forbidden: true, error: reason || "The hub refused the request." };
+  }
+  if (status === 404) {
+    return { ok: false, gone: true, error: "That phone is no longer paired." };
+  }
+  if (status === 409) {
+    return { ok: false, stale: true, error: "That phone is not connected any more." };
+  }
+  return { ok: false, error: reason || `The hub could not be reached (${status}).` };
+}
+
+// Which buttons a row shows. Disconnect only while connected; Forget always. While
+// a request is in flight both are disabled. The row being confirmed shows the
+// confirm view instead of either button.
+export function deviceButtons(device, { pending, confirmingId } = {}) {
+  const confirm = Boolean(device) && confirmingId === device.id;
+  const disabled = pending === true;
+  return {
+    disconnect: { visible: Boolean(device && device.connected) && !confirm, disabled },
+    forget: { visible: !confirm, disabled },
+    confirm,
+  };
+}
+
+// The inline confirm before a pairing is removed.
+export function forgetPrompt(device) {
+  const name = device && device.name ? device.name : "this phone";
+  return {
+    question: `Forget ${name}?`,
+    detail: "It will stop connecting to the house speakers until you pair it again.",
+    confirm: "Forget",
+    cancel: "Keep",
+  };
+}
+
+// Shown after a forget: the hub no longer knows the phone, but the phone still
+// remembers the speaker, and a stale entry there is what stops a fresh pairing.
+export function forgetReminder(name) {
+  const who = typeof name === "string" && name.length > 0 ? name : "the phone";
+  return `Forgot ${who}. On the phone, also forget the house speaker in Bluetooth settings, or pairing again may fail.`;
+}

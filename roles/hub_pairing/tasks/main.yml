@@ -29,6 +29,17 @@
         group: root
         mode: "0755"
 
+    # The device list keeps a per-host secret (for opaque device ids) and each
+    # phone's last-connected time here. Root-only: neither holds an address, but
+    # the secret must not be readable. The unit may write exactly this path.
+    - name: Ensure the pairing state directory exists
+      ansible.builtin.file:
+        path: /var/lib/snaphouse/pairing
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
     - name: Install the pairing service unit
       ansible.builtin.template:
         src: snaphouse-pairing.service.j2
@@ -61,8 +72,8 @@
 
     # The service runs its code in place from /opt/snaphouse, so restart it when
     # its modules change on a self-update rather than waiting for a reboot.
-    # pairservice.py is the service; pairing.py is the window driver it shares with
-    # the CLI. Gated on the on-device checkout (absent in the CI container, where
+    # pairservice.py is the service; pairdevices.py is its Bluetooth devices list;
+    # pairing.py is the window driver it shares with the CLI. Gated on the on-device checkout (absent in the CI container, where
     # the repo is read-only elsewhere).
     - name: Record the pairing module digests so the service restarts when they change
       ansible.builtin.copy:
@@ -73,6 +84,7 @@
         mode: "0644"
       loop:
         - pairservice.py
+        - pairdevices.py
         - pairing.py
       when: common_systemd_init
       notify: Restart the pairing service

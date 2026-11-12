@@ -137,6 +137,22 @@ stalled request can never freeze the buttons until a reload
 Never log or return the phone's or the adapter's address; the phone's name is
 returned only on the LAN page.
 
+## Bluetooth devices list and stale pairings
+
+Settings also lists the phones paired to the hub (`lib/snaphouse/pairdevices.py`,
+served by the pairing service at `GET /api/pair/devices`, with guarded
+`POST /api/pair/devices/disconnect` and `/forget`). Each device's `id` is an HMAC
+of its address under a per-host secret in `/var/lib/snaphouse/pairing` (mode 0700,
+the only path the otherwise read-only unit may write), so no address is ever
+returned or logged; `last_connected` is stored there by id, sampled on each
+request and every 30 s. The page side is `devices-controller.js` over the
+`rooms-model.js` helpers, with the pairing section's deadlines and visibility
+rule; forgetting asks inline first, then reminds the owner to forget the speaker
+on the phone too. In a pairing window, a phone the hub already had paired that
+fails authentication (the phone forgot the speaker, the hub kept the key) has its
+stale pairing removed once so its next try in the same window succeeds
+(`_make_line_handler` in `pairing.py`).
+
 ## mDNS advertises IPv4 only
 
 The `common` role sets `use-ipv6=no` ([server]) and `publish-aaaa-on-ipv4=no`

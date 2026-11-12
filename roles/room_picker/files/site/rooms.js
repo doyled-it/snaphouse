@@ -69,8 +69,14 @@ import {
   shouldPollPair,
   pairControlsDisabled,
   pairCountdownCue,
+  deviceStatus,
+  lastConnectedText,
+  deviceButtons,
+  forgetPrompt,
+  forgetReminder,
 } from "./rooms-model.js";
 import { createPairController } from "./pair-controller.js";
+import { createDevicesController } from "./devices-controller.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
 // is down, and each Server.GetStatus is a full status read, so a slow cadence
@@ -97,6 +103,9 @@ const ALL_FOLDERS = "all";
 // Settings screen is showing or a window is live (shouldPollPair). The same tick
 // re-renders the countdown so it counts down smoothly between fetches.
 const PAIR_MS = 1000;
+// The Bluetooth devices list changes at a human pace (a phone connects or
+// leaves), so it is polled every few seconds under the same visibility rule.
+const DEVICES_MS = 5000;
 // How long a toast lingers before it clears itself.
 const TOAST_MS = 7000;
 
@@ -185,6 +194,14 @@ const els = {
   pairAgain: document.getElementById("pair-again"),
   pairError: document.getElementById("pair-error"),
   pairAnnounce: document.getElementById("pair-announce"),
+  devList: document.getElementById("dev-list"),
+  devLoading: document.getElementById("dev-loading"),
+  devEmpty: document.getElementById("dev-empty"),
+  devStale: document.getElementById("dev-stale"),
+  devError: document.getElementById("dev-error"),
+  devReminder: document.getElementById("dev-reminder"),
+  devReminderText: document.getElementById("dev-reminder-text"),
+  devReminderDismiss: document.getElementById("dev-reminder-dismiss"),
 
   frameQuiet: document.getElementById("frame-quiet"),
   fqFrameField: document.getElementById("fq-frame-field"),
@@ -308,7 +325,7 @@ const state = {
   // last service answer, whether this page opened a window, whether a POST is in
   // flight, and lost contact. `lastCue` is the coarse countdown cue last spoken,
   // so each is announced only once.
-  pair: { lastCue: null },
+  pair: { lastCue: null, lastParsed: "idle" },
   // A fingerprint of the frame context the mirror and history were last fetched
   // for (the legacy flag, the known frame ids, and the chosen frame). When it
   // changes, the per-frame URLs changed, so those must be re-fetched even if the
@@ -336,6 +353,8 @@ async function start() {
   wireArtManager();
   wireFrameControl();
   wirePairing();
+  wireDevices();
+  renderDevices();
   resolveSelectedFrame();
   showScreen(screenFromHash(window.location.hash));
   renderPairing();
@@ -359,6 +378,7 @@ async function start() {
   // Poll the pairing state and tick its countdown once a second; pairTick itself
   // polls only when shouldPollPair allows it, so a hidden tab never polls.
   setInterval(pairTick, PAIR_MS);
+  setInterval(devicesTick, DEVICES_MS);
 
   // The URL hash is the screen and the chosen frame: Back, forward, and a shared
   // link all land on the right one.
@@ -385,6 +405,7 @@ async function start() {
     refreshNowPlaying();
     refreshHistory();
     maybePollPairing();
+    maybePollDevices();
   });
 }
 
@@ -443,8 +464,9 @@ function showScreen(name) {
   els.screenTitle.textContent = SCREEN_LABELS[screen];
   window.scrollTo({ top: 0, behavior: "auto" });
   // Entering Settings shows the pairing state, so fetch it now rather than
-  // waiting up to a second for the next tick.
+  // waiting up to a second for the next tick. The devices list too.
   maybePollPairing();
+  maybePollDevices();
 }
 
 // The known frame ids (from the parsed frame-control document), and whether the
@@ -1299,7 +1321,14 @@ const PAIR_OUTCOME_PHASES = ["paired", "failed", "closed"];
 
 const pair = createPairController({
   fetch: (url, init) => fetch(url, init),
-  onChange: () => renderPairing(),
+  onChange: () => {
+    renderPairing();
+    // A phone that just paired belongs in the devices list now, not in 5 s.
+    if (pair.state.parsed.state === "paired" && state.pair.lastParsed !== "paired") {
+      maybePollDevices();
+    }
+    state.pair.lastParsed = pair.state.parsed.state;
+  },
 });
 
 function wirePairing() {
@@ -2475,4 +2504,185 @@ function updateSections() {
 function setConnection(message) {
   els.connection.textContent = message;
   els.connection.hidden = message === "";
+}
+
+
+// --------------------------------------------------------------------------- //
+// Bluetooth devices: the phones paired to the hub. The rows are drawn from the
+// devices controller (devices-controller.js), which owns the requests, the
+// in-flight flag and the forget confirm; this is the thin view over it. The list
+// is polled every DEVICES_MS while the tab is visible and Settings is showing,
+// the same rule as the pairing section.
+// --------------------------------------------------------------------------- //
+
+const devices = createDevicesController({
+  fetch: (url, init) => fetch(url, init),
+  onChange: () => renderDevices(),
+});
+
+// What the list last drew, so a poll that changes nothing leaves the rows (and
+// whatever has keyboard focus in them) alone.
+let devicesDrawn = "";
+
+function wireDevices() {
+  els.devList.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) {
+      return;
+    }
+    const id = button.dataset.id;
+    switch (button.dataset.action) {
+      case "disconnect":
+        devices.disconnect(id);
+        break;
+      case "forget":
+        devices.askForget(id);
+        break;
+      case "forget-yes":
+        devices.confirmForget();
+        break;
+      case "forget-no":
+        devices.cancelForget();
+        break;
+      default:
+        break;
+    }
+  });
+  els.devReminderDismiss.addEventListener("click", () => devices.dismissReminder());
+}
+
+function devicesPollAllowed() {
+  return shouldPollPair({
+    documentVisible: document.visibilityState === "visible",
+    settingsVisible: state.screen === "settings",
+    windowActive: false,
+  });
+}
+
+function maybePollDevices() {
+  if (devicesPollAllowed()) {
+    devices.poll();
+  }
+}
+
+function devicesTick() {
+  // Re-render too, so "5 minutes ago" keeps counting between fetches.
+  renderDevices();
+  maybePollDevices();
+}
+
+function deviceButton(label, action, id, { disabled, ghost = true, danger = false }) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `btn btn-small dev-btn${ghost ? " btn-ghost" : ""}${danger ? " danger" : ""}`;
+  button.textContent = label;
+  button.dataset.action = action;
+  button.dataset.id = id;
+  button.disabled = disabled;
+  return button;
+}
+
+function deviceRow(device) {
+  const buttons = deviceButtons(device, devices.state);
+  const row = document.createElement("li");
+  row.className = "dev-row";
+
+  const text = document.createElement("div");
+  const name = document.createElement("p");
+  name.className = "dev-name";
+  name.textContent = device.name;
+  const stateLine = document.createElement("p");
+  stateLine.className = "dev-state";
+  const status = document.createElement("span");
+  status.className = `dev-status${device.connected ? " on" : ""}`;
+  status.textContent = deviceStatus(device);
+  stateLine.append(status);
+  const last = lastConnectedText(device, Date.now());
+  if (last) {
+    const lastEl = document.createElement("span");
+    lastEl.textContent = last;
+    stateLine.append(lastEl);
+  }
+  text.append(name, stateLine);
+  row.append(text);
+
+  if (buttons.confirm) {
+    const prompt = forgetPrompt(device);
+    const box = document.createElement("div");
+    box.className = "dev-confirm";
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", prompt.question);
+    const question = document.createElement("p");
+    question.className = "dev-confirm-q";
+    question.textContent = prompt.question;
+    const detail = document.createElement("p");
+    detail.className = "dev-confirm-detail";
+    detail.textContent = prompt.detail;
+    const actions = document.createElement("div");
+    actions.className = "dev-actions";
+    actions.append(
+      deviceButton(prompt.cancel, "forget-no", device.id, { disabled: devices.state.pending, ghost: false }),
+      deviceButton(prompt.confirm, "forget-yes", device.id, { disabled: devices.state.pending, danger: true }),
+    );
+    box.append(question, detail, actions);
+    row.append(box);
+    return row;
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "dev-actions";
+  if (buttons.disconnect.visible) {
+    actions.append(
+      deviceButton("Disconnect", "disconnect", device.id, { disabled: buttons.disconnect.disabled }),
+    );
+  }
+  if (buttons.forget.visible) {
+    actions.append(
+      deviceButton("Forget", "forget", device.id, { disabled: buttons.forget.disabled, danger: true }),
+    );
+  }
+  row.append(actions);
+  return row;
+}
+
+function renderDevices() {
+  const s = devices.state;
+  els.devLoading.hidden = s.loaded;
+  els.devEmpty.hidden = !s.loaded || s.devices.length > 0;
+  els.devStale.hidden = !s.stale;
+  els.devError.hidden = !s.error;
+  els.devError.textContent = s.error || "";
+  els.devReminder.hidden = s.forgotten === null;
+  els.devReminderText.textContent = s.forgotten === null ? "" : forgetReminder(s.forgotten);
+
+  const now = Date.now();
+  const signature = JSON.stringify([
+    s.devices.map((d) => [d.id, d.name, d.connected, lastConnectedText(d, now)]),
+    s.pending,
+    s.confirmingId,
+  ]);
+  if (signature === devicesDrawn) {
+    return;
+  }
+  devicesDrawn = signature;
+
+  // Keep keyboard focus on the same control across a redraw, and move it to the
+  // safe answer when a confirm opens.
+  const active = document.activeElement;
+  const focusKey =
+    active && active.dataset && active.dataset.action
+      ? `${active.dataset.action}:${active.dataset.id}`
+      : null;
+  els.devList.replaceChildren(...s.devices.map(deviceRow));
+  let target = null;
+  if (focusKey) {
+    const [action, id] = focusKey.split(":");
+    target = els.devList.querySelector(`[data-action="${action}"][data-id="${id}"]:not(:disabled)`);
+  }
+  if (!target && s.confirmingId !== null) {
+    target = els.devList.querySelector(`[data-action="forget-no"][data-id="${s.confirmingId}"]`);
+  }
+  if (target) {
+    target.focus();
+  }
 }

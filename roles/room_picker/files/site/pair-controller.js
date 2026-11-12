@@ -26,6 +26,33 @@ import {
 // answers in milliseconds on the LAN, so this is generous.
 export const PAIR_REQUEST_TIMEOUT_MS = 8000;
 
+// One request with a deadline, shared with the devices controller. Resolves to
+// { status, text } or rejects (network error or timeout). The timer races the
+// request itself, so a fetch that ignores the abort signal still cannot hold the
+// caller forever.
+export function createExchange(fetchImpl, timeoutMs = PAIR_REQUEST_TIMEOUT_MS) {
+  return async function exchange(request) {
+    const abort = typeof AbortController === "function" ? new AbortController() : null;
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        abort?.abort();
+        reject(new Error("timeout"));
+      }, timeoutMs);
+    });
+    const run = (async () => {
+      const response = await fetchImpl(request.url, { ...request.init, signal: abort?.signal });
+      return { status: response.status, text: await response.text() };
+    })();
+    run.catch(() => {});
+    try {
+      return await Promise.race([run, deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
 const IDLE = Object.freeze({ state: "idle", until: null, passkey: null, device: null, message: null });
 
 export function createPairController({
@@ -54,29 +81,7 @@ export function createPairController({
     onChange(state);
   }
 
-  // One request with a deadline. Resolves to { status, text } or rejects (network
-  // error or timeout). The timer races the request itself, so a fetch that ignores
-  // the abort signal still cannot hold the caller forever.
-  async function exchange(request) {
-    const abort = typeof AbortController === "function" ? new AbortController() : null;
-    let timer;
-    const deadline = new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        abort?.abort();
-        reject(new Error("timeout"));
-      }, timeoutMs);
-    });
-    const run = (async () => {
-      const response = await fetchImpl(request.url, { ...request.init, signal: abort?.signal });
-      return { status: response.status, text: await response.text() };
-    })();
-    run.catch(() => {});
-    try {
-      return await Promise.race([run, deadline]);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
+  const exchange = createExchange(fetchImpl, timeoutMs);
 
   // Send one action. Returns the interpreted result, or { ok: false, error }.
   async function post(request, endpoint) {
