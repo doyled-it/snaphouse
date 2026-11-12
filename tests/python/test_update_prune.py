@@ -186,10 +186,12 @@ def test_fallback_removes_a_check_only_the_failed_commit_shipped(world):
 
 def test_expected_checks_reads_the_real_host_inventory():
     office = update.expected_checks(REPO_ROOT, "office")
-    # The common role ships avahi_mdns.sh on every host (issue #84). The office Pi
+    # The common role ships avahi_mdns.sh (issue #84) and wifi_powersave.sh (issue
+    # #140) on every host. The office Pi
     # also drives a frame, so it gained nightstand_bootstrap and its nightstand.sh.
     assert office == {
         "avahi_mdns.sh",
+        "wifi_powersave.sh",
         "web.sh",
         "selfupdate.sh",
         "snapclient.sh",
