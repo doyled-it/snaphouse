@@ -4,7 +4,8 @@
 # owns (this drops into /etc/nginx/snaphouse.d). LAN-only: there is no inbound
 # access from the internet (AGENTS.md).
 #
-#   /api/pair/   the pairing window API, proxied to the loopback pairing service.
+#   /api/pair/   the pairing window API and the Bluetooth devices list
+#                (/api/pair/devices), proxied to the loopback pairing service.
 #
 # The room picker POSTs start and stop here and polls state (confirm still
 # answers 409, kept for compatibility); without this

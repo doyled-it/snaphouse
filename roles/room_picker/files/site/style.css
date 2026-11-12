@@ -1564,3 +1564,135 @@ a.row-title {
     height: 48px;
   }
 }
+
+
+/* --- Bluetooth devices --------------------------------------------------- */
+
+/* One row per paired phone, on the same hairlines as the other lists. The name
+   and its connection state sit on the left, the actions on the right; on a phone
+   the actions drop under the text. Every control is 48 px tall so the kiosk
+   panel's finger-sized targets hold. */
+.dev-rows .dev-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.dev-rows .dev-row:first-child {
+  border-top: none;
+}
+
+.dev-name {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* The state is a dot plus words, never colour alone: a filled green dot when
+   connected, an open ring when not. */
+.dev-state {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.dev-status::before {
+  content: "";
+  display: inline-block;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  margin-right: 7px;
+  border: 2px solid var(--muted);
+  border-radius: 50%;
+  vertical-align: 0;
+}
+
+.dev-status.on {
+  color: var(--green-text);
+  font-weight: 600;
+}
+
+.dev-status.on::before {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.dev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.dev-btn {
+  min-height: 48px;
+}
+
+/* Forget asks first, in the row, in place of the two buttons. The safe answer
+   comes first in reading order and takes focus. */
+.dev-confirm {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--mat);
+}
+
+.dev-confirm .dev-actions {
+  justify-content: flex-start;
+}
+
+.dev-confirm-q {
+  margin: 0;
+  font-weight: 600;
+}
+
+.dev-confirm-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+/* The phone-side step after a forget. It stays until dismissed: the owner is
+   about to walk to the phone, and it should still be here when they look back. */
+.dev-reminder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--green);
+  background: var(--mat);
+  border-radius: var(--radius-sm);
+}
+
+.dev-reminder > span {
+  flex: 1 1 260px;
+}
+
+@media (max-width: 460px) {
+  .dev-rows .dev-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dev-actions {
+    justify-content: flex-start;
+  }
+}
+
+.dev-btn.danger {
+  color: var(--red-text);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
+}

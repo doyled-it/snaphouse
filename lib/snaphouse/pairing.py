@@ -159,6 +159,10 @@ _PAIR_FAIL = re.compile(
     r"Pairing Not Allowed|Connection timed out|AuthenticationCanceled"
 )
 
+# The authentication failures that mean "the hub holds a key the phone no longer
+# has". Android reports it as "couldn't communicate".
+_STALE_AUTH = re.compile(r"Authentication Failed|AuthenticationFailed")
+
 
 def _service_allowed(uuid: str) -> bool:
     """True if uuid is an A2DP or AVRCP service the inbound agent authorizes."""
@@ -200,6 +204,21 @@ def _parse_device_name(line: str) -> Optional[str]:
     if normalized == address.replace(":", "").upper():
         return None
     return name
+
+
+def _parse_device_address(line: str) -> Optional[str]:
+    """The device address on a bluetoothctl "Device <addr> ..." line, or None.
+
+    Used only to match a line to a device in memory (the stale-pairing check);
+    the address is never logged or returned.
+    """
+    match = _DEVICE_LINE.search(_strip_ansi(line))
+    return match.group(1) if match else None
+
+
+def _is_auth_failure(line: str) -> bool:
+    """True if the line reports a failed authentication (a stale-key symptom)."""
+    return _STALE_AUTH.search(_strip_ansi(line)) is not None
 
 
 def _parse_pair_result(line: str) -> Optional[str]:
@@ -391,6 +410,7 @@ def _make_line_handler(
     report: Optional[Report],
     stop_event,
     select_failed: Optional[threading.Event] = None,
+    known: Optional[dict] = None,
 ) -> Callable[[str], None]:
     """Build the dispatcher the reader feeds, one line at a time.
 
@@ -400,8 +420,16 @@ def _make_line_handler(
     stop event so the window closes the adapter promptly rather than waiting out
     the full duration. The device name is used only to show the operator or the
     page who is pairing; it is never logged.
+
+    `known` maps the addresses that were paired before the window opened. When a
+    known phone fails authentication, the hub holds a key the phone has forgotten
+    (Android says "couldn't communicate"), so the stale pairing is removed once and
+    the window stays open for the phone's next try. The address is kept only in
+    memory, to match lines, and is dropped from `known` on removal so the fresh
+    pairing is trusted like a new one.
     """
-    tracked = {"device": None}
+    tracked = {"device": None, "address": None}
+    removed: set[str] = set()
 
     def on_line(line: str) -> None:
         if select_failed is not None and "not available" in _strip_ansi(line):
@@ -412,7 +440,17 @@ def _make_line_handler(
         name = _parse_device_name(line)
         if name:
             tracked["device"] = name
+        address = _parse_device_address(line)
+        if address:
+            tracked["address"] = address
         result = _parse_pair_result(line)
+        if result == "fail" and known is not None and _is_auth_failure(line):
+            stale = tracked["address"]
+            if stale in known and stale not in removed:
+                removed.add(stale)
+                _safe_send(proc, f"remove {stale}")
+                del known[stale]
+                return
         if result is not None:
             if report is not None:
                 event = "paired" if result == "ok" else "failed"
@@ -542,6 +580,7 @@ def run_pairing_window(
                 report=report,
                 stop_event=stop_event,
                 select_failed=select_failed,
+                known=before,
             )
         )
 

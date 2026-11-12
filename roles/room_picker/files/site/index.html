@@ -253,6 +253,23 @@
           <p id="pair-announce" class="pair-sr" aria-live="polite"></p>
         </section>
 
+        <!-- Bluetooth devices: every phone paired to the hub, with its connection
+             state. Disconnect drops the current connection and keeps the pairing;
+             Forget removes the pairing after an inline confirm. The rows are drawn
+             by rooms.js from GET /api/pair/devices. -->
+        <section id="devices" class="section" aria-labelledby="dev-h">
+          <h2 id="dev-h" class="section-h">Bluetooth devices</h2>
+          <p id="dev-reminder" class="dev-reminder" role="status" hidden>
+            <span id="dev-reminder-text"></span>
+            <button id="dev-reminder-dismiss" class="btn btn-small dev-btn" type="button">Got it</button>
+          </p>
+          <ul id="dev-list" class="rows dev-rows" aria-label="Paired phones"></ul>
+          <p id="dev-loading" class="empty">Checking the hub.</p>
+          <p id="dev-empty" class="empty" hidden>No phones are paired yet. Use Pair a phone above.</p>
+          <p id="dev-stale" class="settings-note" hidden>Cannot reach the hub. Showing the last list.</p>
+          <p id="dev-error" class="fs-error" role="alert" hidden></p>
+        </section>
+
         <!-- Now playing on the frame: one toggle per kind of audio. -->
         <section id="frame-settings" class="section" aria-labelledby="fs-h">
           <h2 id="fs-h" class="section-h">Now playing on the frame</h2>

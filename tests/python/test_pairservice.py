@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from snaphouse import pairservice
+from snaphouse import pairdevices, pairservice
 
 
 CONTROLLER = "AA:BB:CC:DD:EE:FF"
@@ -364,10 +364,40 @@ class FakeService:
                 "device": None, "message": None}
 
 
+class FakeDevices:
+    """A duck-typed DeviceBook for the HTTP routing tests."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+        self.listing = [
+            {"id": "a" * 32, "name": "Pixel 7", "connected": True,
+             "last_connected": "2026-11-12T20:00:00Z"},
+        ]
+        self.error: Exception | None = None
+
+    def devices(self):
+        self.calls.append(("devices",))
+        if self.error:
+            raise self.error
+        return list(self.listing)
+
+    def disconnect(self, device_id):
+        self.calls.append(("disconnect", device_id))
+        if self.error:
+            raise self.error
+        return {**self.listing[0], "connected": False}
+
+    def forget(self, device_id):
+        self.calls.append(("forget", device_id))
+        if self.error:
+            raise self.error
+
+
 class Client:
-    def __init__(self, service):
+    def __init__(self, service, devices=None):
         self.service = service
-        app = pairservice.PairingApp(service)
+        self.devices = devices
+        app = pairservice.PairingApp(service, devices=devices)
         self.server = pairservice.make_server(app, "127.0.0.1", 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -494,3 +524,116 @@ def test_http_unknown_route_is_404(client):
 def test_http_get_on_a_post_route_is_405(client):
     status, _ = client.request("GET", "/api/pair/start")
     assert status == 405
+
+
+# --------------------------------------------------------------------------- #
+# The devices endpoints
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def dclient():
+    c = Client(FakeService(), FakeDevices())
+    yield c
+    c.close()
+
+
+def test_http_devices_lists_the_devices(dclient):
+    status, body = dclient.request("GET", "/api/pair/devices")
+    assert status == 200
+    assert body == {"devices": dclient.devices.listing}
+
+
+def test_http_devices_get_needs_no_guard_header(dclient):
+    status, _ = dclient.request("GET", "/api/pair/devices", header=False)
+    assert status == 200
+
+
+def test_http_devices_is_404_when_the_service_has_no_device_book():
+    c = Client(FakeService())
+    try:
+        assert c.request("GET", "/api/pair/devices")[0] == 404
+        assert c.request("POST", "/api/pair/devices/forget", body={"id": "a" * 32})[0] == 404
+    finally:
+        c.close()
+
+
+def test_http_disconnect_returns_the_updated_device(dclient):
+    status, body = dclient.request(
+        "POST", "/api/pair/devices/disconnect", body={"id": "a" * 32}
+    )
+    assert status == 200
+    assert body["connected"] is False
+    assert ("disconnect", "a" * 32) in dclient.devices.calls
+
+
+def test_http_forget_returns_forgotten_true(dclient):
+    status, body = dclient.request(
+        "POST", "/api/pair/devices/forget", body={"id": "a" * 32}
+    )
+    assert (status, body) == (200, {"forgotten": True})
+    assert ("forget", "a" * 32) in dclient.devices.calls
+
+
+@pytest.mark.parametrize("action", ["disconnect", "forget"])
+def test_http_device_posts_require_the_guard_header(dclient, action):
+    status, _ = dclient.request(
+        "POST", f"/api/pair/devices/{action}", body={"id": "a" * 32}, header=False
+    )
+    assert status == 403
+    assert not any(c[0] == action for c in dclient.devices.calls)
+
+
+@pytest.mark.parametrize("action", ["disconnect", "forget"])
+@pytest.mark.parametrize(
+    "body", [None, [], {"id": 5}, {"nope": "x"}, {"id": ""}]
+)
+def test_http_device_posts_with_a_malformed_body_are_400(dclient, action, body):
+    status, _ = dclient.request("POST", f"/api/pair/devices/{action}", body=body)
+    assert status == 400
+    assert not any(c[0] == action for c in dclient.devices.calls)
+
+
+def test_http_device_post_with_invalid_json_is_400(dclient):
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{dclient.port}/api/pair/devices/forget",
+        data=b"{nope", headers={"X-Snaphouse": "1"}, method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as err:
+        urllib.request.urlopen(req)
+    assert err.value.code == 400
+
+
+@pytest.mark.parametrize("action", ["disconnect", "forget"])
+def test_http_unknown_id_is_404(dclient, action):
+    dclient.devices.error = pairdevices.UnknownDevice("unknown")
+    status, _ = dclient.request("POST", f"/api/pair/devices/{action}", body={"id": "b" * 32})
+    assert status == 404
+
+
+def test_http_a_badly_shaped_id_from_the_book_is_400(dclient):
+    dclient.devices.error = pairdevices.BadId("bad")
+    status, _ = dclient.request("POST", "/api/pair/devices/forget", body={"id": "zz"})
+    assert status == 400
+
+
+def test_http_disconnect_of_a_device_not_connected_is_409(dclient):
+    dclient.devices.error = pairdevices.NotConnected("not connected")
+    status, _ = dclient.request("POST", "/api/pair/devices/disconnect", body={"id": "a" * 32})
+    assert status == 409
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/api/pair/devices"),
+    ("POST", "/api/pair/devices/disconnect"),
+])
+def test_http_bluetooth_unavailable_is_503(dclient, method, path):
+    dclient.devices.error = pairdevices.Unavailable("down")
+    body = {"id": "a" * 32} if method == "POST" else None
+    status, _ = dclient.request(method, path, body=body)
+    assert status == 503
+
+
+def test_http_wrong_methods_on_the_device_routes_are_405(dclient):
+    assert dclient.request("POST", "/api/pair/devices", body={})[0] == 405
+    assert dclient.request("GET", "/api/pair/devices/forget")[0] == 405

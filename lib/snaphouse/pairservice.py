@@ -45,7 +45,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 
-from snaphouse import pairing
+from snaphouse import pairdevices, pairing
 
 
 # --------------------------------------------------------------------------- #
@@ -66,6 +66,9 @@ GUARD_HEADER = "X-Snaphouse"
 GUARD_VALUE = "1"
 
 _API_PREFIX = "/api/pair/"
+
+#: The device-list writes: drop a connection, or forget a pairing.
+_DEVICE_POSTS = ("/api/pair/devices/disconnect", "/api/pair/devices/forget")
 
 #: The terminal states: once set they stay readable until the next start.
 _TERMINAL = ("paired", "failed")
@@ -287,16 +290,29 @@ class PairingService:
 
 
 class PairingApp:
-    """Routes the four endpoints to the service; enforces the header guard."""
+    """Routes the pairing and devices endpoints; enforces the header guard on writes."""
 
-    def __init__(self, service: PairingService, *, log: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        service: PairingService,
+        *,
+        devices: Optional[pairdevices.DeviceBook] = None,
+        log: Optional[logging.Logger] = None,
+    ) -> None:
         self.service = service
+        self.devices = devices
         self.log = log or logging.getLogger("snaphouse.pairservice")
 
     def handle_post(self, handler: "_Handler") -> None:
         path = urllib.parse.urlsplit(handler.path).path
+        if path in _DEVICE_POSTS and self.devices is not None:
+            if handler.headers.get(GUARD_HEADER) != GUARD_VALUE:
+                handler.send_api_error(HTTPStatus.FORBIDDEN, "That request is not allowed.")
+                return
+            self._device_action(handler, path.rsplit("/", 1)[1])
+            return
         if path not in ("/api/pair/start", "/api/pair/confirm", "/api/pair/stop"):
-            if path == "/api/pair/state":
+            if path == "/api/pair/state" or (path == "/api/pair/devices" and self.devices):
                 handler.send_api_error(
                     HTTPStatus.METHOD_NOT_ALLOWED, "Use GET for this endpoint."
                 )
@@ -318,12 +334,50 @@ class PairingApp:
         path = urllib.parse.urlsplit(handler.path).path
         if path == "/api/pair/state":
             handler.send_api_json(HTTPStatus.OK, self.service.state())
-        elif path in ("/api/pair/start", "/api/pair/confirm", "/api/pair/stop"):
+        elif path == "/api/pair/devices" and self.devices is not None:
+            self._devices_list(handler)
+        elif path in ("/api/pair/start", "/api/pair/confirm", "/api/pair/stop") or (
+            path in _DEVICE_POSTS and self.devices is not None
+        ):
             handler.send_api_error(
                 HTTPStatus.METHOD_NOT_ALLOWED, "Use POST for this endpoint."
             )
         else:
             handler.send_api_error(HTTPStatus.NOT_FOUND, "Unknown endpoint.")
+
+    def _devices_list(self, handler: "_Handler") -> None:
+        try:
+            listing = self.devices.devices()
+        except pairdevices.Unavailable:
+            handler.send_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "Bluetooth is not available.")
+            return
+        handler.send_api_json(HTTPStatus.OK, {"devices": listing})
+
+    def _device_action(self, handler: "_Handler", action: str) -> None:
+        body = _read_body(handler)
+        try:
+            data = json.loads(body.decode("utf-8")) if body else None
+        except (ValueError, UnicodeDecodeError):
+            handler.send_api_error(HTTPStatus.BAD_REQUEST, "That request body was not valid JSON.")
+            return
+        device_id = data.get("id") if isinstance(data, dict) else None
+        if not isinstance(device_id, str) or not device_id:
+            handler.send_api_error(HTTPStatus.BAD_REQUEST, "The body must be {\"id\": \"...\"}.")
+            return
+        try:
+            if action == "disconnect":
+                handler.send_api_json(HTTPStatus.OK, self.devices.disconnect(device_id))
+            else:
+                self.devices.forget(device_id)
+                handler.send_api_json(HTTPStatus.OK, {"forgotten": True})
+        except pairdevices.BadId:
+            handler.send_api_error(HTTPStatus.BAD_REQUEST, "That device id is not valid.")
+        except pairdevices.UnknownDevice:
+            handler.send_api_error(HTTPStatus.NOT_FOUND, "That device is not paired.")
+        except pairdevices.NotConnected:
+            handler.send_api_error(HTTPStatus.CONFLICT, "That device is not connected.")
+        except pairdevices.Unavailable:
+            handler.send_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "Bluetooth is not available.")
 
     def _start(self, handler: "_Handler") -> None:
         _read_body(handler)  # drain any body; start takes none
@@ -459,7 +513,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     service = PairingService(controller, log=log)
-    app = PairingApp(service, log=log)
+    devices = pairdevices.DeviceBook(controller, log=log)
+    devices.start_ticker()
+    app = PairingApp(service, devices=devices, log=log)
     server = make_server(app, args.host, args.port)
     log.info("pairing service listening on %s:%s", args.host, args.port)
     try:
@@ -467,6 +523,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     except KeyboardInterrupt:  # pragma: no cover - signal path
         pass
     finally:
+        devices.stop_ticker()
         service.stop()
         server.shutdown()
         server.server_close()

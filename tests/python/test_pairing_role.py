@@ -220,6 +220,29 @@ def test_role_records_module_digests_for_restart_on_change():
     flattened = [item for loop in digest_loops if loop for item in loop]
     assert "pairservice.py" in flattened
     assert "pairing.py" in flattened
+    assert "pairdevices.py" in flattened
+
+
+def test_unit_may_write_only_the_root_only_pairing_state_directory():
+    # The device list persists its secret and last-connected times under
+    # /var/lib/snaphouse/pairing, so the otherwise read-only unit needs exactly
+    # that path writable (ProtectSystem=strict).
+    unit = _unit()
+    assert "ProtectSystem=strict" in unit
+    assert re.search(r"^ReadWritePaths=/var/lib/snaphouse/pairing$", unit, re.MULTILINE)
+
+
+def test_role_creates_the_root_only_pairing_state_directory():
+    made = [
+        args
+        for task in _tasks()
+        for module, args in [_module(task)]
+        if module.endswith("file") and args.get("path") == "/var/lib/snaphouse/pairing"
+    ]
+    assert made, "no task creates /var/lib/snaphouse/pairing"
+    assert made[0]["state"] == "directory"
+    assert made[0]["owner"] == "root"
+    assert made[0]["mode"] in ("0700", "700")
 
 
 def test_handlers_restart_the_service_and_are_gated_on_systemd():

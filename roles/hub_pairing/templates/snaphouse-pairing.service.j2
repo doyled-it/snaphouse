@@ -35,11 +35,13 @@ Restart=always
 RestartSec=5
 
 # Hardening. It runs as root for BlueZ, so it is boxed in: the filesystem is
-# read-only (ProtectSystem=strict; it writes nothing, only reads local.yml and
-# talks to bluetoothd over the system D-Bus), a private /tmp, and no privilege
+# read-only (ProtectSystem=strict; it reads local.yml, talks to bluetoothd over
+# the system D-Bus, and writes only its own root-only state directory below, which
+# holds the device-id secret and the last-connected times), a private /tmp, and no privilege
 # escalation. It reaches BlueZ through D-Bus, not raw HCI sockets, so it needs no
 # extra capabilities.
 ProtectSystem=strict
+ReadWritePaths=/var/lib/snaphouse/pairing
 NoNewPrivileges=yes
 PrivateTmp=yes
 

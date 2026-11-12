@@ -18,6 +18,8 @@ from __future__ import annotations
 import os
 import stat
 
+import threading
+
 import pytest
 import yaml
 
@@ -803,3 +805,107 @@ def test_opening_the_window_survives_a_process_that_died_at_once():
 
     _run(session, DyingProc(), FakeClock(), duration=5.0)
     assert any("discoverable off" in s for s in sessions)
+
+
+# --------------------------------------------------------------------------- #
+# Stale pairings: the hub kept a key the phone forgot (issue #134)
+# --------------------------------------------------------------------------- #
+
+KNOWN = "11:22:33:44:55:66"
+STRANGER = "77:88:99:AA:BB:CC"
+AUTH_FAIL = "Failed to pair: org.bluez.Error.AuthenticationFailed"
+
+
+def _run_with_lines(lines, *, paired_before, paired_after=None):
+    """Run a window whose bluetoothctl emits `lines` on the first clock tick.
+
+    Returns (proc, reports, stopped, sessions). `paired_before` is what the
+    opening snapshot reports; `paired_after` (default: the same) the trust-time one.
+    """
+    proc = FakeProc()
+    clock = FakeClock()
+    reports: list[tuple[str, dict]] = []
+    stop = threading.Event()
+    snapshots = iter([paired_before, paired_after if paired_after is not None else paired_before])
+    sessions: list[list[str]] = []
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        if "paired-devices" in commands:
+            return next(snapshots)
+        return ""
+
+    fed = {"done": False}
+
+    def sleep(seconds):
+        if not fed["done"]:
+            fed["done"] = True
+            for line in lines:
+                proc.reader(line + "\n")
+        clock.sleep(seconds)
+
+    pairing.run_pairing_window(
+        CONTROLLER,
+        duration=5.0,
+        spawn=lambda: proc,
+        confirm=lambda passkey, device=None: True,
+        session=session,
+        monotonic=clock.monotonic,
+        sleep=sleep,
+        stop_event=None,
+        report=lambda event, info: reports.append((event, info)),
+    )
+    return proc, reports, sessions
+
+
+def test_parse_device_address_reads_the_address_through_ansi():
+    line = f"{ESC2}[0;93m[CHG]{ESC2}[0m Device {KNOWN} Connected: yes"
+    assert pairing._parse_device_address(line) == KNOWN
+    assert pairing._parse_device_address("Pairing successful") is None
+
+
+def test_an_already_paired_phone_failing_authentication_has_its_stale_pairing_removed():
+    # The phone forgot the speaker; the hub kept the old key. Android reports
+    # "couldn't communicate". The window removes the stale pairing and stays open
+    # so the phone's next try in this same window succeeds.
+    proc, reports, _ = _run_with_lines(
+        [f"[CHG] Device {KNOWN} Connected: yes", AUTH_FAIL],
+        paired_before=f"Device {KNOWN} Pat's Phone\n",
+    )
+    assert f"remove {KNOWN}" in proc.sent
+    assert proc.sent.index(f"remove {KNOWN}") > proc.sent.index("discoverable on")
+    assert reports == []  # not a failed pairing: the window keeps waiting
+
+
+def test_the_retry_after_a_stale_removal_pairs_and_the_phone_is_trusted_again():
+    proc, reports, sessions = _run_with_lines(
+        [
+            f"[CHG] Device {KNOWN} Connected: yes",
+            AUTH_FAIL,
+            f"[NEW] Device {KNOWN} Pat's Phone",
+            "Pairing successful",
+        ],
+        paired_before=f"Device {KNOWN} Pat's Phone\n",
+        paired_after=f"Device {KNOWN} Pat's Phone\n",
+    )
+    assert [event for event, _ in reports] == ["paired"]
+    trusted = [c for s in sessions for c in s if c.startswith("trust ")]
+    assert trusted == [f"trust {KNOWN}"]
+
+
+def test_a_phone_that_was_not_paired_before_is_not_removed_and_the_failure_is_reported():
+    proc, reports, _ = _run_with_lines(
+        [f"[CHG] Device {STRANGER} Connected: yes", AUTH_FAIL],
+        paired_before=f"Device {KNOWN} Pat's Phone\n",
+    )
+    assert not any(c.startswith("remove ") for c in proc.sent)
+    assert [event for event, _ in reports] == ["failed"]
+
+
+def test_a_second_authentication_failure_for_the_same_phone_is_reported_not_removed_again():
+    proc, reports, _ = _run_with_lines(
+        [f"[CHG] Device {KNOWN} Connected: yes", AUTH_FAIL, AUTH_FAIL],
+        paired_before=f"Device {KNOWN} Pat's Phone\n",
+    )
+    assert proc.sent.count(f"remove {KNOWN}") == 1
+    assert [event for event, _ in reports] == ["failed"]
