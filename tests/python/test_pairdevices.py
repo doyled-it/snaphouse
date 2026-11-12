@@ -41,7 +41,7 @@ class FakeBluez:
             return "Controller 00:00:00:00:00:00 not available\n"
         out = [f"Controller {CONTROLLER} (public)\n"]
         for command in commands:
-            if command == "paired-devices":
+            if command == "devices Paired":
                 for address, dev in self.devices.items():
                     out.append(f"\x1b[0;94mDevice\x1b[0m {address} {dev['name'] or address}\n")
             elif command.startswith("info "):
@@ -209,7 +209,7 @@ def test_a_device_gone_between_the_list_and_info_does_not_fail_the_listing(bluez
 
     def racing(commands, timeout=None):
         out = real(commands, timeout)
-        if "paired-devices" in commands:
+        if "devices Paired" in commands:
             bluez.devices.pop(IPHONE, None)  # removed before the info call
         return out
 
@@ -288,3 +288,13 @@ def test_nothing_the_book_logs_carries_an_address(bluez, tmp_path, caplog):
         book.devices()
     assert not MAC.search(caplog.text)
     assert "Pixel 7" not in caplog.text
+
+
+def test_the_device_listing_asks_bluez_for_devices_paired_and_never_paired_devices(bluez, tmp_path):
+    # BlueZ 5.66 removed `paired-devices` (it prints nothing), so the listing must
+    # send `devices Paired` (issue #136). Pin both sides: the new command is sent,
+    # and the removed one is never sent again.
+    make_book(bluez, tmp_path).devices()
+    sent = [command for session in bluez.sessions for command in session]
+    assert "devices Paired" in sent
+    assert "paired-devices" not in sent
