@@ -209,3 +209,82 @@ def test_role_installs_a_udev_rule_that_relocks_a_replugged_adapter():
         and "rules.d" in str(_module(task)[1].get("dest", ""))
     ]
     assert installed, "no task installs the udev rule into /etc/udev/rules.d"
+
+
+def _receive_adapter_gated(task: dict) -> bool:
+    when = str(task.get("when"))
+    return "bt_receive_adapter is defined" in when and "bt_receive_adapter | length > 0" in when
+
+
+def test_role_installs_realtek_firmware_only_where_a_receive_adapter_is_set():
+    # The hub's receive adapter is a Realtek RTL8761BU; without firmware-realtek
+    # (rtl_bt/rtl8761bu_fw.bin) it stays down (issue #121). Hardware-tagged so the
+    # container check skips it, and gated on a configured receive adapter.
+    installs = [
+        task
+        for task in _tasks()
+        if _module(task)[0].endswith("apt")
+        and "firmware-realtek" in str(_module(task)[1].get("name"))
+    ]
+    assert len(installs) == 1, "expected one task installing firmware-realtek"
+    task = installs[0]
+    assert "hardware" in task.get("tags", [])
+    assert _receive_adapter_gated(task)
+    assert _module(task)[1].get("state") == "present"
+
+
+def test_role_enables_non_free_firmware_before_installing_realtek_firmware():
+    names = [t.get("name") for t in _tasks()]
+    enabling = [
+        t
+        for t in _tasks()
+        if _module(t)[0].endswith("replace")
+        and "non-free-firmware" in str(_module(t)[1].get("replace"))
+    ]
+    assert enabling, "no task adds the non-free-firmware component"
+    for task in enabling:
+        assert "hardware" in task.get("tags", [])
+        assert _receive_adapter_gated(task)
+        assert names.index(task["name"]) < names.index(
+            next(t["name"] for t in _tasks() if "firmware-realtek" in str(_module(t)[1].get("name")))
+        )
+
+
+def _apply(task: dict, text: str) -> str:
+    import re
+
+    args = _module(task)[1]
+    return re.sub(args["regexp"], args["replace"], text, flags=re.MULTILINE)
+
+
+def _component_tasks() -> dict[str, dict]:
+    found = {}
+    for task in _tasks():
+        if _module(task)[0].endswith("replace") and "non-free-firmware" in str(
+            _module(task)[1].get("replace")
+        ):
+            kind = "deb822" if "Components" in _module(task)[1]["regexp"] else "list"
+            found[kind] = task
+    return found
+
+
+def test_non_free_firmware_is_added_to_one_line_and_deb822_sources_idempotently():
+    tasks = _component_tasks()
+    assert set(tasks) == {"list", "deb822"}
+    for suite in ("bookworm", "trixie"):
+        src = (
+            f"deb http://deb.debian.org/debian {suite} main contrib\n"
+            f"deb http://security.debian.org/debian-security {suite}-security main\n"
+            "deb https://download.docker.com/linux/debian stable stable\n"
+        )
+        once = _apply(tasks["list"], src)
+        assert f"{suite} main non-free-firmware contrib" in once
+        assert f"{suite}-security main non-free-firmware" in once
+        assert "stable stable\n" in once
+        assert _apply(tasks["list"], once) == once
+    deb822 = "Types: deb\nURIs: http://deb.debian.org/debian\nSuites: trixie\nComponents: main\n"
+    once = _apply(tasks["deb822"], deb822)
+    assert "Components: main non-free-firmware" in once
+    assert _apply(tasks["deb822"], once) == once
+    already = "Components: main non-free-firmware\n"
+    assert _apply(tasks["deb822"], already) == already

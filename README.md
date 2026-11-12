@@ -88,6 +88,20 @@ display is mounted turned, set `panel_rotation` (0, 90, 180, or 270) for that ho
 in `vars/hosts.yml`; it rotates the picture and the touch together, so a tap lands
 where it looks.
 
+## Bluetooth
+
+The hub receives audio from a phone over Bluetooth through a long-range Realtek USB adapter
+(an RTL8761BU, TP-Link UB500 Plus class) on a short USB extension cable. It was chosen for range
+to the balcony: the extension lets the adapter sit clear of the hub's case and cabling. The
+`bluetooth` role installs `firmware-realtek` (from Debian's `non-free-firmware` component,
+which it enables in the apt sources if needed) wherever a receive adapter is configured;
+without that firmware the adapter stays down.
+
+To swap adapters, plug in the new one, set `bt_receive_adapter` in the untracked
+`/etc/snaphouse/local.yml` to its address (see `local.example.yml`), let the next update apply,
+then run `snaphouse pair phone` to pair the phone to it. A different chipset may need a
+different firmware package.
+
 ## Now playing
 
 The hub runs a small service, `snaphouse-nowplaying`, that is the single source of
