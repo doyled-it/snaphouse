@@ -672,3 +672,60 @@ def test_parse_pair_result_reads_success_and_failure_through_ansi():
     ) == "fail"
     assert pairing._parse_pair_result("Pairing Not Allowed") == "fail"
     assert pairing._parse_pair_result("[CHG] Device AA:BB:CC:DD:EE:01 Connected: yes") is None
+
+
+def test_trusting_a_new_phone_prints_no_address(capsys):
+    # The web service runs the window under systemd, so stdout is the journal.
+    # The trust line must name the phone but never carry its Bluetooth address.
+    phone = "11:22:33:44:55:66"
+    calls = {"n": 0}
+
+    def session(commands, timeout=None):
+        if "paired-devices" in commands:
+            calls["n"] += 1
+            return "" if calls["n"] == 1 else f"Device {phone} Pat's Phone\n"
+        return ""
+
+    _run(session, FakeProc(), FakeClock(), duration=2.0)
+
+    out = capsys.readouterr().out
+    assert "Pat's Phone" in out
+    assert phone not in out
+    import re
+
+    assert not re.search(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", out)
+
+
+def test_window_aborts_and_closes_when_the_long_lived_select_fails():
+    # The preflight can pass and the adapter still vanish before the real open.
+    # The long-lived session then reports "not available" and would leave
+    # pairable/discoverable on the default controller. The window must notice,
+    # abort with AdapterSelectFailed, and still close on the intended adapter.
+    sessions: list[list[str]] = []
+    proc = FakeProc()
+    clock = FakeClock()
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        return ""
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        if proc.reader is not None:
+            proc.reader(f"Controller {CONTROLLER} not available\n")
+
+    with pytest.raises(pairing.AdapterSelectFailed):
+        pairing.run_pairing_window(
+            CONTROLLER,
+            duration=120.0,
+            spawn=lambda: proc,
+            confirm=lambda passkey, device=None: False,
+            session=session,
+            monotonic=clock.monotonic,
+            sleep=sleep,
+        )
+
+    assert clock.t - 1000.0 < 120.0
+    assert proc.terminated
+    closed = [s for s in sessions if "discoverable off" in s]
+    assert closed and closed[0][0] == f"select {CONTROLLER}"

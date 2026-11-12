@@ -361,7 +361,12 @@ def _open_commands(controller: str, window: int) -> list[str]:
 
 
 def _make_line_handler(
-    proc, *, confirm: Confirm, report: Optional[Report], stop_event
+    proc,
+    *,
+    confirm: Confirm,
+    report: Optional[Report],
+    stop_event,
+    select_failed: Optional[threading.Event] = None,
 ) -> Callable[[str], None]:
     """Build the dispatcher the reader feeds, one line at a time.
 
@@ -375,6 +380,11 @@ def _make_line_handler(
     tracked = {"device": None}
 
     def on_line(line: str) -> None:
+        if select_failed is not None and "not available" in _strip_ansi(line):
+            # The long-lived session could not select the receive adapter, so
+            # its pairable/discoverable would land on the default controller.
+            select_failed.set()
+            return
         name = _parse_device_name(line)
         if name:
             tracked["device"] = name
@@ -443,7 +453,7 @@ def _trust_new(controller: str, session: Session, before: dict[str, str]) -> Non
     if not new:
         return
     for address in new:
-        print(f"Trusting newly paired device: {after[address]} [{address}]")
+        print(f"Trusting newly paired device: {after[address]}")
     session([f"select {controller}", *(f"trust {address}" for address in new)])
 
 
@@ -483,6 +493,7 @@ def run_pairing_window(
     """
     window = int(duration)
     proc = None
+    select_failed = threading.Event()
 
     # Snapshot the already-paired devices before the try, so a failure here
     # aborts before the window opens and never falls through to the finally. If
@@ -502,12 +513,20 @@ def run_pairing_window(
             proc.send(command)
         proc.start_reader(
             _make_line_handler(
-                proc, confirm=confirm, report=report, stop_event=stop_event
+                proc,
+                confirm=confirm,
+                report=report,
+                stop_event=stop_event,
+                select_failed=select_failed,
             )
         )
 
         deadline = monotonic() + duration
         while True:
+            if select_failed.is_set():
+                raise AdapterSelectFailed(
+                    "bluetoothctl could not select the Bluetooth adapter"
+                )
             if stop_event is not None and stop_event.is_set():
                 break
             # Read the remaining time once: the while-check and the sleep
