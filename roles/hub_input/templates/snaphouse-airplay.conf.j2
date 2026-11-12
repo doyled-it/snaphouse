@@ -1,14 +1,17 @@
 // shairport-sync configuration for the hub's AirPlay input. Managed by Ansible
 // (roles/hub_input). Do not edit on the host; change the template.
 //
-// snapserver no longer launches shairport-sync itself (that used the stdout
-// backend, which does no rate matching and drifts, issue #38). Instead this
-// standalone shairport-sync plays AirPlay audio into an ALSA loopback with soxr
-// interpolation, so it rate-matches to the loopback clock the way a real sound
-// card would; snapserver reads the other end as its "AirPlay" alsa:// source.
+// This file is mounted read-only into the official shairport-sync container
+// (AirPlay 2, shairport-sync 5.x) as /etc/shairport-sync.conf by
+// snaphouse-airplay-in.service. The container plays AirPlay audio into an ALSA
+// loopback with soxr interpolation, so it rate-matches to the loopback clock the
+// way a real sound card would; snapserver reads the other end as its "AirPlay"
+// alsa:// source (issue #38 explains why not the stdout backend).
 //
-// The sender's volume is applied in software (no ALSA mixer is named), so the
-// whole house attenuates at the source, as before.
+// The container has no host ALSA config, so the snaphouse plug device does not
+// exist there: the loopback subdevice is opened directly and the shared format is
+// pinned below. The sender's volume is applied in software (no ALSA mixer is
+// named), so the whole house attenuates at the source, as before.
 
 general = {
   name = "{{ house_stream_name }}";
@@ -16,7 +19,8 @@ general = {
   // is what keeps the loopback from under/overflowing over time.
   interpolation = "soxr";
   output_backend = "alsa";
-  port = 5000;
+  // AirPlay 2 serves RTSP here (AirPlay 1 used 5000); the verify check probes it.
+  port = {{ airplay_rtsp_port }};
   // Apply the AirPlay sender's volume to the audio (the default); with no mixer
   // named below, shairport attenuates in software. The sender controls the house
   // volume (model A).
@@ -30,9 +34,13 @@ general = {
 };
 
 alsa = {
-  // The snaphouse plug device (roles/hub_input templates) that resamples into
-  // hw:Loopback,0,1. No mixer_control_name, so volume is software.
-  output_device = "snaphouse_airplay_input";
+  // Loopback subdevice 1 (the Bluetooth input uses subdevice 0), pinned to the
+  // house sample format 44100:16:2 so both ends of the loopback agree. No
+  // mixer_control_name, so volume is software.
+  output_device = "hw:Loopback,0,1";
+  output_rate = 44100;
+  output_format = "S16_LE";
+  output_channels = 2;
 };
 
 metadata = {

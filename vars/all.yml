@@ -36,6 +36,18 @@ stream_priority:
   - AirPlay
   - Bluetooth
 
+# The hub's AirPlay 2 receiver is the official shairport-sync container image
+# (AirPlay 2 and NQPTP, which Debian bookworm's 3.3.8 package lacks), run by
+# snaphouse-airplay-in.service. Pinned by tag and digest: the digest is what
+# docker pulls, the tag is for humans. To bump, resolve the new tag's index digest
+# (docker buildx imagetools inspect mikebrady/shairport-sync:<tag>) and change both.
+shairport_image_repo: "mikebrady/shairport-sync"
+shairport_image_tag: "5.6.3"
+shairport_image_digest: "sha256:8ae074fc6ca71dc9e52789afc21e59319d878efe5b06d2ac4e9a08db78ad329c"
+shairport_image: "{{ shairport_image_repo }}:{{ shairport_image_tag }}@{{ shairport_image_digest }}"
+# AirPlay 2 serves RTSP on 7000 (AirPlay 1 used 5000). The verify check probes it.
+airplay_rtsp_port: 7000
+
 # The sample format every meta-stream member shares, as <rate>:<bits>:<channels>.
 # snapserver fixes the AirPlay source at 44100:16:2, so the Bluetooth source and
 # the meta stream must match or the House stream plays at the wrong pitch, and

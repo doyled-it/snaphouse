@@ -34,6 +34,8 @@ the last-good commit if the apply or verify fails.
   Matter PAA root certificates from the CSA Distributed Compliance Ledger
   (`on.dcl.csa-iot.org`) and GitHub (`api.github.com` and
   `raw.githubusercontent.com`, the project-chip development certificates);
+  the hub also pulls its pinned AirPlay 2 receiver image from Docker Hub
+  (`registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com`);
   plus nightstand's list on the `nightstand` host). Lookup requests carry only
   track, show, book, artist, or typed place names and a User-Agent naming the
   public repo.
@@ -91,6 +93,27 @@ host can be in the frame list first and gain its hardware later (the office Pi 5
 runs its audio with `frame_hardware: false` until its Inky is attached). When the
 display is attached, flip that host's `frame_hardware` to `true` in a one-line PR;
 its next self-update then clones and installs the frame app.
+
+## The AirPlay 2 receiver is a pinned container
+
+The hub's AirPlay input is the official `mikebrady/shairport-sync` image (5.x,
+AirPlay 2 with NQPTP), pinned by tag and digest in `vars/all.yml`
+(`shairport_image_*`), run by `snaphouse-airplay-in.service` as `docker run --rm`
+with host networking and `--device /dev/snd`. It replaces Debian's AirPlay 1
+shairport-sync package, which the `hub_input` role removes. It plays into
+`hw:Loopback,0,1` directly at 44100 S16_LE stereo (the container has no host ALSA
+config, so there is no plug device) and writes the same metadata pipe,
+`/run/snaphouse/airplay-metadata`, that `airplay_meta.py` reads. RTSP is on 7000
+(`airplay_rtsp_port`); the verify check probes it.
+
+**Never run the image with the host D-Bus mounted unless `ENABLE_AVAHI=0`.** With
+it unset, its startup launches its own `dbus-daemon`, which destroyed the host's
+system bus socket (issue #138). The unit sets `ENABLE_AVAHI=0` and mounts the
+host's `/run/dbus` and `/run/avahi-daemon` (at both `/run` and `/var/run`) so the
+image advertises through the host's avahi; `tests/python/test_hub_input.py` pins
+the pairing. The docker install and image pull are tagged `hardware`/`service`, so
+the container apply skips them. To bump the image, change the tag and digest
+together.
 
 ## Snapserver inputs hold through speech pauses
 

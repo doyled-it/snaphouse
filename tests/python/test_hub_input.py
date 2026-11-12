@@ -106,7 +106,9 @@ def render_shairport_conf() -> str:
     env = Environment(
         loader=FileSystemLoader(str(REPO)), keep_trailing_newline=True
     )
-    return env.get_template(SHAIRPORT_CONF).render(house_stream_name=HOUSE_STREAM_NAME)
+    return env.get_template(SHAIRPORT_CONF).render(
+        house_stream_name=HOUSE_STREAM_NAME, airplay_rtsp_port=7000
+    )
 
 
 def _setting(conf: str, key: str) -> str | None:
@@ -114,12 +116,25 @@ def _setting(conf: str, key: str) -> str | None:
     return match.group(1).strip().strip('"') if match else None
 
 
-def test_shairport_uses_soxr_into_the_loopback_plug():
+def test_shairport_uses_soxr_into_the_loopback_directly():
+    # The AirPlay 2 receiver runs in a container with no host ALSA config, so
+    # the snaphouse plug device does not exist there: it opens the loopback
+    # subdevice itself and pins the shared 44100 S16_LE stereo format.
     conf = render_shairport_conf()
     assert _setting(conf, "interpolation") == "soxr"
     assert _setting(conf, "output_backend") == "alsa"
-    assert _setting(conf, "output_device") == "snaphouse_airplay_input"
+    assert _setting(conf, "output_device") == "hw:Loopback,0,1"
+    assert _setting(conf, "output_rate") == "44100"
+    assert _setting(conf, "output_format") == "S16_LE"
+    assert _setting(conf, "output_channels") == "2"
     assert _setting(conf, "name") == HOUSE_STREAM_NAME
+
+
+def test_shairport_listens_on_the_airplay_2_port():
+    # AirPlay 2 serves RTSP on 7000 (AirPlay 1 used 5000); the verify check
+    # probes the same port.
+    assert _setting(render_shairport_conf(), "port") == "7000"
+    assert "7000" in (REPO / VERIFY_CHECK).read_text()
 
 
 def test_shairport_volume_model_a_sender_controls_the_house():
@@ -137,3 +152,104 @@ def test_shairport_publishes_metadata_with_cover_art():
     assert _setting(conf, "enabled") == "yes"
     assert _setting(conf, "include_cover_art") == "yes"
     assert _setting(conf, "pipe_name") == "/run/snaphouse/airplay-metadata"
+
+
+# --------------------------------------------------------------------------- #
+# The AirPlay 2 receiver container (snaphouse-airplay-in.service)
+# --------------------------------------------------------------------------- #
+
+import yaml  # noqa: E402
+
+AIRPLAY_UNIT = "roles/hub_input/templates/snaphouse-airplay-in.service.j2"
+VERIFY_CHECK = "roles/hub_input/files/verify.d/hub_input.sh"
+TASKS = "roles/hub_input/tasks/main.yml"
+IMAGE = "mikebrady/shairport-sync:5.6.3@sha256:" + "a" * 64
+
+
+def render_unit() -> str:
+    env = Environment(
+        loader=FileSystemLoader(str(REPO)), keep_trailing_newline=True
+    )
+    return env.get_template(AIRPLAY_UNIT).render(shairport_image=IMAGE)
+
+
+def _exec_start(unit: str) -> str:
+    match = re.search(r"^ExecStart=((?:[^\n]*\\\n)*[^\n]*)", unit, re.MULTILINE)
+    assert match, "no ExecStart"
+    return match.group(1).replace("\\\n", " ")
+
+
+def test_vars_pin_the_image_by_tag_and_digest():
+    allvars = yaml.safe_load((REPO / "vars/all.yml").read_text())
+    assert re.fullmatch(r"5\.\d+(\.\d+)*", str(allvars["shairport_image_tag"]))
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", allvars["shairport_image_digest"])
+    assert allvars["shairport_image_repo"] == "mikebrady/shairport-sync"
+    assert allvars["airplay_rtsp_port"] == 7000
+
+
+def test_unit_runs_the_pinned_image_with_host_networking_and_sound():
+    unit = render_unit()
+    cmd = _exec_start(unit)
+    assert "docker run" in cmd and "--rm" in cmd
+    assert IMAGE in cmd
+    assert "--network host" in cmd or "--net=host" in cmd or "--network=host" in cmd
+    assert "--device /dev/snd" in cmd
+    assert "Restart=always" in unit
+    assert "docker.service" in unit
+
+
+def test_unit_never_mounts_host_dbus_without_disabling_the_image_avahi():
+    # The image's startup launches its own dbus-daemon unless ENABLE_AVAHI=0, and
+    # that destroyed the host's system bus socket when /run/dbus was mounted
+    # (issue #138). Mounting the host bus is only safe with ENABLE_AVAHI=0.
+    cmd = _exec_start(render_unit())
+    assert "-e ENABLE_AVAHI=0" in cmd
+    for name in ("dbus", "avahi-daemon"):
+        assert f"-v /run/{name}:/run/{name}" in cmd, name
+        assert f"-v /run/{name}:/var/run/{name}" in cmd, name
+
+
+def test_unit_mounts_metadata_dir_and_config_read_only():
+    cmd = _exec_start(render_unit())
+    assert "-v /run/snaphouse:/run/snaphouse" in cmd
+    assert "-v /etc/snaphouse/shairport-airplay.conf:/etc/shairport-sync.conf:ro" in cmd
+
+
+def test_dbus_mount_implies_avahi_disabled_in_any_unit_text():
+    # Guard the invariant on the rendered text itself, whatever the layout.
+    unit = render_unit()
+    if "/run/dbus" in _exec_start(unit):
+        assert "ENABLE_AVAHI=0" in unit
+
+
+def _tasks() -> list[dict]:
+    return yaml.safe_load((REPO / TASKS).read_text())
+
+
+def test_docker_and_image_tasks_are_skipped_by_the_container_apply():
+    # The CI container apply skips the hardware and service tags, so anything
+    # that needs a docker daemon or the network must carry one of them.
+    by_name = {t["name"]: t for t in _tasks()}
+    for name, task in by_name.items():
+        text = yaml.safe_dump(task)
+        if "docker" in text and "snaphouse-airplay-in" not in name.lower():
+            tags = task.get("tags") or []
+            assert {"hardware", "service"} & set(tags), name
+    pull = next(t for n, t in by_name.items() if "pull" in n.lower())
+    assert "service" in pull["tags"] or "hardware" in pull["tags"]
+
+
+def test_debian_shairport_package_is_removed_not_installed():
+    tasks = _tasks()
+    pkgs = [t for t in tasks if "ansible.builtin.apt" in t]
+    for t in pkgs:
+        apt = t["ansible.builtin.apt"]
+        if apt.get("name") == "shairport-sync":
+            assert apt["state"] == "absent"
+
+
+def test_verify_check_probes_the_unit_and_the_rtsp_port():
+    text = (REPO / VERIFY_CHECK).read_text()
+    assert "snaphouse-airplay-in.service" in text
+    assert "/dev/tcp/127.0.0.1/7000" in text
+    assert re.search(r"^\s*dest:\s*/etc/snaphouse/verify.d/hub_input.sh\s*$", (REPO / TASKS).read_text(), re.M)
