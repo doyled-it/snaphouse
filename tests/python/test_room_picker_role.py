@@ -130,3 +130,15 @@ def test_frame_json_location_serves_the_subdir_with_no_cache():
     assert f"root {FRAME_SUBDIR};" in block
     assert "default_type application/json;" in block
     assert 'add_header Cache-Control "no-cache";' in block
+
+
+def test_page_location_revalidates_so_a_phone_never_mixes_old_and_new_modules():
+    # The page is one HTML file and several ES modules that import each other by
+    # name. With no Cache-Control a phone applies heuristic freshness per file, so
+    # a new rooms.js can load beside a cached older rooms-model.js. A name the old
+    # module lacks stops the whole module graph, and the page then does nothing
+    # until a reload. no-cache makes every load revalidate (a cheap 304 on the
+    # ETag), so the files always arrive as one consistent set.
+    block = _prefix_location_block(TEMPLATE.read_text(), "/")
+    assert "root /var/lib/snaphouse/room-picker;" in block
+    assert 'add_header Cache-Control "no-cache";' in block

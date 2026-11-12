@@ -2,8 +2,8 @@
 # snaphouse-managed-check: self-update prunes this when the applied checkout drops it
 # snaphouse web pairing check, managed by Ansible (roles/hub_pairing). The hub
 # runs the pairing service: a loopback HTTP API the room-picker page drives
-# through nginx (/api/pair/) to open the Bluetooth pairing window and confirm the
-# six-digit code. This check proves the service is up and its state endpoint
+# through nginx (/api/pair/) to open the Bluetooth pairing window (the hub accepts
+# the first phone that asks). This check proves the service is up and its state endpoint
 # answers, idle, through nginx. Run by `snaphouse verify` from
 # /etc/snaphouse/verify.d on a real machine.
 #
@@ -13,8 +13,7 @@
 # window stays well under `snaphouse verify`'s 60 second per-check timeout.
 #
 # The state endpoint is read-only and opens no window; it returns only the window
-# state and (in the confirm state, which this idle check never sees) the phone's
-# name. Nothing here reads or prints any address.
+# state and (after a pairing) the phone's name. Nothing here reads or prints any address.
 set -euo pipefail
 
 ready() {

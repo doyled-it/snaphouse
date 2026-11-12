@@ -213,7 +213,7 @@ def _parse_pair_result(line: str) -> Optional[str]:
 
 
 def _handle_agent_line(
-    line: str, *, write: Callable[[str], None], confirm: Callable[[int], bool]
+    line: str, *, write: Callable[[str], object], confirm: Callable[[int], bool]
 ) -> None:
     """Answer one line of bluetoothctl agent output.
 
@@ -273,7 +273,23 @@ def _confirm_on_terminal(passkey: int, device: Optional[str] = None) -> bool:  #
     return _ask_operator(passkey, device)
 
 
-class _Bluetoothctl:  # pragma: no cover - drives a live bluetoothctl over pipes
+def _safe_send(proc, line: str) -> bool:
+    """Write one line to the agent process; False if it could not be delivered.
+
+    bluetoothctl can exit at any moment (the window closed, the adapter vanished,
+    the service is stopping), and the answer to a prompt is written from the
+    reader thread after a wait that can be long. A write to a process that has
+    gone raises BrokenPipeError (seen in the hub's service log), which must never
+    escape: a dropped answer to a dead agent is not an error worth crashing a
+    thread for. Every write to the agent goes through here.
+    """
+    try:
+        return proc.send(line) is not False
+    except (OSError, ValueError):
+        return False
+
+
+class _Bluetoothctl:
     """The single long-lived interactive bluetoothctl that is the whole window.
 
     One process carries the open commands, the agent prompts, and nothing else, so
@@ -286,10 +302,18 @@ class _Bluetoothctl:  # pragma: no cover - drives a live bluetoothctl over pipes
     def __init__(self, proc: "subprocess.Popen") -> None:
         self._proc = proc
 
-    def send(self, line: str) -> None:
-        assert self._proc.stdin is not None
-        self._proc.stdin.write(line + "\n")
-        self._proc.stdin.flush()
+    def send(self, line: str) -> bool:
+        """Write a command line. False (never an exception) if the process is gone."""
+        stdin = self._proc.stdin
+        if stdin is None:
+            return False
+        try:
+            stdin.write(line + "\n")
+            stdin.flush()
+        except (OSError, ValueError):
+            # BrokenPipeError is an OSError; a closed file raises ValueError.
+            return False
+        return True
 
     def start_reader(self, on_line: Callable[[str], None]) -> None:
         def pump() -> None:
@@ -398,7 +422,7 @@ def _make_line_handler(
             return
         _handle_agent_line(
             line,
-            write=proc.send,
+            write=lambda text: _safe_send(proc, text),
             confirm=lambda passkey: confirm(passkey, tracked["device"]),
         )
 
@@ -510,7 +534,7 @@ def run_pairing_window(
 
         proc = spawn()
         for command in _open_commands(controller, window):
-            proc.send(command)
+            _safe_send(proc, command)
         proc.start_reader(
             _make_line_handler(
                 proc,

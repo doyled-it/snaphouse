@@ -123,8 +123,19 @@ the art admin one because pairing needs BlueZ rights (register an agent, set
 adapter properties) that the `art` user must not have; the stock Debian BlueZ
 D-Bus policy grants those to root only, so the pairing service runs as root and is
 hardened by systemd instead. The port is pinned in `vars/all.yml` (`pairing_port`),
-shared by the unit and the nginx proxy. Never log or return the phone's or the
-adapter's address; the phone's name is returned only on the LAN page.
+shared by the unit and the nginx proxy. A window opened over the web accepts the
+FIRST pairing request itself and declines later ones (the person pairing is the one
+holding the phone, and Android drops its dialog when they switch to the browser to
+read a code), trusts the device, and closes; the state is never `confirm`, and
+`POST /api/pair/confirm` always answers 409. The CLI keeps its interactive confirm.
+The page side is `roles/room_picker/files/site/pair-controller.js` (the view in
+`rooms.js` is a thin renderer over it): every request has a deadline, a poll never
+waits for a POST in flight, and a poll answered after an action is dropped, so one
+stalled request can never freeze the buttons until a reload
+(`tests/js/pair-controller.test.js`). The room-picker nginx `location /` sends
+`Cache-Control: no-cache` so the HTML and its ES modules always load as one set.
+Never log or return the phone's or the adapter's address; the phone's name is
+returned only on the LAN page.
 
 ## mDNS advertises IPv4 only
 

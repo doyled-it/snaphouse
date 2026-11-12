@@ -7,11 +7,17 @@
 
 # The page and its static assets, served from the room-picker web root. The web
 # role's exact-match location = /status.json keeps serving the status file from
-# the public root, since an exact match outranks this prefix.
+# the public root, since an exact match outranks this prefix. Cache-Control
+# "no-cache" makes a phone revalidate every file on each load (a cheap 304 on the
+# ETag). The page is an HTML file plus ES modules that import each other by name;
+# with heuristic freshness a phone can load a new rooms.js beside a cached older
+# rooms-model.js, the missing export stops the whole module graph, and the page
+# does nothing until a reload.
 location / {
     root /var/lib/snaphouse/room-picker;
     index index.html;
     try_files $uri $uri/ =404;
+    add_header Cache-Control "no-cache";
 }
 
 # The room list the page reads at startup, served as JSON.

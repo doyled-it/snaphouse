@@ -729,3 +729,77 @@ def test_window_aborts_and_closes_when_the_long_lived_select_fails():
     assert proc.terminated
     closed = [s for s in sessions if "discoverable off" in s]
     assert closed and closed[0][0] == f"select {CONTROLLER}"
+
+
+# --------------------------------------------------------------------------- #
+# Writes to the agent process after it has gone (BrokenPipeError on the hub)
+# --------------------------------------------------------------------------- #
+
+
+class _BrokenStdin:
+    """A stdin whose reader (bluetoothctl) has exited: every write breaks."""
+
+    def __init__(self, error: Exception):
+        self._error = error
+
+    def write(self, data):
+        raise self._error
+
+    def flush(self):
+        raise self._error
+
+
+class _GonePopen:
+    def __init__(self, stdin):
+        self.stdin = stdin
+
+
+@pytest.mark.parametrize(
+    "error",
+    [BrokenPipeError(32, "Broken pipe"), OSError(9, "bad fd"), ValueError("I/O operation on closed file.")],
+)
+def test_send_after_the_process_has_exited_does_not_raise(error):
+    # The hub log showed BrokenPipeError out of send() when a confirm answer
+    # arrived after bluetoothctl had already gone. A write to a dead agent must be
+    # a quiet no-op that reports it was not delivered, never an exception.
+    ctl = pairing._Bluetoothctl(_GonePopen(_BrokenStdin(error)))
+    assert ctl.send("yes") is False
+
+
+def test_send_with_no_stdin_does_not_raise():
+    assert pairing._Bluetoothctl(_GonePopen(None)).send("yes") is False
+
+
+def test_a_confirm_answer_that_arrives_after_the_process_exited_is_dropped():
+    # The reader thread hands a "Confirm passkey" prompt to the dispatcher, whose
+    # confirm callback can block for a long time. By the time it answers, the
+    # process may be gone; the answer must be dropped without raising.
+    class DeadProc:
+        def send(self, line):
+            raise BrokenPipeError(32, "Broken pipe")
+
+    on_line = pairing._make_line_handler(
+        DeadProc(),
+        confirm=lambda passkey, device=None: True,
+        report=None,
+        stop_event=None,
+    )
+    on_line("[agent] Confirm passkey 123456 (yes/no): ")
+    on_line("[agent] Authorize service 0000110b-0000-1000-8000-00805f9b34fb (yes/no): ")
+
+
+def test_opening_the_window_survives_a_process_that_died_at_once():
+    # If bluetoothctl dies before the open commands are written, the window must
+    # still run its clock and close the adapter, not crash on the first write.
+    class DyingProc(FakeProc):
+        def send(self, line):
+            raise BrokenPipeError(32, "Broken pipe")
+
+    sessions: list[list[str]] = []
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        return ""
+
+    _run(session, DyingProc(), FakeClock(), duration=5.0)
+    assert any("discoverable off" in s for s in sessions)

@@ -109,14 +109,17 @@ default, and it changes the Bluetooth name only: AirPlay and the stream names st
 ### Pairing a phone
 
 A phone pairs once before it can stream. Open the room-picker Settings on the hub and tap
-"Pair a phone": the hub becomes discoverable and pairable for 120 seconds, and when the phone
-asks to pair, the page shows the same six-digit code the phone shows, with "Code matches" and
-"Decline". A code nobody answers within 60 seconds is declined. Paired phones are trusted, so
-they reconnect on their own. The window always closes again (on a time out, a stop, or a
-service restart), so the hub is never left discoverable.
+"Pair a phone": the hub becomes discoverable and pairable for 120 seconds. Then open Bluetooth
+on the phone, tap Pair new device, choose the house speaker, and tap Pair; you can stay on the
+phone and come back to the page when it is done. The hub accepts the first phone that asks
+(there is no code to compare on the page, because switching to the browser dismisses Android's
+own pairing dialog), declines any later request in the same window, trusts the new phone so it
+reconnects on its own, and closes the window. The page then shows who paired, or that nobody did
+before the window closed. The window always closes again (on a time out, a stop, or a service
+restart), so the hub is never left discoverable.
 
-`snaphouse pair phone` does the same thing from a terminal on the hub, confirming the code at
-the keyboard. Both share one window driver, which runs the whole thing in a single long-lived
+`snaphouse pair phone` does the same thing from a terminal on the hub, but keeps the numeric
+comparison: it shows the code and asks you to confirm it at the keyboard. Both share one window driver, which runs the whole thing in a single long-lived
 `bluetoothctl` session: the pairing agent that makes pairing allowed stays registered for the
 whole window. An earlier version set pairable in a throwaway session and then started a separate
 agent, and with BlueZ's `AlwaysPairable=false` the adapter dropped bondable the moment that
