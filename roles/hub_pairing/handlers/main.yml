@@ -1,0 +1,30 @@
+---
+# Every handler touches a running service, so each is gated on common_systemd_init
+# (real machine only) and tagged service. A notified handler ignores --skip-tags,
+# so the when: is what keeps these out of the CI container; the tag still marks
+# them for a real-host --skip-tags service run.
+
+- name: Reload nginx for hub_pairing
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  when: common_systemd_init
+  tags:
+    - service
+
+# Defined before the restart handler so a daemon-reload runs first when both are
+# notified on a unit change.
+- name: Reload systemd for hub_pairing
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Restart the pairing service
+  ansible.builtin.systemd_service:
+    name: snaphouse-pairing.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service

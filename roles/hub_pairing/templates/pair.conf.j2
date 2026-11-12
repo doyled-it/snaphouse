@@ -1,0 +1,18 @@
+# Managed by snaphouse (hub_pairing role). Do not edit by hand.
+#
+# The hub's web pairing API on the LAN, served by the server block the web role
+# owns (this drops into /etc/nginx/snaphouse.d). LAN-only: there is no inbound
+# access from the internet (AGENTS.md).
+#
+#   /api/pair/   the pairing window API, proxied to the loopback pairing service.
+#
+# The room picker POSTs start/confirm/stop here and polls state; without this
+# block those requests fall through to the room-picker `location /` prefix and
+# nginx answers 404 (the same reason the art and frame APIs each have a block).
+# The bodies are tiny JSON, so a small upload cap is plenty. The port is the one
+# pinned in vars/all.yml (pairing_port), shared with the service unit.
+location /api/pair/ {
+    proxy_pass http://127.0.0.1:{{ pairing_port }};
+    proxy_set_header Host $host;
+    client_max_body_size 64k;
+}

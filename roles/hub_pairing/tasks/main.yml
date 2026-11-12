@@ -1,0 +1,96 @@
+---
+# The hub's web pairing service (design: "Web pairing", issue #128). It opens the
+# inbound Bluetooth pairing window on the hub's receive adapter and exposes the
+# loopback HTTP API the room-picker page drives through nginx (/api/pair/) to open
+# the window and confirm the six-digit code. The CLI (`snaphouse pair phone`)
+# shares the same window driver. LAN-only; there is no inbound access from the
+# internet (AGENTS.md).
+#
+# It is a separate service from the art admin one on purpose: pairing needs BlueZ
+# rights the art service (unprivileged `art` user) must not have, so this service
+# runs as root (the stock Debian BlueZ D-Bus policy grants agent registration and
+# adapter property writes to root only; see the unit for the full why). Nothing
+# identifying lives in this role: the adapter address is read at runtime from the
+# untracked /etc/snaphouse/local.yml and never logged.
+#
+# Every task is gated on a non-empty bt_receive_adapter, the same gate the
+# bluetooth and hub_input roles use, so the service is installed only on a host
+# that actually receives Bluetooth audio (the hub).
+- name: Set up the web pairing service where a receive adapter is configured
+  when:
+    - bt_receive_adapter is defined
+    - bt_receive_adapter | length > 0
+  block:
+    - name: Ensure the verify.d dir exists for on-device check scripts
+      ansible.builtin.file:
+        path: /etc/snaphouse/verify.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the pairing service unit
+      ansible.builtin.template:
+        src: snaphouse-pairing.service.j2
+        dest: /etc/systemd/system/snaphouse-pairing.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd for hub_pairing
+        - Restart the pairing service
+
+    - name: Proxy the pairing API through nginx
+      # Drops into the web role's include dir as its own file, clear of the
+      # room-picker and art locations that land there too.
+      ansible.builtin.template:
+        src: pair.conf.j2
+        dest: /etc/nginx/snaphouse.d/pair.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload nginx for hub_pairing
+
+    - name: Install the pairing verify check
+      ansible.builtin.copy:
+        src: verify.d/pairing.sh
+        dest: /etc/snaphouse/verify.d/pairing.sh
+        owner: root
+        group: root
+        mode: "0755"
+
+    # The service runs its code in place from /opt/snaphouse, so restart it when
+    # its modules change on a self-update rather than waiting for a reboot.
+    # pairservice.py is the service; pairing.py is the window driver it shares with
+    # the CLI. Gated on the on-device checkout (absent in the CI container, where
+    # the repo is read-only elsewhere).
+    - name: Record the pairing module digests so the service restarts when they change
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/' ~ item) | hash('sha1') }}\n"
+        dest: "/etc/snaphouse/{{ item | replace('.py', '') }}.sha1"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - pairservice.py
+        - pairing.py
+      when: common_systemd_init
+      notify: Restart the pairing service
+
+    # Reload nginx now if its config changed, so the proxy is live before
+    # `snaphouse verify` runs at the end of this apply, and reload systemd and
+    # restart the pairing service if its unit or modules changed. Every handler is
+    # gated on systemd, so this is a no-op in the CI container.
+    - name: Reload services now if their config changed
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the pairing service
+      ansible.builtin.systemd_service:
+        name: snaphouse-pairing.service
+        enabled: true
+        state: started
+      # Only on a real systemd host; the CI container gates the service off and
+      # never starts it (it has no running init).
+      when: common_systemd_init
+      tags:
+        - service

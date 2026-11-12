@@ -102,6 +102,30 @@ stream and chops every room during audiobooks and podcasts (issue #90). Ten
 seconds keeps speech pauses as playing while a real stop still goes idle;
 `tests/python/test_hub_input.py` pins the parameter on both sources.
 
+## Phone pairing runs in one long-lived bluetoothctl session
+
+The inbound pairing window (`run_pairing_window` in `lib/snaphouse/pairing.py`)
+runs the whole open in ONE long-lived `bluetoothctl` process: it registers the
+DisplayYesNo agent, makes it the default, and only then (in that same session)
+selects the receive adapter and turns pairable and discoverable on. With BlueZ
+`AlwaysPairable=false`, setting pairable in a throwaway session and then spawning
+a separate agent dropped bondable the moment that first session's agent went
+away, and every phone got "Pairing Not Allowed (0x18)" (issue #128). Keep the
+agent and the pairable/discoverable state in the same process; do not split them.
+`test_pairing.py::test_open_commands_all_go_to_one_session_with_pairable_after_default_agent`
+is the regression pin, and the bluez-side `pairable-timeout`/`discoverable-timeout`
+are set to the window length so the adapter self-closes even if the process dies.
+
+The web half is the `snaphouse-pairing` service (`lib/snaphouse/pairservice.py`,
+`roles/hub_pairing`): a stdlib loopback HTTP API nginx proxies at `/api/pair/`,
+on the hub only (a non-empty `bt_receive_adapter`). It is a separate service from
+the art admin one because pairing needs BlueZ rights (register an agent, set
+adapter properties) that the `art` user must not have; the stock Debian BlueZ
+D-Bus policy grants those to root only, so the pairing service runs as root and is
+hardened by systemd instead. The port is pinned in `vars/all.yml` (`pairing_port`),
+shared by the unit and the nginx proxy. Never log or return the phone's or the
+adapter's address; the phone's name is returned only on the LAN page.
+
 ## mDNS advertises IPv4 only
 
 The `common` role sets `use-ipv6=no` ([server]) and `publish-aaaa-on-ipv4=no`

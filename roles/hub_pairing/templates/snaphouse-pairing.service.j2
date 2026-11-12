@@ -1,0 +1,47 @@
+# snaphouse web pairing service, managed by Ansible (roles/hub_pairing). Do not
+# edit on the host; change the template and let self-update roll it out.
+#
+# It opens the inbound Bluetooth pairing window on the hub's receive adapter and
+# exposes the small loopback HTTP API (127.0.0.1:{{ pairing_port }}) the
+# room-picker page drives through nginx (/api/pair/) to open the window and
+# confirm the six-digit code. The CLI (`snaphouse pair phone`) shares the same
+# window driver. Installed on the hub only (the one host with a non-empty
+# bt_receive_adapter).
+#
+# It is a separate service from the art admin one on purpose: pairing needs BlueZ
+# rights (register a pairing agent, set adapter properties) that the art service,
+# which runs as the unprivileged `art` user, must not have. It runs as root
+# because the stock Debian BlueZ D-Bus policy grants agent registration and
+# adapter property writes to root only: the default policy denies non-root
+# clients `send_destination=org.bluez`, and there is no `bluetooth` group allow
+# for registering an agent, so a group-bluetooth user could not open the window.
+# Widening that policy would add attack surface, so the service runs as root and
+# is hardened by systemd instead. It is LAN-only, bound to loopback and reachable
+# only through nginx; there is no inbound access from the internet (AGENTS.md).
+#
+# It runs its stdlib-only module from the on-device uv venv (for the
+# comment-preserving YAML reader that loads the adapter from local.yml).
+[Unit]
+Description=snaphouse web pairing service (opens the Bluetooth pairing window)
+After=bluetooth.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=/opt/snaphouse/lib
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.pairservice --host 127.0.0.1 --port {{ pairing_port }}
+Restart=always
+RestartSec=5
+
+# Hardening. It runs as root for BlueZ, so it is boxed in: the filesystem is
+# read-only (ProtectSystem=strict; it writes nothing, only reads local.yml and
+# talks to bluetoothd over the system D-Bus), a private /tmp, and no privilege
+# escalation. It reaches BlueZ through D-Bus, not raw HCI sockets, so it needs no
+# extra capabilities.
+ProtectSystem=strict
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

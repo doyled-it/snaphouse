@@ -57,10 +57,11 @@ POLL_INTERVAL = 1.0
 # The speakers snaphouse knows about, each a key under `speakers` in local.yml.
 SPEAKER_NAMES = ("vizio", "jbl")
 
-# Type aliases for the injectable seams the tests drive. A session runs a batch
-# of bluetoothctl commands in one interactive session and returns its stdout.
+# A session runs a batch of bluetoothctl commands in one short-lived interactive
+# session and returns its stdout (the quick snapshot, select-probe, and trust
+# one-shots). The pairing window's own open commands and agent prompts run in a
+# separate single long-lived process (see the Spawn seam below).
 Session = Callable[..., str]
-SpawnAgent = Callable[[str], "subprocess.Popen"]
 
 
 def _run_session(commands: list[str], *, timeout: Optional[float] = None) -> str:
@@ -128,8 +129,10 @@ _ALLOWED_SERVICE_UUIDS = frozenset(
 # NoInputNoOutput agent could not answer that and Android pairing failed.
 AGENT_CAPABILITY = "DisplayYesNo"
 
-# How long the confirmation prompt waits for the operator before declining.
-CONFIRM_TIMEOUT = 30.0
+# How long the confirmation prompt waits for an answer before declining. The web
+# pairing window and the CLI share this: a code nobody answers in time declines,
+# so a stray pairing attempt can never be accepted by inaction.
+CONFIRM_TIMEOUT = 60.0
 
 # bluetoothctl's agent prompts, after ANSI is stripped. The passkey is shown
 # zero-padded to six digits; the service is a full 128-bit UUID.
@@ -137,6 +140,23 @@ _CONFIRM_PROMPT = re.compile(r"Confirm passkey (\d+)")
 _SERVICE_PROMPT = re.compile(
     r"Authorize service ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
+
+# A "[CHG] Device <addr> Name: <name>" change line: bluetoothctl reports the
+# phone's advertised name this way during pairing, in addition to the plain
+# "Device <addr> <name>" form. The window tracks the name so the web page can show
+# whose request it is; the name is never logged.
+_NAME_LINE = re.compile(
+    r"Device\s+(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\s+Name:\s+(.*)"
+)
+
+# Terminal pairing results in the process output. "Pairing successful" is the
+# paired result; the failure strings are the ones BlueZ/bluetoothctl print when a
+# pairing is refused or times out. Matched on the ANSI-stripped line.
+_PAIR_OK = re.compile(r"Pairing successful")
+_PAIR_FAIL = re.compile(
+    r"Failed to pair|Authentication Failed|AuthenticationFailed|"
+    r"Pairing Not Allowed|Connection timed out|AuthenticationCanceled"
 )
 
 
@@ -155,6 +175,41 @@ def _parse_service_prompt(line: str) -> Optional[str]:
     """The UUID from a bluetoothctl "Authorize service" prompt, or None."""
     match = _SERVICE_PROMPT.search(_strip_ansi(line))
     return match.group(1) if match else None
+
+
+def _parse_device_name(line: str) -> Optional[str]:
+    """The phone's advertised name from a device or Name: line, or None.
+
+    Reads both the plain "Device <addr> <name>" form and the "[CHG] Device <addr>
+    Name: <name>" change line, through the same ANSI stripping the scan uses. An
+    address-as-name entry (the unnamed form) carries no real name and returns
+    None, so a nameless device never shows a MAC-shaped "name" on the page.
+    """
+    stripped = _strip_ansi(line)
+    change = _NAME_LINE.search(stripped)
+    if change is not None:
+        name = change.group(1).strip()
+        return name or None
+    match = _DEVICE_LINE.search(stripped)
+    if match is None:
+        return None
+    address, name = match.group(1), match.group(2).strip()
+    if not name or name.startswith("Name:"):
+        return None
+    normalized = name.replace(":", "").replace("-", "").upper()
+    if normalized == address.replace(":", "").upper():
+        return None
+    return name
+
+
+def _parse_pair_result(line: str) -> Optional[str]:
+    """"ok" if the line reports pairing success, "fail" if failure, else None."""
+    stripped = _strip_ansi(line)
+    if _PAIR_OK.search(stripped):
+        return "ok"
+    if _PAIR_FAIL.search(stripped):
+        return "fail"
+    return None
 
 
 def _handle_agent_line(
@@ -177,16 +232,20 @@ def _handle_agent_line(
 
 
 def _ask_operator(
-    passkey: int, *, timeout: float = CONFIRM_TIMEOUT, stream=None
+    passkey: int, device: Optional[str] = None, *, timeout: float = CONFIRM_TIMEOUT, stream=None
 ) -> bool:  # pragma: no cover - interactive, exercised on the hub
     """Show the passkey and read a yes/no from the keyboard; default no.
 
     Pairing is supervised: the operator checks that the phone shows the same code
     before accepting. If nobody answers within the timeout, the pairing is
-    declined, so a stray pairing attempt cannot be accepted by inaction.
+    declined, so a stray pairing attempt cannot be accepted by inaction. `device`
+    is the phone's advertised name (shown to the operator, never logged); it is
+    accepted so the CLI shares the window driver's confirm signature with the web
+    service.
     """
     stream = sys.stdin if stream is None else stream
-    print(f"\nThe phone should show this code: {passkey:06d}")
+    whose = f" ({device})" if device else ""
+    print(f"\nThe phone{whose} should show this code: {passkey:06d}")
     print(
         f"Does it match? [y/N] (no answer within {int(timeout)} s declines) ",
         end="",
@@ -199,43 +258,69 @@ def _ask_operator(
     return stream.readline().strip().lower() in ("y", "yes")
 
 
-def _agent_loop(
-    proc: "subprocess.Popen", *, confirm: Callable[[int], bool]
-) -> None:  # pragma: no cover - drives a live bluetoothctl
-    """Answer agent prompts from proc until its output ends.
+# The window's confirm seam: given the passkey and the phone's name, return
+# whether to accept. The CLI uses the terminal prompt; the web service uses a
+# callback that blocks until the page answers or the confirm timeout elapses.
+Confirm = Callable[[int, Optional[str]], bool]
 
-    bluetoothctl's agent questions end with "(yes/no):" and no newline (they are
-    prompts waiting for input), so reading whole lines would block on the newline
-    that never comes. Output is read a character at a time and dispatched on
-    either a newline or that prompt suffix, so a question is answered as soon as
-    it is asked.
+# The window's report seam: a terminal pairing result the web state machine
+# consumes ("paired" with the device name, or "failed"). None in the CLI.
+Report = Callable[[str, dict], None]
+
+
+def _confirm_on_terminal(passkey: int, device: Optional[str] = None) -> bool:  # pragma: no cover
+    """Default confirm: ask the operator at the terminal (CLI path)."""
+    return _ask_operator(passkey, device)
+
+
+class _Bluetoothctl:  # pragma: no cover - drives a live bluetoothctl over pipes
+    """The single long-lived interactive bluetoothctl that is the whole window.
+
+    One process carries the open commands, the agent prompts, and nothing else, so
+    the DisplayYesNo agent that makes pairing allowed stays registered the whole
+    time (the issue #128 fix). `send` writes a command line; `start_reader` runs a
+    reader thread that reads a character at a time (agent prompts end with
+    "(yes/no):" and no newline) and hands each completed line to the dispatcher.
     """
-    def write(text: str) -> None:
-        assert proc.stdin is not None
-        proc.stdin.write(text)
-        proc.stdin.flush()
 
-    assert proc.stdout is not None
-    buffer = ""
-    while True:
-        char = proc.stdout.read(1)
-        if char == "":
-            break
-        buffer += char
-        if char == "\n" or _strip_ansi(buffer).rstrip().endswith("(yes/no):"):
-            _handle_agent_line(buffer, write=write, confirm=confirm)
+    def __init__(self, proc: "subprocess.Popen") -> None:
+        self._proc = proc
+
+    def send(self, line: str) -> None:
+        assert self._proc.stdin is not None
+        self._proc.stdin.write(line + "\n")
+        self._proc.stdin.flush()
+
+    def start_reader(self, on_line: Callable[[str], None]) -> None:
+        def pump() -> None:
+            assert self._proc.stdout is not None
             buffer = ""
+            while True:
+                char = self._proc.stdout.read(1)
+                if char == "":
+                    break
+                buffer += char
+                if char == "\n" or _strip_ansi(buffer).rstrip().endswith("(yes/no):"):
+                    on_line(buffer)
+                    buffer = ""
+
+        threading.Thread(target=pump, daemon=True).start()
+
+    def poll(self):
+        return self._proc.poll()
+
+    def terminate(self) -> None:
+        self._proc.terminate()
+
+    def kill(self) -> None:
+        self._proc.kill()
+
+    def wait(self, timeout=None):
+        return self._proc.wait(timeout=timeout)
 
 
-def _spawn_agent(controller: str) -> "subprocess.Popen":  # pragma: no cover - needs BlueZ
-    """Start a supervised pairing agent the CLI controls.
-
-    An interactive bluetoothctl registers the DisplayYesNo agent as the default,
-    and a reader thread answers its prompts: the operator confirms the passkey
-    (numeric comparison) and the agent authorizes the phone's A2DP and AVRCP
-    services. The process is the window's agent handle; terminating it ends the
-    reader thread with its output.
-    """
+def _spawn_bluetoothctl() -> "_Bluetoothctl":  # pragma: no cover - needs BlueZ
+    """Start the one interactive bluetoothctl the window drives."""
     proc = subprocess.Popen(
         ["bluetoothctl"],
         stdin=subprocess.PIPE,
@@ -244,18 +329,74 @@ def _spawn_agent(controller: str) -> "subprocess.Popen":  # pragma: no cover - n
         text=True,
         bufsize=1,
     )
-    assert proc.stdin is not None
-    proc.stdin.write(f"agent {AGENT_CAPABILITY}\n")
-    proc.stdin.write("default-agent\n")
-    proc.stdin.flush()
-    threading.Thread(
-        target=_agent_loop, args=(proc,), kwargs={"confirm": _ask_operator}, daemon=True
-    ).start()
-    return proc
+    return _Bluetoothctl(proc)
 
 
-def _stop_agent(proc: "Optional[subprocess.Popen]") -> None:
-    """Stop the pairing agent if it is still running."""
+# The window's process seam: a factory for the single long-lived bluetoothctl.
+Spawn = Callable[[], object]
+
+
+def _open_commands(controller: str, window: int) -> list[str]:
+    """The ordered commands the single pairing session runs to open the window.
+
+    All in ONE long-lived bluetoothctl so the agent that makes pairing allowed
+    stays registered for the whole window. The root cause of issue #128: the old
+    code set `pairable on` in a throwaway session and then spawned a separate
+    agent, and with BlueZ AlwaysPairable=false the adapter dropped bondable the
+    moment that first session's agent went away, so every phone got "Pairing Not
+    Allowed (0x18)". agent/default-agent come first so the DisplayYesNo agent is
+    the default before pairable/discoverable are turned on in that same session.
+    The bluez-side pairable and discoverable timeouts are set to the window length,
+    so the adapter closes itself even if this process is killed before cleanup.
+    """
+    return [
+        f"agent {AGENT_CAPABILITY}",
+        "default-agent",
+        f"select {controller}",
+        f"pairable-timeout {window}",
+        f"discoverable-timeout {window}",
+        "pairable on",
+        "discoverable on",
+    ]
+
+
+def _make_line_handler(
+    proc, *, confirm: Confirm, report: Optional[Report], stop_event
+) -> Callable[[str], None]:
+    """Build the dispatcher the reader feeds, one line at a time.
+
+    It tracks the phone's advertised name, answers passkey confirmations (handing
+    the code and name to `confirm`) and service authorizations (from the audio
+    allow-list), and reports a terminal pairing result. On a result it sets the
+    stop event so the window closes the adapter promptly rather than waiting out
+    the full duration. The device name is used only to show the operator or the
+    page who is pairing; it is never logged.
+    """
+    tracked = {"device": None}
+
+    def on_line(line: str) -> None:
+        name = _parse_device_name(line)
+        if name:
+            tracked["device"] = name
+        result = _parse_pair_result(line)
+        if result is not None:
+            if report is not None:
+                event = "paired" if result == "ok" else "failed"
+                report(event, {"device": tracked["device"]})
+            if stop_event is not None:
+                stop_event.set()
+            return
+        _handle_agent_line(
+            line,
+            write=proc.send,
+            confirm=lambda passkey: confirm(passkey, tracked["device"]),
+        )
+
+    return on_line
+
+
+def _stop_agent(proc) -> None:
+    """Stop the single bluetoothctl process if it is still running."""
     if proc is None:
         return
     if proc.poll() is None:
@@ -310,26 +451,38 @@ def run_pairing_window(
     controller: str,
     *,
     duration: float = PAIRING_WINDOW_SECONDS,
+    spawn: Spawn = _spawn_bluetoothctl,
+    confirm: Confirm = _confirm_on_terminal,
     session: Session = _run_session,
-    spawn_agent: SpawnAgent = _spawn_agent,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     poll_interval: float = POLL_INTERVAL,
+    stop_event=None,
+    report: Optional[Report] = None,
 ) -> None:
     """Open the inbound pairing window on controller, then always close it.
 
-    Powers the controller, starts the pairing agent, and makes the controller
-    discoverable and pairable for duration seconds. bluez's own discoverable and
-    pairable timeouts are set to the window length, so the adapter closes itself
-    even if this process is killed before cleanup runs: the open state can never
-    outlive the window. The window is driven by the clock, so a pairing agent
-    that exits early does not shorten it. When the window ends for any reason
-    (timeout, agent death, or an interrupt during the wait), the controller is
-    made non-discoverable and non-pairable again, the agent is stopped, and only
-    devices that paired during the window are trusted.
+    Starts ONE long-lived bluetoothctl that registers the DisplayYesNo agent,
+    makes it the default, selects the receive adapter, and turns pairable and
+    discoverable on, all in that one session. Keeping the agent and the pairable
+    state in the same process for the whole window is the fix for issue #128: with
+    BlueZ AlwaysPairable=false, setting pairable in a throwaway session and then
+    spawning a separate agent dropped bondable the moment that first session's
+    agent went away, and every phone got Pairing Not Allowed (0x18). bluez's own
+    discoverable and pairable timeouts are set to the window length too, so the
+    adapter closes itself even if this process is killed before cleanup.
+
+    The window is driven by the clock, so a process that exits early does not
+    shorten it; a stop event (set by the web service on a stop, or once a phone
+    paired) ends it early. `confirm` answers a passkey (the CLI prompts the
+    operator; the web service blocks until the page answers), and `report`
+    surfaces the terminal result to the web state machine. When the window ends
+    for any reason (timeout, early stop, or an interrupt during the wait), the
+    controller is made non-discoverable and non-pairable again, the process is
+    stopped, and only devices that paired during the window are trusted.
     """
     window = int(duration)
-    proc: "Optional[subprocess.Popen]" = None
+    proc = None
 
     # Snapshot the already-paired devices before the try, so a failure here
     # aborts before the window opens and never falls through to the finally. If
@@ -338,29 +491,37 @@ def run_pairing_window(
     before = _snapshot_paired(controller, session)
 
     try:
-        _check_select(
-            session(
-                [
-                    f"select {controller}",
-                    "power on",
-                    f"discoverable-timeout {window}",
-                    f"pairable-timeout {window}",
-                    "pairable on",
-                    "discoverable on",
-                ]
+        # Preflight: prove the adapter can be selected before opening the window,
+        # so a bad selection aborts rather than opening pairing on the default
+        # dongle. This probe sets nothing; the real open selects in the one
+        # long-lived session below, where pairable also goes on.
+        _check_select(session([f"select {controller}", "show"]))
+
+        proc = spawn()
+        for command in _open_commands(controller, window):
+            proc.send(command)
+        proc.start_reader(
+            _make_line_handler(
+                proc, confirm=confirm, report=report, stop_event=stop_event
             )
         )
-        proc = spawn_agent(controller)
 
         deadline = monotonic() + duration
         while True:
+            if stop_event is not None and stop_event.is_set():
+                break
             # Read the remaining time once: the while-check and the sleep
             # argument must not be two separate clock reads, or the deadline
             # could cross between them and hand sleep a negative duration.
             remaining = deadline - monotonic()
             if remaining <= 0:
                 break
-            sleep(min(poll_interval, remaining))
+            nap = min(poll_interval, remaining)
+            if stop_event is not None:
+                if stop_event.wait(nap):
+                    break
+            else:
+                sleep(nap)
     finally:
         session([f"select {controller}", "discoverable off", "pairable off"])
         _stop_agent(proc)
