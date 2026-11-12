@@ -21,6 +21,7 @@
       - unattended-upgrades
       - jq
       - curl
+      - iw
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -136,6 +137,62 @@
   ansible.builtin.copy:
     src: verify.d/avahi_mdns.sh
     dest: /etc/snaphouse/verify.d/avahi_mdns.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# Wi-Fi power saving off (issue #140). NetworkManager leaves it on by default, so
+# the radio dozes between packets and the Wi-Fi rooms underrun and resync (the
+# office logged about 250 underruns in two hours). The drop-in sets the default
+# for every Wi-Fi connection NetworkManager manages (wifi.powersave = 2 is
+# "disable") and is written only where NetworkManager is installed. A reload
+# re-reads it, but an already-associated link keeps its old setting until it
+# reconnects, so the running wlan0 is also switched off once below.
+- name: Check whether NetworkManager manages this machine's networking
+  ansible.builtin.stat:
+    path: /etc/NetworkManager/conf.d
+  register: common_nm_dir
+
+- name: Turn off Wi-Fi power saving by default in NetworkManager
+  ansible.builtin.copy:
+    content: |
+      [connection]
+      wifi.powersave = 2
+    dest: /etc/NetworkManager/conf.d/snaphouse-wifi-powersave.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: common_nm_dir.stat.isdir | default(false)
+  notify: Reload NetworkManager
+
+- name: Check whether this machine has a wlan0 interface
+  ansible.builtin.stat:
+    path: /sys/class/net/wlan0
+  register: common_wlan0
+  tags:
+    - hardware
+
+- name: Read the running wlan0 power save setting
+  ansible.builtin.command: iw dev wlan0 get power_save
+  register: common_wlan0_power_save
+  changed_when: false
+  failed_when: false
+  when: common_wlan0.stat.exists | default(false)
+  tags:
+    - hardware
+
+- name: Turn off power saving on the running wlan0
+  ansible.builtin.command: iw dev wlan0 set power_save off
+  # Changed only when it was on, so a second apply reports nothing.
+  when: common_wlan0_power_save.stdout | default('') is search('save +on')
+  changed_when: true
+  tags:
+    - hardware
+
+- name: Install the Wi-Fi power save verify check
+  ansible.builtin.copy:
+    src: verify.d/wifi_powersave.sh
+    dest: /etc/snaphouse/verify.d/wifi_powersave.sh
     owner: root
     group: root
     mode: "0755"

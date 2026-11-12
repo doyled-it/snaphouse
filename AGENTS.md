@@ -186,6 +186,15 @@ a name that also carried a global IPv6 address would be tried over IPv6 first an
 sent into the tunnel: the IP worked but `house.local` did not. The `avahi_mdns`
 verify check pins both settings on device.
 
+## Wi-Fi power saving is off
+
+The `common` role writes `/etc/NetworkManager/conf.d/snaphouse-wifi-powersave.conf`
+(`wifi.powersave = 2`, disable) where NetworkManager is present, reloads it by
+handler, and switches the running `wlan0` off once with `iw` when it was on.
+NetworkManager's default leaves power saving on, which makes the radio doze
+between packets and underruns the Wi-Fi rooms (issue #140). The `wifi_powersave.sh`
+verify check fails if `iw` reports it on, and passes where there is no `wlan0`.
+
 ## Verify checks and self-update pruning
 
 A role installs an on-device check by copying or templating it to

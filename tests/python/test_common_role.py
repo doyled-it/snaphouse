@@ -151,3 +151,83 @@ def test_verify_check_does_not_compare_conf_mtime_to_avahi_start():
     assert "systemctl" not in text
     assert "ActiveEnterTimestamp" not in text
     assert "stat -c" not in text
+
+
+# Issue #140: Wi-Fi power saving must be off on hosts whose Wi-Fi NetworkManager
+# manages. NetworkManager's default leaves it on, the radio dozes between packets
+# and the Wi-Fi rooms underrun and resync.
+
+WIFI_VERIFY = REPO / "roles/common/files/verify.d/wifi_powersave.sh"
+NM_CONF = "/etc/NetworkManager/conf.d/snaphouse-wifi-powersave.conf"
+
+
+def _nm_conf_task() -> tuple[dict, dict]:
+    for task, _module_name, args in _modules():
+        if isinstance(args, dict) and str(args.get("dest", "")) == NM_CONF:
+            return task, args
+    raise AssertionError("no task writes the NetworkManager power save drop-in")
+
+
+def test_nm_dropin_disables_wifi_powersave_and_reloads_networkmanager():
+    task, args = _nm_conf_task()
+    content = args.get("content", "")
+    assert "[connection]" in content
+    assert "wifi.powersave = 2" in content
+    assert "NetworkManager" in str(task.get("notify", ""))
+
+
+def test_nm_dropin_is_only_written_where_networkmanager_is_present():
+    task, _args = _nm_conf_task()
+    assert "nm" in str(task.get("when", "")).lower()
+
+
+def test_nm_reload_handler_is_gated_on_systemd_and_tagged_service():
+    reload_ = [
+        h
+        for h in _handlers()
+        if "networkmanager" in str(h).lower() and "reload" in str(h).lower()
+    ]
+    assert reload_, "no handler reloads NetworkManager"
+    assert "common_systemd_init" in str(reload_[0].get("when"))
+    assert "service" in (reload_[0].get("tags") or [])
+
+
+def test_running_interface_is_switched_off_once_tagged_hardware():
+    sets = [
+        (task, args)
+        for task in _tasks()
+        for args in [task.get("ansible.builtin.command")]
+        if args and "power_save off" in str(args)
+    ]
+    assert sets, "no task runs iw to set power_save off"
+    task, args = sets[0]
+    assert "hardware" in (task.get("tags") or [])
+    assert "wlan0" in str(args)
+    # Changed only when it was on: the task is skipped when the query says off.
+    assert "power_save" in str(task.get("when", ""))
+
+
+def test_iw_is_installed():
+    for task in _tasks():
+        apt = task.get("ansible.builtin.apt")
+        if apt and "iw" in (apt.get("name") or []):
+            return
+    raise AssertionError("iw is not in the base packages")
+
+
+def test_wifi_verify_check_is_installed_with_a_static_dest():
+    installs = [
+        args
+        for _t, module, args in _modules()
+        if module.endswith("copy") and str(args.get("dest", "")).endswith("wifi_powersave.sh")
+    ]
+    assert installs, "no task installs the Wi-Fi power save verify check"
+    assert installs[0]["dest"] == "/etc/snaphouse/verify.d/wifi_powersave.sh"
+
+
+def test_wifi_verify_check_reads_iw_and_carries_the_managed_marker():
+    text = WIFI_VERIFY.read_text()
+    assert "snaphouse-managed-check" in text
+    assert "iw dev wlan0 get power_save" in text
+    assert "/sys/class/net/wlan0" in text
+    assert "power save is on" in text

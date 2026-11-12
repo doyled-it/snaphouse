@@ -12,3 +12,15 @@
   when: common_systemd_init
   tags:
     - service
+
+# NetworkManager re-reads conf.d on reload, so the Wi-Fi power save drop-in takes
+# effect for the next connection without dropping the current one. Like the
+# avahi restart it touches a running service, so it runs only where systemd is
+# PID 1, never in the CI container.
+- name: Reload NetworkManager
+  ansible.builtin.systemd_service:
+    name: NetworkManager.service
+    state: reloaded
+  when: common_systemd_init
+  tags:
+    - service
