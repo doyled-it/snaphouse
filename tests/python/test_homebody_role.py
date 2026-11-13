@@ -489,3 +489,15 @@ def test_status_verify_check_is_installed_statically_and_probes_the_file():
     assert "homebody.service" in text
     assert "http://localhost/homebody.json" in text
     assert "\u2014" not in text
+
+
+def test_role_installs_the_presence_probe_tools():
+    # homebody's Wi-Fi presence probe runs `arping`, which Debian does not ship by
+    # default; without it every probe fails and nobody is ever seen home.
+    packages = []
+    for task in _tasks():
+        apt = task.get("ansible.builtin.apt")
+        if apt:
+            name = apt.get("name")
+            packages.extend(name if isinstance(name, list) else [name])
+    assert "iputils-arping" in packages

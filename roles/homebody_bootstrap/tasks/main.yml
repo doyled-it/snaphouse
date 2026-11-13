@@ -12,9 +12,13 @@
 # under live here as templates: the Matter controller and the self-update service
 # and timer. The install interface the two repos share pins that split.
 
-- name: Ensure git is present for the clone
+# git for the clone; iputils-arping for homebody's Wi-Fi presence probe (arping
+# is not in a default Debian install, and without it nobody is ever seen home).
+- name: Ensure git and the presence probe tools are present
   ansible.builtin.apt:
-    name: git
+    name:
+      - git
+      - iputils-arping
     state: present
     update_cache: true
     cache_valid_time: 3600
