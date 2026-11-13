@@ -85,7 +85,7 @@ test("render writes aria-valuenow at once and transforms in one frame", () => {
   assert.equal(slider.el.getAttribute("aria-valuenow"), "50");
   assert.equal(frames.length, 1);
   flushFrames();
-  assert.equal(slider.el.children[0].style.transform, "scaleX(0.5)");
+  assert.equal(slider.el.children[0].style.clipPath, "inset(0px 50% 0px 0px round 8px)");
   assert.match(slider.el.children[1].style.translate, /^[\d.]+px 0px$/);
   assert.deepEqual(renders, [50]);
 });
@@ -204,4 +204,25 @@ test("disabling mid-drag ends the drag and stops sending", () => {
   slider.el.fire("pointermove", { pointerId: 1, clientX: 100 + 200 });
   advance(200);
   assert.deepEqual(sent, [22]);
+});
+
+test("fill is clipped, never scaled, so it stays crisp at any value", () => {
+  // A scaleX fill is rasterized once and stretched, which showed as blocky
+  // stripes on Android while dragging. clip-path reveals a full-width fill.
+  const { slider, flushFrames } = setup();
+  slider.set(16);
+  flushFrames();
+  assert.equal(slider.el.children[0].style.transform || "", "");
+  assert.equal(slider.el.children[0].style.clipPath, "inset(0px 84% 0px 0px round 8px)");
+});
+
+test("a pointer press focuses without the keyboard focus ring; a key brings it back", () => {
+  const { slider } = setup();
+  const { el } = slider;
+  el.fire("pointerdown", { pointerId: 1, clientX: 150 });
+  assert.equal(el.focused, 1);
+  assert.ok(el.classList.contains("pointer-focus"));
+  el.fire("pointerup", { pointerId: 1 });
+  el.fire("keydown", { key: "ArrowRight" });
+  assert.ok(!el.classList.contains("pointer-focus"));
 });

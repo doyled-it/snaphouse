@@ -46,7 +46,9 @@ export function createVolumeSlider({
   function paint() {
     frameQueued = false;
     if (!(trackWidth > 0) && typeof el.offsetWidth === "number") trackWidth = el.offsetWidth;
-    fill.style.transform = `scaleX(${value / 100})`;
+    // clip-path, not scaleX: a scaled fill is rasterized once and stretched,
+    // which showed as blocky stripes on Android while dragging.
+    fill.style.clipPath = `inset(0px ${100 - value}% 0px 0px round 8px)`;
     const travel = Math.max(0, trackWidth - THUMB_PX);
     // `translate`, not `transform`: CSS applies the held `scale: 1.2` before
     // `transform`, which would stretch a translateX and overshoot the track.
@@ -102,8 +104,11 @@ export function createVolumeSlider({
     } catch (_) {
       // A synthetic or already-ended pointer cannot be captured; the drag still works.
     }
+    // Mark pointer focus so the keyboard focus ring stays hidden after a tap;
+    // the first key press removes the mark and the ring returns.
+    el.classList.add("pointer-focus");
     try {
-      el.focus();
+      el.focus({ preventScroll: true, focusVisible: false });
     } catch (_) {
       // Focus is a convenience so arrow keys work right after a tap.
     }
@@ -130,6 +135,7 @@ export function createVolumeSlider({
   });
 
   el.addEventListener("keydown", (e) => {
+    el.classList.remove("pointer-focus");
     if (!enabled) return;
     let next;
     if (e.key === "Home") next = 0;

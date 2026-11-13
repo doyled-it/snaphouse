@@ -803,10 +803,8 @@ a.frame-title {
   height: 8px;
   margin-top: -4px;
   border-radius: 8px;
-  transform: scaleX(0);
-  transform-origin: left;
+  clip-path: inset(0px 100% 0px 0px round 8px);
   background: linear-gradient(90deg, var(--accent-2), var(--accent));
-  will-change: transform;
 }
 
 .volume-thumb {
@@ -834,6 +832,10 @@ a.frame-title {
 
 .volume:focus-visible {
   border-radius: 999px;
+}
+
+.volume.pointer-focus:focus-visible {
+  outline: none;
 }
 
 @media (pointer: coarse) {
