@@ -1530,6 +1530,20 @@ a.row-title {
   font-weight: 600;
 }
 
+/* A small text-style action; the tap target is still 44 px tall. */
+.link-btn {
+  justify-self: start;
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.95rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .save-retry {
   min-height: 44px;
   padding: 0 14px;

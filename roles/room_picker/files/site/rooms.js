@@ -172,8 +172,7 @@ const els = {
   fsKinds: document.getElementById("fs-kinds"),
   fsQuietStart: document.getElementById("fs-quiet-start"),
   fsQuietEnd: document.getElementById("fs-quiet-end"),
-  fsQuietStart: document.getElementById("fs-quiet-start"),
-  fsQuietEnd: document.getElementById("fs-quiet-end"),
+  fsQuietReset: document.getElementById("fs-quiet-reset"),
   fsQuietEnabled: document.getElementById("fs-quiet-enabled"),
   fsQuietNote: document.getElementById("fs-quiet-note"),
   fsQuietError: document.getElementById("fs-quiet-error"),
@@ -398,12 +397,14 @@ async function start() {
   // The URL hash is the screen and the chosen frame: Back, forward, and a shared
   // link all land on the right one.
   window.addEventListener("hashchange", onHashChange);
+  window.addEventListener("pagehide", flushSettings);
 
   // A phone that was asleep comes back with a dead socket and stale cards. On
   // return to the foreground, reconnect if needed, re-read the status, and
   // refresh everything so the page is current at a glance.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") {
+      flushSettings();
       timers.pause();
       stopProgressLoop();
       return;
@@ -1045,6 +1046,7 @@ function wireFrameControl() {
     input.addEventListener("input", () => editQuietHours(false));
     input.addEventListener("blur", flushQuietHours);
   }
+  els.fsQuietReset.addEventListener("click", resetQuietHours);
   els.fsMorningEnabled.addEventListener("change", () => editMorning(true));
   for (const input of [els.fsWeekdayStart, els.fsWeekdayEnd, els.fsWeekendStart, els.fsWeekendEnd]) {
     input.addEventListener("input", () => editMorning(false));
@@ -1164,7 +1166,15 @@ function renderFrameControl() {
 // changed (the city is geocoded each time it is sent).
 let sharedWritten = {};
 let sharedState = "idle";
-let sharedGroup = "kinds";
+// The groups the last shared write carried, so "Saved" or Retry shows next to
+// the fields actually written, not the field edited last.
+let sharedWriteGroups = new Set();
+const SHARED_KEY_GROUPS = {
+  now_playing_kinds: "kinds",
+  quiet_hours: "quiet",
+  morning_weather: "morning",
+  weather_city: "city",
+};
 const frameQuietQueues = new Map();
 const frameQuietStates = new Map();
 let rotationWritten = {};
@@ -1174,7 +1184,7 @@ const sharedQueue = createAutosave({
   write: writeSharedSettings,
   onState: (next) => {
     sharedState = next;
-    showSaveStatus(sharedGroup, next, () => sharedQueue.retry());
+    showSharedStatus(next);
   },
 });
 
@@ -1185,6 +1195,25 @@ const rotationQueue = createAutosave({
     showSaveStatus("rotation", next, () => rotationQueue.retry());
   },
 });
+
+// Send any edit still waiting out its pause (a tab hidden or closed mid-edit).
+function flushSettings() {
+  sharedQueue.flush();
+  rotationQueue.flush();
+  for (const queue of frameQuietQueues.values()) {
+    queue.flush();
+  }
+}
+
+function showSharedStatus(queueState) {
+  const legacy = Boolean(state.frameControl && state.frameControl.legacy);
+  const groups = ["kinds", "morning", "city", ...(legacy ? ["quiet"] : [])];
+  const writing = queueState === "saved" || queueState === "failed" || queueState === "idle";
+  for (const group of groups) {
+    const here = writing && sharedWriteGroups.has(group);
+    showSaveStatus(group, here ? queueState : "idle", () => sharedQueue.retry());
+  }
+}
 
 function frameQuietQueue(frame) {
   let queue = frameQuietQueues.get(frame);
@@ -1312,6 +1341,7 @@ function renderFrameSettings(fc) {
       quietQueue.seed({ quiet_hours: override });
     }
     els.fsQuietEnabled.checked = quiet.enabled;
+    els.fsQuietReset.hidden = !(perFrame && override !== null);
     els.fsQuietStart.disabled = !quiet.enabled;
     els.fsQuietEnd.disabled = !quiet.enabled;
     setFieldValue(els.fsQuietStart, quiet.start);
@@ -1327,7 +1357,6 @@ function toggleKind(chip) {
   const chosen = new Set(
     [...els.fsKinds.querySelectorAll(".chip.on")].map((c) => c.dataset.kind)
   );
-  sharedGroup = "kinds";
   sharedQueue.edit({ now_playing_kinds: FRAME_KINDS.filter((k) => chosen.has(k)) }, { delayMs: 0 });
 }
 
@@ -1365,9 +1394,23 @@ function editQuietHours(immediate) {
   if (perFrame) {
     frameQuietQueue(state.selectedFrame).edit({ quiet_hours: override }, options);
   } else {
-    sharedGroup = "quiet";
-    sharedQueue.edit({ quiet_hours: override }, options);
+      sharedQueue.edit({ quiet_hours: override }, options);
   }
+}
+
+// Give the chosen frame back to the default hours: writes quiet_hours null
+// through the same queue, so it saves, fails and retries like any other field.
+function resetQuietHours() {
+  const fc = state.frameControl;
+  if (!fc || !fc.available || fc.legacy) {
+    return;
+  }
+  clearFieldError(els.fsQuietError);
+  els.fsQuietReset.hidden = true;
+  frameQuietQueue(state.selectedFrame).edit(
+    { quiet_hours: quietOverrideFromFields({ reset: true }) },
+    { delayMs: 0 }
+  );
 }
 
 function editMorning(immediate) {
@@ -1383,13 +1426,11 @@ function editMorning(immediate) {
     return;
   }
   clearFieldError(els.fsMorningError);
-  sharedGroup = "morning";
   sharedQueue.edit({ morning_weather: check.value.morning_weather }, immediate ? { delayMs: 0 } : undefined);
 }
 
 function editWeatherCity() {
   clearFieldError(els.fsWeatherError);
-  sharedGroup = "city";
   sharedQueue.edit({ weather_city: els.fsWeatherInput.value.trim() });
 }
 
@@ -1398,6 +1439,7 @@ function editWeatherCity() {
 // so the queue shows Retry; a city the hub could not find is explained in place.
 async function writeSharedSettings(obj) {
   const changed = changedKeys(sharedWritten, obj);
+  sharedWriteGroups = new Set(changed.map((key) => SHARED_KEY_GROUPS[key]).filter(Boolean));
   const subset = {};
   for (const key of ["now_playing_kinds", "quiet_hours", "morning_weather"]) {
     if (changed.includes(key)) {

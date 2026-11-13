@@ -260,7 +260,11 @@ All frame settings live on the Frame tab (below the mirror, pin and history), no
 in Settings. Quiet hours is one control per frame: a switch and two times; the
 frame follows the shared window until it has an override, and the override is
 written through the per-frame path (the shared window alone on the old
-single-frame contract).
+single-frame contract). The shared window is a hub default that
+the page does not edit; a frame with its own hours shows a "Use the default hours"
+link that writes `quiet_hours: null` through the same queue. "Saved" and Retry
+attach to the groups a write actually carried, and pending edits flush when the
+tab is hidden or the page is left.
 
 ## Volume slider
 

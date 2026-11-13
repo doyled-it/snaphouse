@@ -26,6 +26,7 @@ import {
   weatherClearBody,
   effectiveQuietHours,
   quietOverrideFromFields,
+  frameQuietHoursBody,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // --------------------------------------------------------------------------- #
@@ -408,4 +409,16 @@ test("quietOverrideFromFields builds the stored override from the switch and tim
   });
   assert.equal(quietOverrideFromFields({ enabled: true, start: "", end: "06:30" }), undefined);
   assert.equal(quietOverrideFromFields({ enabled: true, start: "25:00", end: "06:30" }), undefined);
+});
+
+test("quietOverrideFromFields produces null for a reset, so the frame follows the default hours", () => {
+  assert.equal(quietOverrideFromFields({ reset: true }), null);
+  assert.equal(quietOverrideFromFields({ reset: true, enabled: false, start: "", end: "" }), null);
+});
+
+test("a reset override is accepted by frameQuietHoursBody as quiet_hours null", () => {
+  assert.deepEqual(frameQuietHoursBody("office", quietOverrideFromFields({ reset: true })), {
+    ok: true,
+    value: { frame: "office", quiet_hours: null },
+  });
 });

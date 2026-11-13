@@ -1204,10 +1204,14 @@ export function effectiveQuietHours(shared, override) {
   return { enabled: true, start: shared.start, end: shared.end };
 }
 
-// The override stored for the switch and the two times, or undefined while a
+// The override stored for the switch and the two times (null for a reset, so
+// the frame follows the default hours again), or undefined while a
 // time is missing or not a 24-hour clock time (the view then shows the error
 // and does not write).
-export function quietOverrideFromFields({ enabled, start, end }) {
+export function quietOverrideFromFields({ enabled, start, end, reset }) {
+  if (reset) {
+    return null;
+  }
   if (!enabled) {
     return { enabled: false };
   }
