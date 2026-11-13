@@ -94,6 +94,38 @@
     - Reload systemd for homebody_bootstrap
     - Restart the homebody update timer
 
+- name: Install the homebody daemon unit
+  ansible.builtin.template:
+    src: homebody.service.j2
+    dest: /etc/systemd/system/homebody.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd for homebody_bootstrap
+    - Restart the homebody daemon
+
+# The daemon's own status directory under the public root, owned by homebody so
+# the unprivileged daemon can write its file there. Only this subdirectory: the
+# shared public root belongs to the web role and is never chowned from here.
+- name: Create the homebody status directory owned by homebody
+  ansible.builtin.file:
+    path: "{{ homebody_bootstrap_status_dir }}"
+    state: directory
+    owner: homebody
+    group: homebody
+    mode: "0755"
+
+- name: Install the homebody nginx routes
+  # Drops into the web role's include dir as its own file.
+  ansible.builtin.template:
+    src: homebody.conf.j2
+    dest: /etc/nginx/snaphouse.d/homebody.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx for homebody_bootstrap
+
 - name: Ensure the verify.d dir exists for on-device check scripts
   ansible.builtin.file:
     path: /etc/snaphouse/verify.d
@@ -106,6 +138,14 @@
   ansible.builtin.copy:
     src: verify.d/homebody.sh
     dest: /etc/snaphouse/verify.d/homebody.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the homebody daemon verify check
+  ansible.builtin.copy:
+    src: verify.d/homebody_status.sh
+    dest: /etc/snaphouse/verify.d/homebody_status.sh
     owner: root
     group: root
     mode: "0755"
@@ -133,6 +173,18 @@
     enabled: true
     state: started
   # Only on a real systemd host; the CI container has no running init.
+  when: common_systemd_init
+  tags:
+    - service
+
+# Started only on a real systemd host (the CI container has no init, so the unit
+# never starts there and a stub /opt/homebody without `homebody run` cannot fail
+# the play).
+- name: Enable and start the homebody daemon
+  ansible.builtin.systemd_service:
+    name: homebody.service
+    enabled: true
+    state: started
   when: common_systemd_init
   tags:
     - service

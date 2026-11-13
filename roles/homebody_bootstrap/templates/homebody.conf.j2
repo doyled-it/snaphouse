@@ -1,0 +1,23 @@
+# Managed by snaphouse (homebody_bootstrap role). Do not edit by hand.
+#
+# homebody's web surface on the LAN, served by the server block the web role owns
+# (this drops into /etc/nginx/snaphouse.d). LAN-only: there is no inbound access
+# from the internet (AGENTS.md).
+#
+#   /homebody.json    the status file the daemon writes atomically into its own
+#                     homebody-owned subdir of the public root. Exact-match so it
+#                     outranks the room-picker `location /` prefix; the root
+#                     points at the subdir and nginx appends the one-segment URI.
+#   /api/homebody/    the settings API, proxied to the daemon on loopback. Bodies
+#                     are tiny JSON, so a small upload cap is plenty. The port is
+#                     the one pinned in vars/all.yml (homebody_api_port).
+location = /homebody.json {
+    root {{ homebody_bootstrap_status_dir }};
+    default_type application/json;
+}
+
+location /api/homebody/ {
+    proxy_pass http://127.0.0.1:{{ homebody_api_port }};
+    proxy_set_header Host $host;
+    client_max_body_size 64k;
+}
