@@ -82,6 +82,15 @@ export function playbackControls(track) {
   return { visible: true, playing: track.status !== "paused" };
 }
 
+// A play/pause tap shows its new state at once, but the phone's status takes a
+// moment to reach the hub. While a hold runs (until untilMs), a now-playing read
+// keeps the tapped state instead of flipping the icon back. Once it runs out, the
+// observed status is trusted again.
+export function heldStatus(observed, held, nowMs) {
+  if (!held || nowMs >= held.untilMs) return observed;
+  return held.status;
+}
+
 // The Snapserver request for one playback command on the Bluetooth stream.
 export function playbackRequest(command) {
   if (!PLAYBACK_COMMANDS.includes(command)) {

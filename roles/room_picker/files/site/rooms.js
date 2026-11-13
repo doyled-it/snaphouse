@@ -88,7 +88,7 @@ import { createPageTimers } from "./page-timers.js";
 import { galleryHash, idAfterRemoval, pieceIdFromHash, stepIndex, swipeDirection, viewerSource, viewerState } from "./gallery-viewer.js";
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
 import { classifyMachines, healthMessage, reasonLabel, speakerBanner } from "./health-model.js";
-import { applyPlan, everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, playbackControls, playbackRequest, roomState } from "./listen-model.js";
+import { applyPlan, everythingOffPlan, heldStatus, howToText, loadBluetoothName, onlyHerePlan, playbackControls, playbackRequest, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -102,6 +102,8 @@ const haptics = createHaptics();
 // play lands, so the card polls quickly and the history slowly. The card's
 // progress bar ticks client-side every second from the position anchor.
 const NOW_PLAYING_MS = 5000;
+// How long a play/pause tap holds its state against now-playing reads.
+const PLAY_PAUSE_HOLD_MS = 3000;
 const HISTORY_MS = 30000;
 const TICK_MS = 1000;
 
@@ -309,6 +311,7 @@ const state = {
   // The last parsed now-playing track (or null); the progress bar ticks from it.
   // npArtSrc is the cover src last set, so the image is swapped only on change.
   nowTrack: null,
+  playHold: null, // { status, untilMs } set by a play/pause tap
   npArtSrc: null,
   btName: null,
   speakers: "up",
@@ -1954,7 +1957,15 @@ async function refreshNowPlaying() {
   } catch (err) {
     return;
   }
-  updateNowPlayingCard(nowPlayingFromBody(body));
+  updateNowPlayingCard(withPlayHold(nowPlayingFromBody(body)));
+}
+
+// Keep the status a play/pause tap set while its hold runs, so a read that has
+// not caught up yet does not flip the icon back.
+function withPlayHold(track) {
+  if (!track || !state.playHold) return track;
+  track.status = heldStatus(track.status, state.playHold, Date.now());
+  return track;
 }
 
 // The page color follows the now-playing cover. A token drops a slow older
@@ -2030,8 +2041,12 @@ function onPlayback(command) {
   haptics.playPause();
   if (command === "playPause") {
     track.status = track.status === "paused" ? "playing" : "paused";
+    state.playHold = { status: track.status, untilMs: Date.now() + PLAY_PAUSE_HOLD_MS };
     renderPlaybackControls();
     tickNowPlaying();
+  } else {
+    // Next and previous change the track, so an earlier play/pause hold no longer applies.
+    state.playHold = null;
   }
   const request = playbackRequest(command);
   postRpc(request.method, request.params)

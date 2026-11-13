@@ -6,6 +6,7 @@ import {
   roomState,
   howToText,
   loadBluetoothName,
+  heldStatus,
 } from "../../roles/room_picker/files/site/listen-model.js";
 
 const room = (id, on, reachable = true, volume = 54) => ({ id, on, reachable, volume });
@@ -144,4 +145,19 @@ test("playbackRequest builds the Stream.Control body and rejects unknown command
     });
   }
   assert.throws(() => playbackRequest("seek"));
+});
+
+test("heldStatus keeps the tapped play/pause state until the hold runs out", () => {
+  const held = { status: "paused", untilMs: 3000 };
+  // The hub has not caught up yet: the observed "playing" must not win.
+  assert.equal(heldStatus("playing", held, 0), "paused");
+  assert.equal(heldStatus("playing", held, 2999), "paused");
+  // At and after the deadline the observed status is trusted again.
+  assert.equal(heldStatus("playing", held, 3000), "playing");
+  assert.equal(heldStatus("paused", held, 3001), "paused");
+});
+
+test("heldStatus passes the observed status through when nothing is held", () => {
+  assert.equal(heldStatus("playing", null, 0), "playing");
+  assert.equal(heldStatus("paused", undefined, 0), "paused");
 });
