@@ -187,7 +187,12 @@ undo toast does not steal focus. Reduced motion keeps its instant behavior.
 - **Upload's target folder** lives in Gallery with Upload. **Weather city** lives in Frame
   settings.
 - **The health line** (a machine needs attention) stays as a banner, reworded in plain
-  language, alongside the speaker banner.
+  language, alongside the speaker banner. A machine that has never reported in (for
+  example the 800x480 panel before it is built) does not raise the banner; Settings lists
+  it as "Not set up yet" instead. Only a machine that was healthy and then stopped
+  reporting, or reports a failure, raises the banner. **(Controller's call, from the
+  owner's screenshot showing "panel needs attention" for a panel that does not exist
+  yet.)**
 - **Pin is two taps only where the hub reports frame control**; without it the pin control
   is absent, as today.
 - **Autosave risk:** settings are written today as whole objects with one Save. Autosave
