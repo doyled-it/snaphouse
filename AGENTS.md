@@ -200,7 +200,7 @@ room (the WebSocket path is fire-and-forget, so it holds the slot for the
 100 ms gap only; the HTTP fallback returns its promise from `sendControl`, so it
 holds the slot until the promise settles), status for a room is ignored while it is dragged, and after release the
 user's value is held until the hub reports within 1 of it or 2 s pass. Fill and
-thumb move once per animation frame from a cached track width: the fill by `transform: scaleX`, the thumb by the `translate` property (never `transform`, which the held `scale: 1.2` would stretch past the track end).
+thumb move once per animation frame from a cached track width: the fill by `clip-path: inset()` (a scaled fill rasterizes once and shows blocky stripes on Android), the thumb by the `translate` property (never `transform`, which the held `scale: 1.2` would stretch past the track end).
 Haptics (`haptics.js`, Android `navigator.vibrate`, feature-detected) fire only
 from pointer, key and tap handlers, never from a status update.
 
