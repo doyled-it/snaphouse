@@ -381,6 +381,12 @@
           <p id="dev-error" class="fs-error" role="alert" hidden></p>
         </section>
 
+        <!-- Machines that stopped answering or failed a check, with the plain reason. -->
+        <section id="needs-attention" class="section panel" aria-labelledby="na-h" hidden>
+          <h2 id="na-h" class="section-h">Needs attention</h2>
+          <ul id="needs-attention-list" class="rows" aria-label="Needs attention"></ul>
+        </section>
+
         <!-- Parts of the house the inventory lists but that are not built yet. They
              never raise the health banner. -->
         <section id="not-set-up" class="section panel" aria-labelledby="nsu-h" hidden>

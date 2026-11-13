@@ -87,7 +87,7 @@ import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
 import { galleryHash, idAfterRemoval, pieceIdFromHash, stepIndex, swipeDirection, viewerSource, viewerState } from "./gallery-viewer.js";
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
-import { classifyMachines, healthMessage, speakerBanner } from "./health-model.js";
+import { classifyMachines, healthMessage, reasonLabel, speakerBanner } from "./health-model.js";
 import { applyPlan, everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
@@ -146,6 +146,8 @@ const els = {
   health: document.getElementById("health"),
   connection: document.getElementById("connection"),
   speakers: document.getElementById("speakers"),
+  needsAttention: document.getElementById("needs-attention"),
+  needsAttentionList: document.getElementById("needs-attention-list"),
   notSetUp: document.getElementById("not-set-up"),
   notSetUpList: document.getElementById("not-set-up-list"),
 
@@ -926,6 +928,7 @@ async function refreshHealth() {
   }
   const { troubled, notSetUp } = classifyMachines(entries);
   renderNotSetUp(notSetUp);
+  renderNeedsAttention(troubled);
   const message = healthMessage(troubled);
   if (message) {
     els.health.textContent = message;
@@ -3314,6 +3317,18 @@ function renderNotSetUp(hosts) {
       const li = document.createElement("li");
       li.className = "row";
       li.textContent = host;
+      return li;
+    }),
+  );
+}
+
+function renderNeedsAttention(troubled) {
+  els.needsAttention.hidden = troubled.length === 0;
+  els.needsAttentionList.replaceChildren(
+    ...troubled.map(({ host, reason }) => {
+      const li = document.createElement("li");
+      li.className = "row";
+      li.textContent = `${host}: ${reasonLabel(reason)}`;
       return li;
     }),
   );

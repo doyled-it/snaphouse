@@ -1704,6 +1704,13 @@ a.row-title {
     padding-bottom: 8px;
   }
 
+  /* A shown banner is one tight line so four rooms still fit without scrolling. */
+  .banner {
+    margin: 4px 0;
+    padding: 6px 12px;
+    font-size: 0.85rem;
+  }
+
   /* The tabs become a vertical rail down the left edge. */
   .tabs {
     top: 0;
