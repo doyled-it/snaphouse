@@ -49,7 +49,7 @@ import tempfile
 import threading
 import time
 from collections import namedtuple
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlsplit
@@ -567,7 +567,7 @@ class Tracker:
 
         newest = self._history[0] if self._history else None
         if newest is not None and _key_of(newest) == new_key:
-            started = _parse_dt(newest.get("started_at"))
+            started = _parse_dt(newest.get("last_played_at") or newest.get("started_at"))
             window = (newest.get("duration") or 0) + self._hold_s
             if started is not None and (now - started).total_seconds() < window:
                 self._started_at = started
@@ -613,7 +613,17 @@ class Tracker:
             "started_at": _iso(self._started_at),
             "art_url": self._keep_art(self._art_url),
             "podcast_id": self._podcast_id,
+            "last_played_at": _iso(self._started_at),
         }
+        # A book or podcast replayed (or its next chapter) is the same row moved
+        # to the top, not a new one. Music repeats stay separate plays.
+        kept = []
+        for old in self._history:
+            if _mergeable(old, play):
+                play = _merge_plays(old, play)
+            else:
+                kept.append(old)
+        self._history = kept
         self._history.insert(0, play)
         del self._history[self._max_plays :]
         self._counted = True
@@ -666,6 +676,55 @@ def _key_of(play: dict) -> TrackKey:
     return (play.get("title"), play.get("artist"), play.get("album"))
 
 
+def _mergeable(old: dict, new: dict) -> bool:
+    """Whether two history rows are one long-form item (same key, either long_form)."""
+    return _key_of(old) == _key_of(new) and "long_form" in (
+        old.get("kind"),
+        new.get("kind"),
+    )
+
+
+def _last_played(play: dict) -> str | None:
+    return play.get("last_played_at") or play.get("started_at")
+
+
+def _merge_plays(old: dict, new: dict) -> dict:
+    """Merge an older row into a newer one of the same long-form item.
+
+    Keeps the first ``started_at``, the newest ``last_played_at``, kind
+    ``long_form``, and the newest non-null art, genre, podcast id and duration.
+    """
+    merged = dict(new)
+    merged["kind"] = "long_form"
+    merged["started_at"] = old.get("started_at") or new.get("started_at")
+    merged["last_played_at"] = _last_played(new) or _last_played(old)
+    for field in ("art_url", "genre", "podcast_id", "duration"):
+        if merged.get(field) is None and old.get(field) is not None:
+            merged[field] = old[field]
+    return merged
+
+
+def collapse_history(plays: list[dict]) -> list[dict]:
+    """Merge long-form duplicates in a loaded history, newest first."""
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+
+    def stamp(play: dict) -> datetime:
+        parsed = _parse_dt(_last_played(play))
+        if parsed is None:
+            return floor
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    out: list[dict] = []
+    for play in sorted(plays, key=stamp, reverse=True):
+        for index, kept in enumerate(out):
+            if _mergeable(kept, play):
+                out[index] = _merge_plays(play, kept)
+                break
+        else:
+            out.append(play)
+    return out
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -698,7 +757,7 @@ def load_history(path: Path, log: logging.Logger) -> list[dict]:
     if not isinstance(plays, list):
         log.warning("%s has no plays list; starting with an empty history", path)
         return []
-    return [play for play in plays if isinstance(play, dict)]
+    return collapse_history([play for play in plays if isinstance(play, dict)])
 
 
 def _write_json_atomic(path: Path, document: dict) -> None:

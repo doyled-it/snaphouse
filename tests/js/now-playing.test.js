@@ -416,3 +416,54 @@ test("parseNowPlayingDoc keeps source as a string or null", () => {
   const { source, ...rest } = doc.track;
   assert.equal(parseNowPlayingDoc({ ...doc, track: rest }).source, null);
 });
+
+// -- audiobooks -------------------------------------------------------------
+
+import {
+  isBook,
+  historyWhenText,
+  progressLabel,
+  parsePlayHistory as parseHistoryForBooks,
+  parseNowPlayingDoc as parseNowForBooks,
+} from "../../roles/room_picker/files/site/rooms-model.js";
+
+test("isBook: long_form with no podcast genre and no podcast id", () => {
+  assert.equal(isBook({ kind: "long_form", genre: null, podcastId: null }), true);
+  assert.equal(isBook({ kind: "long_form", genre: ["Audiobook"], podcastId: null }), true);
+  assert.equal(isBook({ kind: "long_form", genre: ["Podcast"], podcastId: null }), false);
+  assert.equal(isBook({ kind: "long_form", genre: ["podcast"], podcastId: null }), false);
+  assert.equal(isBook({ kind: "long_form", genre: null, podcastId: 12 }), false);
+  assert.equal(isBook({ kind: "music", genre: null, podcastId: null }), false);
+  assert.equal(isBook(null), false);
+});
+
+test("parsePlayHistory keeps lastPlayedAt, falling back to startedAt", () => {
+  const out = parseHistoryForBooks({
+    plays: [
+      { title: "A", started_at: "2026-11-01T10:00:00Z", last_played_at: "2026-11-02T10:00:00Z" },
+      { title: "B", started_at: "2026-11-01T10:00:00Z" },
+    ],
+  });
+  assert.equal(out[0].lastPlayedAt, "2026-11-02T10:00:00Z");
+  assert.equal(out[1].lastPlayedAt, "2026-11-01T10:00:00Z");
+});
+
+test("historyWhenText: a book says Audiobook, others keep time and duration", () => {
+  const book = { kind: "long_form", genre: null, podcastId: null, duration: 1528 };
+  assert.equal(historyWhenText(book, "Today 9:00"), "Audiobook, Today 9:00");
+  const pod = { kind: "long_form", genre: ["Podcast"], podcastId: 3, duration: 1800 };
+  assert.equal(historyWhenText(pod, "Today 9:00"), "Today 9:00, 30:00");
+  const song = { kind: "music", genre: null, podcastId: null, duration: null };
+  assert.equal(historyWhenText(song, "Today 9:00"), "Today 9:00");
+});
+
+test("progressLabel prefixes Chapter for a book only", () => {
+  const book = { kind: "long_form", genre: null, podcastId: null };
+  assert.equal(progressLabel(book, "1:00 / 5:00"), "Chapter 1:00 / 5:00");
+  assert.equal(progressLabel({ kind: "music", genre: null, podcastId: null }, "1:00 / 5:00"), "1:00 / 5:00");
+});
+
+test("parseNowPlayingDoc keeps genre for the book rule", () => {
+  const out = parseNowForBooks({ track: { title: "T", kind: "long_form", genre: ["Audiobook"] }, rooms: [] });
+  assert.deepEqual(out.genre, ["Audiobook"]);
+});

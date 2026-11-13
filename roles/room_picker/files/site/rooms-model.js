@@ -257,6 +257,8 @@ export function parseNowPlayingDoc(raw) {
     position: nonNegativeNumberOrNull(t.position),
     positionAt: nonEmptyStringOrNull(t.position_at),
     startedAt: nonEmptyStringOrNull(t.started_at),
+    // `genre` feeds isBook (the card labels a book's progress as the chapter).
+    genre: stringListOrNull(t.genre),
     artUrl: coverPathOrNull(t.art_url),
     // `podcast_id` is the hub's additive field (docs/cross-repo-features.md): a
     // matched podcast's iTunes collectionId, or null (and absent on older data).
@@ -329,6 +331,36 @@ export function formatDuration(seconds) {
   return `${minutes}:${pad(secs)}`;
 }
 
+// A book is long-form audio that is not a podcast: no podcast genre and no
+// matched podcast id. Works on a parsed history row or now-playing track.
+export function isBook(item) {
+  if (!item || item.kind !== "long_form") {
+    return false;
+  }
+  if (item.podcastId !== null && item.podcastId !== undefined) {
+    return false;
+  }
+  const genre = Array.isArray(item.genre) ? item.genre : [];
+  return !genre.some((g) => typeof g === "string" && g.toLowerCase().includes("podcast"));
+}
+
+// The small line under a history row's title: a book reads "Audiobook, <when>"
+// (the phone reports chapters, so no length); anything else keeps "<when>,
+// <duration>" or just "<when>". `when` is the already formatted time.
+export function historyWhenText(play, when) {
+  if (isBook(play)) {
+    return `Audiobook, ${when}`;
+  }
+  return play.duration !== null && play.duration !== undefined
+    ? `${when}, ${formatDuration(play.duration)}`
+    : when;
+}
+
+// The now-playing progress text, prefixed "Chapter " for a book.
+export function progressLabel(track, text) {
+  return isBook(track) ? `Chapter ${text}` : text;
+}
+
 // The hub's play history, validated into the list the history section renders.
 // `raw` is the parsed play-history.json (the "Play-history file" contract): a
 // `plays` array, newest first, at most 50. Invalid entries are dropped and the
@@ -368,6 +400,11 @@ function validatePlay(raw) {
     genre: stringListOrNull(raw.genre),
     duration: positiveNumberOrNull(raw.duration),
     startedAt: nonEmptyStringOrNull(raw.started_at),
+    // `last_played_at` is the hub's additive field: when the newest session of a
+    // merged book or podcast began. Older rows lack it, so it falls back to
+    // startedAt.
+    lastPlayedAt:
+      nonEmptyStringOrNull(raw.last_played_at) ?? nonEmptyStringOrNull(raw.started_at),
     artUrl: coverPathOrNull(raw.art_url),
     // `podcast_id` is the hub's additive field: a matched podcast's iTunes
     // collectionId, or null (absent on entries written before this field). It

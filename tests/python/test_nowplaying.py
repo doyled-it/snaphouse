@@ -746,3 +746,180 @@ def test_podcast_id_clears_on_a_new_track():
 
     tracker.on_server(server(props(title="Song", artist="Band", album="Record", art=None)), dt(2))
     assert tracker.now_playing_doc(dt(3))["track"]["podcast_id"] is None
+
+
+# -- audiobook merge --------------------------------------------------------- #
+
+
+def _book_row(started, *, duration=1528.0, kind="long_form", **extra):
+    row = {
+        "title": "Book One",
+        "artist": "Author",
+        "album": "Book One",
+        "kind": kind,
+        "genre": None,
+        "source": "bluetooth",
+        "duration": duration,
+        "started_at": dt(started).isoformat(),
+        "art_url": None,
+        "podcast_id": None,
+    }
+    row.update(extra)
+    return row
+
+
+def _play_book(tracker, start, *, duration, genre=None, art=None):
+    tracker.on_server(
+        server(
+            props(
+                title="Book One",
+                artist="Author",
+                album="Book One",
+                duration=duration,
+                genre=genre,
+                art=art,
+                position=0.0,
+            )
+        ),
+        dt(start),
+    )
+    tracker.tick(dt(start + 30))
+
+
+def _pause_past_hold(tracker, start):
+    tracker.on_server(
+        server(props(title="Book One", artist="Author", album="Book One", status="paused")),
+        dt(start),
+    )
+    tracker.tick(dt(start + 700))
+
+
+def test_first_play_has_last_played_at_equal_started_at():
+    tracker = Tracker("House", [], count_after_s=30)
+    tracker.on_server(server(props(title="X", position=0.0)), dt(0))
+    tracker.tick(dt(30))
+    play = tracker.history_doc()["plays"][0]
+    assert play["last_played_at"] == play["started_at"] == dt(0).isoformat()
+
+
+def test_two_long_form_plays_merge_into_one_row():
+    seed = [_book_row(-10000)]
+    tracker = Tracker("House", seed, count_after_s=30)
+    _play_book(tracker, 0, duration=1044.0 * 2)
+    plays = tracker.history_doc()["plays"]
+    assert len(plays) == 1
+    assert plays[0]["started_at"] == dt(-10000).isoformat()
+    assert plays[0]["last_played_at"] == dt(0).isoformat()
+    assert plays[0]["duration"] == 2088.0
+    assert plays[0]["kind"] == "long_form"
+
+
+def test_music_chapter_merges_into_long_form_row():
+    seed = [_book_row(-10000)]
+    tracker = Tracker("House", seed, count_after_s=30)
+    _play_book(tracker, 0, duration=1044.0)  # under the long-form threshold
+    plays = tracker.history_doc()["plays"]
+    assert len(plays) == 1
+    assert plays[0]["kind"] == "long_form"
+    assert plays[0]["duration"] == 1044.0
+
+
+def test_long_form_play_merges_into_music_row():
+    seed = [_book_row(-10000, duration=1044.0, kind="music")]
+    tracker = Tracker("House", seed, count_after_s=30)
+    _play_book(tracker, 0, duration=1528.0)
+    plays = tracker.history_doc()["plays"]
+    assert len(plays) == 1
+    assert plays[0]["kind"] == "long_form"
+
+
+def test_music_repeats_stay_separate():
+    seed = [_book_row(-10000, duration=200.0, kind="music")]
+    tracker = Tracker("House", seed, count_after_s=30)
+    _play_book(tracker, 0, duration=200.0)
+    assert len(tracker.history_doc()["plays"]) == 2
+
+
+def test_merge_moves_row_to_top_and_keeps_newest_non_null_fields():
+    other = _book_row(-5000, title="Other", album="Other", kind="music", duration=200.0)
+    seed = [
+        other,
+        _book_row(-10000, art_url="/cover/history/old.jpg", genre=["Audiobook"], podcast_id=7),
+    ]
+    tracker = Tracker("House", seed, count_after_s=30)
+    _play_book(tracker, 0, duration=1528.0, art=None)
+    plays = tracker.history_doc()["plays"]
+    assert [p["title"] for p in plays] == ["Book One", "Other"]
+    assert plays[0]["art_url"] == "/cover/history/old.jpg"
+    assert plays[0]["genre"] == ["Audiobook"]
+    assert plays[0]["podcast_id"] == 7
+
+
+def test_merge_takes_newest_art_when_present():
+    seed = [_book_row(-10000, art_url="/cover/history/old.jpg")]
+    tracker = Tracker("House", seed, count_after_s=30, keep_art=lambda u: u)
+    _play_book(tracker, 0, duration=1528.0, art="/cover/new.jpg")
+    assert tracker.history_doc()["plays"][0]["art_url"] == "/cover/new.jpg"
+
+
+def test_resume_of_merged_row_does_not_add_a_row():
+    seed = [_book_row(-10000, last_played_at=dt(-100).isoformat())]
+    tracker = Tracker("House", seed, count_after_s=30)
+    tracker.on_server(
+        server(props(title="Book One", artist="Author", album="Book One", duration=1528.0, position=100.0)),
+        dt(0),
+    )
+    tracker.tick(dt(60))
+    assert len(tracker.history_doc()["plays"]) == 1
+
+
+def test_history_cap_holds_with_merges():
+    seed = [
+        {
+            "title": f"seed{i}",
+            "artist": None,
+            "album": None,
+            "kind": "music",
+            "source": "airplay",
+            "duration": None,
+            "started_at": dt(-(i + 1) * 1000).isoformat(),
+            "art_url": None,
+        }
+        for i in range(50)
+    ]
+    seed[10] = _book_row(-20000)
+    tracker = Tracker("House", seed, count_after_s=30, max_plays=50)
+    _play_book(tracker, 0, duration=1528.0)
+    plays = tracker.history_doc()["plays"]
+    assert len(plays) == 50
+    assert plays[0]["title"] == "Book One"
+
+
+def test_collapse_history_merges_live_shaped_duplicates():
+    from snaphouse.nowplaying import collapse_history
+
+    rows = [
+        _book_row(-1000, duration=1251.0),
+        _book_row(-2000, duration=1044.0, kind="music"),
+        _book_row(-3000, duration=1528.0),
+        _book_row(-4000, duration=1528.0),
+        _book_row(-5000, title="Song", album="A", duration=200.0, kind="music"),
+        _book_row(-6000, title="Song", album="A", duration=200.0, kind="music"),
+    ]
+    out = collapse_history(rows)
+    assert [r["title"] for r in out] == ["Book One", "Song", "Song"]
+    book = out[0]
+    assert book["kind"] == "long_form"
+    assert book["started_at"] == dt(-4000).isoformat()
+    assert book["last_played_at"] == dt(-1000).isoformat()
+    assert book["duration"] == 1251.0
+
+
+def test_collapse_history_orders_by_last_played_at():
+    from snaphouse.nowplaying import collapse_history
+
+    rows = [
+        _book_row(-9000, title="B", album="B", kind="music", duration=100.0),
+        _book_row(-8000, title="A", album="A", last_played_at=dt(-1).isoformat()),
+    ]
+    assert [r["title"] for r in collapse_history(rows)] == ["A", "B"]
