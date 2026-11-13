@@ -66,3 +66,18 @@ export function pieceIdFromHash(hash) {
     return null;
   }
 }
+
+// Which list the viewer steps through: the grid's filtered pieces, or the whole
+// library when the shown piece is not in them (a deep link outside the filter).
+export function viewerSource(filtered, shownId) {
+  return filtered.some((p) => p.id === shownId) ? "filter" : "all";
+}
+
+// The piece to land on after the one at `idx` left `list` (the list as it is
+// now, built from the same source the index was taken from), or null if empty.
+export function idAfterRemoval(list, idx) {
+  if (!Array.isArray(list) || list.length === 0) {
+    return null;
+  }
+  return list[Math.max(0, Math.min(list.length - 1, idx))].id;
+}

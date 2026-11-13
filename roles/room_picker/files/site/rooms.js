@@ -83,7 +83,7 @@ import { createVolumeSlider } from "./volume-slider.js";
 import { createHaptics } from "./haptics.js";
 import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
-import { galleryHash, pieceIdFromHash, stepIndex, swipeDirection, viewerState } from "./gallery-viewer.js";
+import { galleryHash, idAfterRemoval, pieceIdFromHash, stepIndex, swipeDirection, viewerSource, viewerState } from "./gallery-viewer.js";
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
 import { applyPlan, everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
@@ -2507,11 +2507,12 @@ function renderFolderList(index) {
 // The hub only removes an empty folder, so a folder with pictures has them moved
 // to the trash first (each restorable for 30 days, which recreates the folder).
 async function deleteFolderWithPictures(folder) {
-  const ids = (state.artIndex ? state.artIndex.pieces : [])
-    .filter((p) => p.folder === folder.name)
-    .map((p) => p.id);
-  for (const id of ids) {
-    const result = await postApi("/api/art/delete", { id });
+  const pieces = (state.artIndex ? state.artIndex.pieces : []).filter((p) => p.folder === folder.name);
+  for (const piece of pieces) {
+    // Same path as the single-picture trash: move the frame on first if it is
+    // showing this picture.
+    await advanceFrameIfShowing(piece);
+    const result = await postApi("/api/art/delete", { id: piece.id });
     if (!result.ok) {
       showToast(result.error);
       refreshLibrary();
@@ -2862,14 +2863,16 @@ function closeViewer() {
 
 // After the shown piece left the list (trashed, or moved out of this folder),
 // land on whatever took its place, or close when nothing is left.
-function viewerAfterRemoval(idx) {
+function viewerAfterRemoval(idx, source) {
   const index = state.artIndex;
-  const list = index ? piecesInFolder(index, state.artFilter) : [];
-  if (list.length === 0) {
+  // The same source the index was taken from, so the two always agree.
+  const list = !index ? [] : source === "all" ? index.pieces : piecesInFolder(index, state.artFilter);
+  const id = idAfterRemoval(list, idx);
+  if (id === null) {
     closeViewer();
     return;
   }
-  state.viewerId = list[Math.min(idx, list.length - 1)].id;
+  state.viewerId = id;
   history.replaceState(null, "", galleryHash(state.viewerId));
   syncViewer();
 }
@@ -2877,7 +2880,11 @@ function viewerAfterRemoval(idx) {
 function currentViewerPiece() {
   const list = viewerList();
   const idx = viewerIndexNow(list);
-  return idx < 0 ? null : { piece: list[idx], idx };
+  if (idx < 0) {
+    return null;
+  }
+  const filtered = state.artIndex ? piecesInFolder(state.artIndex, state.artFilter) : [];
+  return { piece: list[idx], idx, source: viewerSource(filtered, state.viewerId) };
 }
 
 // If the frame is showing this piece now, move it on first so it is gone from
@@ -2915,7 +2922,7 @@ async function moveViewerPiece(folder) {
   if (!here || !folder) {
     return;
   }
-  const { piece, idx } = here;
+  const { piece, idx, source } = here;
   await advanceFrameIfShowing(piece);
   const result = await postApi("/api/art/move", { id: piece.id, folder });
   if (!result.ok) {
@@ -2931,7 +2938,7 @@ async function moveViewerPiece(folder) {
     `Moved to ${folder}.`,
     movedId ? () => runAction("/api/art/move", { id: movedId, folder: piece.folder }) : null,
   );
-  viewerAfterRemoval(idx);
+  viewerAfterRemoval(idx, source);
 }
 
 async function trashViewerPiece() {
@@ -2941,7 +2948,7 @@ async function trashViewerPiece() {
   }
   await advanceFrameIfShowing(here.piece);
   if (await moveToTrash(here.piece.id)) {
-    viewerAfterRemoval(here.idx);
+    viewerAfterRemoval(here.idx, here.source);
   }
 }
 

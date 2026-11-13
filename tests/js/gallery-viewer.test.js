@@ -7,6 +7,8 @@ import {
   swipeDirection,
   galleryHash,
   pieceIdFromHash,
+  viewerSource,
+  idAfterRemoval,
 } from "../../roles/room_picker/files/site/gallery-viewer.js";
 
 const items = (n) =>
@@ -86,4 +88,16 @@ test("galleryHash and pieceIdFromHash round trip, folders included", () => {
   assert.equal(pieceIdFromHash("#art/x.jpg"), "x.jpg");
   assert.equal(pieceIdFromHash("#listen"), null);
   assert.equal(pieceIdFromHash("#gallery/%E0%A4%A"), null);
+});
+
+test("a deep-linked piece outside the filter steps through the whole library", () => {
+  const all = items(6);
+  const filtered = [all[0], all[1]];
+  assert.equal(viewerSource(filtered, "p4"), "all");
+  assert.equal(viewerSource(filtered, "p1"), "filter");
+  // p4 (index 4 of all) is removed; the list after removal is all minus p4.
+  const after = all.filter((p) => p.id !== "p4");
+  assert.equal(idAfterRemoval(after, 4), "p5");
+  assert.equal(idAfterRemoval(after.slice(0, 4), 4), "p3");
+  assert.equal(idAfterRemoval([], 0), null);
 });
