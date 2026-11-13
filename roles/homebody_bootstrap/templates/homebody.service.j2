@@ -1,0 +1,37 @@
+# homebody daemon, managed by Ansible (roles/homebody_bootstrap). Do not edit on
+# the host; change the template and let self-update roll it out.
+#
+# `homebody run` is one process: the presence and thermostat loop plus the
+# settings API on 127.0.0.1 (homebody_api_port). It talks to the Matter
+# controller unit over its loopback WebSocket, so it starts after that unit. It
+# writes its status file to /var/lib/snaphouse/public/homebody, which nginx
+# serves as /homebody.json. homebody's deploy/update.sh restarts this unit by the
+# name `homebody`.
+#
+# Presence probing (arping, l2ping) needs raw sockets, so the one capability it
+# holds is CAP_NET_RAW, and nothing else. The hardening is filesystem-only, like
+# the Matter unit: the network is left alone.
+[Unit]
+Description=homebody daemon (presence and thermostat automation)
+After=network-online.target homebody-matter.service
+Wants=network-online.target homebody-matter.service
+
+[Service]
+Type=simple
+User=homebody
+Group=homebody
+ExecStart=/opt/homebody/.venv/bin/homebody run
+Restart=always
+RestartSec=5
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+# The rest of the filesystem is read-only; write access is limited to homebody's
+# state directory and its own status directory under the public web root.
+ProtectSystem=strict
+NoNewPrivileges=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/homebody {{ homebody_status_dir }}
+
+[Install]
+WantedBy=multi-user.target

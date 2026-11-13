@@ -340,3 +340,152 @@ def test_hub_runs_the_homebody_bootstrap_role():
     # Only the hub: the Pis and the frame never run it.
     for name in ("office", "nightstand"):
         assert "homebody_bootstrap" not in hosts[name]["roles"]
+
+
+# --------------------------------------------------------------------------- #
+# the homebody daemon unit, its status dir, and its nginx routes (Task 4)
+# --------------------------------------------------------------------------- #
+
+DAEMON_UNIT = "roles/homebody_bootstrap/templates/homebody.service.j2"
+NGINX_CONF = "roles/homebody_bootstrap/templates/homebody.conf.j2"
+STATUS_VERIFY = ROLE / "files/verify.d/homebody_status.sh"
+STATUS_DIR = "/var/lib/snaphouse/public/homebody"
+
+
+def _render_all(template: str) -> str:
+    env = Environment(loader=FileSystemLoader(str(REPO)), keep_trailing_newline=True)
+    return env.get_template(template).render(
+        **_all_yaml(), **yaml.safe_load(ROLE_DEFAULTS.read_text())
+    )
+
+
+def _tasks_by_name(name: str) -> dict:
+    found = [t for t in _tasks() if t.get("name") == name]
+    assert found, f"no task named {name!r}"
+    return found[0]
+
+
+def test_api_port_is_pinned_at_8783():
+    assert _all_yaml()["homebody_api_port"] == 8783
+
+
+def test_daemon_unit_runs_homebody_run_as_homebody():
+    unit = _render_all(DAEMON_UNIT)
+    assert "ExecStart=/opt/homebody/.venv/bin/homebody run" in unit.splitlines()
+    assert "User=homebody" in unit
+    assert "Group=homebody" in unit
+    assert "Restart=always" in unit
+    assert "WantedBy=multi-user.target" in unit
+
+
+def test_daemon_unit_follows_the_matter_controller():
+    unit = _render_all(DAEMON_UNIT)
+    assert "After=network-online.target homebody-matter.service" in unit
+    assert "Wants=network-online.target homebody-matter.service" in unit
+
+
+def test_daemon_unit_can_probe_presence_but_not_escalate():
+    unit = _render_all(DAEMON_UNIT)
+    # arping and l2ping need raw sockets.
+    assert "AmbientCapabilities=CAP_NET_RAW" in unit
+    assert "CapabilityBoundingSet=CAP_NET_RAW" in unit
+    assert "ProtectSystem=strict" in unit
+    assert "NoNewPrivileges=yes" in unit
+    assert "PrivateNetwork=yes" not in unit
+    rwp = [ln for ln in unit.splitlines() if ln.startswith("ReadWritePaths=")]
+    assert rwp, "the unit sets no ReadWritePaths"
+    assert rwp[0].split("=", 1)[1].split() == ["/var/lib/homebody", STATUS_DIR]
+
+
+def test_update_script_and_role_agree_on_the_unit_name():
+    # deploy/update.sh in homebody restarts "homebody-matter homebody".
+    assert "ExecStart=/opt/homebody/.venv/bin/homebody run" in _render_all(DAEMON_UNIT)
+    assert _installs_template("homebody.service")["dest"] == (
+        "/etc/systemd/system/homebody.service"
+    )
+    assert _started("homebody.service")
+
+
+def test_status_dir_is_owned_by_homebody_and_the_public_root_is_not_touched():
+    tasks = _tasks()
+    dirs = [
+        (i, args)
+        for i, task in enumerate(tasks)
+        for module, args in [_module(task)]
+        if module.endswith(".file") and args.get("path") == "{{ homebody_status_dir }}"
+    ]
+    assert dirs, "no task creates the homebody status dir"
+    assert yaml.safe_load(ROLE_DEFAULTS.read_text())["homebody_status_dir"] == STATUS_DIR
+    idx, args = dirs[0]
+    assert args["state"] == "directory"
+    assert args["owner"] == "homebody"
+    assert args["group"] == "homebody"
+    assert args["mode"] == "0755"
+    names = [t.get("name") for t in tasks]
+    assert names.index("Run the homebody installer once") < idx
+    assert idx < names.index("Enable and start the homebody daemon")
+    # The shared public root is the web role's; never chown it from here.
+    for task in tasks:
+        module, args = _module(task)
+        if not isinstance(args, dict):
+            continue
+        assert args.get("path") != "/var/lib/snaphouse/public"
+        assert args.get("recurse") is not True
+
+
+def test_nginx_serves_the_status_file_exact_match():
+    conf = _render_all(NGINX_CONF)
+    assert "location = /homebody.json {" in conf
+    assert f"root {STATUS_DIR};" in conf
+    assert "default_type application/json;" in conf
+
+
+def test_nginx_proxies_the_settings_api_to_the_pinned_port():
+    conf = _render_all(NGINX_CONF)
+    assert "location /api/homebody/ {" in conf
+    assert "proxy_pass http://127.0.0.1:8783;" in conf
+    assert "proxy_set_header Host $host;" in conf
+    assert "client_max_body_size 64k;" in conf
+
+
+def test_role_installs_the_nginx_conf_and_reloads_nginx():
+    tmpl = _installs_template("snaphouse.d/homebody.conf")
+    assert tmpl["src"] == "homebody.conf.j2"
+    assert tmpl["dest"] == "/etc/nginx/snaphouse.d/homebody.conf"
+    task = next(
+        t for t in _tasks() if "snaphouse.d/homebody.conf" in str(_module(t)[1].get("dest"))
+    )
+    assert "Reload nginx for homebody_bootstrap" in task["notify"]
+    handler = next(h for h in _handlers() if h["name"] == "Reload nginx for homebody_bootstrap")
+    assert "common_systemd_init" in str(handler.get("when"))
+    assert "service" in handler.get("tags")
+
+
+def test_daemon_start_is_gated_on_real_systemd_so_a_missing_run_cannot_fail_ci():
+    # The CI container has no init, so the unit never starts there, and a stub
+    # /opt/homebody without `homebody run` cannot fail the play.
+    task = _started("homebody.service")[0]
+    assert task["ansible.builtin.systemd_service"]["enabled"] is True
+    assert "common_systemd_init" in str(task.get("when"))
+    assert "service" in task.get("tags")
+    restart = next(h for h in _handlers() if h["name"] == "Restart the homebody daemon")
+    assert _module(restart)[1]["name"] == "homebody.service"
+    assert "common_systemd_init" in str(restart.get("when"))
+
+
+def test_status_verify_check_is_installed_statically_and_probes_the_file():
+    installed = [
+        args
+        for task in _tasks()
+        for module, args in [_module(task)]
+        if module.endswith("copy")
+        and "verify.d/homebody_status.sh" in str(args.get("dest", ""))
+    ]
+    assert installed
+    assert installed[0]["dest"] == "/etc/snaphouse/verify.d/homebody_status.sh"
+    text = STATUS_VERIFY.read_text()
+    assert "snaphouse-managed-check" in text
+    assert "systemctl is-active" in text
+    assert "homebody.service" in text
+    assert "http://localhost/homebody.json" in text
+    assert "\u2014" not in text

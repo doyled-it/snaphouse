@@ -63,6 +63,10 @@ house_sample_format: "44100:16:2"
 # the next port. Pinned here so the unit and the nginx proxy agree on one value.
 pairing_port: 8782
 
+# The loopback port homebody's daemon serves its settings API on (homebody config
+# [api] port). nginx proxies /api/homebody/ here; shared with the homebody role.
+homebody_api_port: 8783
+
 # Idle threshold for the two alsa inputs, in milliseconds. snapserver's default
 # (100 ms) treats the digital silence between spoken sentences as the stream
 # stopping, which flaps the House meta stream and chops every room during
