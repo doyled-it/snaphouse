@@ -396,3 +396,58 @@ def test_snapclient_verify_ok_covers_all_four_combinations():
     # player is up while the speaker is gone.
     assert clients.snapclient_verify_ok(speaker_connected=True, client_active=False) is False
     assert clients.snapclient_verify_ok(speaker_connected=False, client_active=True) is False
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _patch_urlopen(monkeypatch, body: bytes):
+    seen = {}
+
+    def fake(request, timeout=None):
+        seen["timeout"] = timeout
+        return _FakeResponse(body)
+
+    monkeypatch.setattr(clients.urllib.request, "urlopen", fake)
+    return seen
+
+
+def test_http_rpc_rejects_an_empty_reply_by_default(monkeypatch):
+    _patch_urlopen(monkeypatch, b"")
+    import pytest
+
+    with pytest.raises(ValueError):
+        clients.HttpRpc("http://x/jsonrpc")("Stream.Control", {})
+
+
+def test_http_rpc_empty_ok_returns_empty_dict_for_blank_bodies(monkeypatch):
+    for body in (b"", b"  \n"):
+        _patch_urlopen(monkeypatch, body)
+        assert clients.HttpRpc("http://x/jsonrpc", empty_ok=True)("Stream.Control", {}) == {}
+
+
+def test_http_rpc_empty_ok_still_parses_and_raises_on_a_real_body(monkeypatch):
+    import pytest
+
+    _patch_urlopen(monkeypatch, b'{"result": {"a": 1}}')
+    assert clients.HttpRpc("http://x/jsonrpc", empty_ok=True)("m", {}) == {"a": 1}
+    _patch_urlopen(monkeypatch, b'{"error": {"message": "bad"}}')
+    with pytest.raises(RuntimeError):
+        clients.HttpRpc("http://x/jsonrpc", empty_ok=True)("m", {})
+
+
+def test_http_rpc_passes_its_timeout_to_urlopen(monkeypatch):
+    seen = _patch_urlopen(monkeypatch, b"{}")
+    clients.HttpRpc("http://x/jsonrpc", timeout=2.0)("m", {})
+    assert seen["timeout"] == 2.0

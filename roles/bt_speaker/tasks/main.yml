@@ -108,6 +108,22 @@
     mode: "0644"
   notify: Reload systemd for bt_speaker
 
+# The listener runs the code in place from /opt/snaphouse, so restart it when the
+# modules it imports change on a self-update. avrcp_keys.py is the listener;
+# clients.py is the RPC client it sends the controls through.
+- name: Record the speaker buttons module digests so the listener restarts when they change
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/' ~ item) | hash('sha1') }}\n"
+    dest: "/etc/snaphouse/{{ item | replace('.py', '') }}.sha1"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - avrcp_keys.py
+    - clients.py
+  when: common_systemd_init
+  notify: Restart the speaker buttons service
+
 - name: Reload systemd now if the speaker buttons unit changed
   ansible.builtin.meta: flush_handlers
 

@@ -359,7 +359,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.write_address is not None:
         return write_address(args.speaker, args.settings, args.write_address)
 
-    rpc = clients.HttpRpc(rpc_url(args.hub, args.host))
+    # A good Stream.Control gets an empty 200 reply, and a dead hub must not
+    # stall the read loop for long on each press.
+    rpc = clients.HttpRpc(rpc_url(args.hub, args.host), empty_ok=True, timeout=2.0)
 
     def send(command: str) -> None:
         rpc("Stream.Control", {"id": "Bluetooth", "command": command})

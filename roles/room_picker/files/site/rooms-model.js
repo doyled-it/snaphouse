@@ -49,6 +49,14 @@ export function interpretRpcResponse(ok, text) {
   return body.result;
 }
 
+// Like interpretRpcResponse, for a control request. snapserver answers a
+// successful Stream.Control with an empty 200 body, so an ok reply with an empty
+// or whitespace-only body is success (null). Anything else is read as before.
+export function interpretControlResponse(ok, text) {
+  if (ok && String(text).trim() === "") return null;
+  return interpretRpcResponse(ok, text);
+}
+
 // Build one row per room, in the order the labels are given.
 //
 // `labels` is the ordered list the page loads from rooms.json:
