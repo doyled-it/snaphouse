@@ -176,6 +176,24 @@ fails authentication (the phone forgot the speaker, the hub kept the key) has it
 stale pairing removed once so its next try in the same window succeeds
 (`_make_line_handler` in `pairing.py`).
 
+## Page navigation
+
+The room-picker page has no drawer. A `<nav aria-label="Pages">` of tabs
+(Listen, Frame, Gallery, Climate, Settings) is fixed to the bottom on a phone
+and becomes a vertical left rail in the 800x480 kiosk media query. The URL hash
+is the screen: `#listen` (home), `#frame` and `#frame/<id>`, `#gallery`,
+`#climate`, `#settings`. `#art` and `#art/...` are aliases of `#gallery`. The
+rules are pure in `nav-model.js` (`resolveScreen`, `visibleTabs`,
+`frameTabVisible`, tests in `tests/js/nav-model.test.js`); `rooms.js` applies
+them on load and on `hashchange`, and rewrites the hash with `replaceState`
+when it was an alias or a hidden screen, so Back never lands on it. The current
+tab carries `aria-current="page"`.
+
+Frame is hidden until the frame-control document lists frames or a frame mirror
+(`frame.json`) answers. Climate is hidden until the homebody page exists: to
+unhide it, flip `CLIMATE_ENABLED` in `nav-model.js` and add a `screen-climate`
+section to `index.html` and `els.screens`.
+
 ## Polling sleeps while hidden, lists patch in place
 
 Every polling interval in `rooms.js` registers with `page-timers.js`; the

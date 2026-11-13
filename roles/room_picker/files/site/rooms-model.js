@@ -1021,9 +1021,9 @@ export function openInLinks(play) {
 // /api/frame/* endpoints take. All pure, so the view glue in rooms.js stays a
 // thin DOM layer, exactly as the rest of the model is split.
 
-// The four screens the hamburger drawer switches between, each addressed by the
+// The screens the tab bar switches between, each addressed by the
 // URL hash so Back and refresh keep the screen (design "Page: screens").
-export const SCREENS = ["listen", "frame", "art", "settings"];
+export const SCREENS = ["listen", "frame", "gallery", "climate", "settings"];
 
 // The default screen when the hash is empty or unknown (design: Listen).
 const DEFAULT_SCREEN = "listen";
@@ -1037,7 +1037,9 @@ export function screenFromHash(hash) {
   if (typeof hash !== "string") {
     return DEFAULT_SCREEN;
   }
-  const name = hash.replace(/^#/, "").split("/")[0].toLowerCase();
+  const raw = hash.replace(/^#/, "").split("/")[0].toLowerCase();
+  // "#art" is the old name of the Gallery screen.
+  const name = raw === "art" ? "gallery" : raw;
   return SCREENS.includes(name) ? name : DEFAULT_SCREEN;
 }
 

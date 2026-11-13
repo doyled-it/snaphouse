@@ -16,18 +16,8 @@
   </head>
   <body>
     <header class="topbar">
-      <button id="menu-button" class="menu-button" type="button" aria-haspopup="dialog" aria-label="Open the menu">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-        </svg>
-      </button>
       <h1 class="house">House</h1>
-      <span id="screen-title" class="screen-title" aria-hidden="true">Listen</span>
     </header>
-
-    <dialog id="drawer" class="drawer" aria-label="Screens">
-      <nav id="drawer-nav" class="drawer-nav"></nav>
-    </dialog>
 
     <p id="health" class="banner health" role="status" hidden></p>
     <p id="connection" class="banner connection" role="status" hidden></p>
@@ -142,8 +132,8 @@
         </section>
       </section>
 
-      <!-- Art: the library, folders, upload, and trash. -->
-      <section class="screen" id="screen-art" aria-label="Art" hidden>
+      <!-- Gallery: the library, folders, upload, and trash. -->
+      <section class="screen" id="screen-gallery" aria-label="Gallery" hidden>
         <!-- The library, collapsed and paged. -->
         <section id="library" class="section panel" aria-labelledby="lib-h" hidden>
           <h2 id="lib-h" class="section-h">Library</h2>
@@ -392,6 +382,29 @@
       </div>
       <div id="sheet-links" class="sheet-links"></div>
     </dialog>
+
+    <nav id="tabs" class="tabs" aria-label="Pages">
+      <button type="button" class="tab" data-screen="listen">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12M9 18a3 3 0 1 1-3-3 3 3 0 0 1 3 3zm10-2a3 3 0 1 1-3-3 3 3 0 0 1 3 3z"/></svg>
+        <span>Listen</span>
+      </button>
+      <button type="button" class="tab" data-screen="frame" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 15l3-3 2 2 3-3"/></svg>
+        <span>Frame</span>
+      </button>
+      <button type="button" class="tab" data-screen="gallery">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+        <span>Gallery</span>
+      </button>
+      <button type="button" class="tab" data-screen="climate" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7l14 10M19 7L5 17"/></svg>
+        <span>Climate</span>
+      </button>
+      <button type="button" class="tab" data-screen="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 

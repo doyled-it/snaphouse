@@ -43,8 +43,6 @@ import {
   openInLinks,
   pageCount,
   pageSlice,
-  screenFromHash,
-  SCREENS,
   FRAME_KINDS,
   frameControlAfterFetch,
   pinSummary,
@@ -75,6 +73,7 @@ import {
   forgetPrompt,
   forgetReminder,
 } from "./rooms-model.js";
+import { CLIMATE_ENABLED, frameTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
 import { createPairController } from "./pair-controller.js";
 import { createDevicesController } from "./devices-controller.js";
 import { createVolumeSlider } from "./volume-slider.js";
@@ -128,15 +127,12 @@ const STATUS_UNAVAILABLE_MSG = "Status unavailable; showing the last update.";
 const OFFLINE_MSG = `Live updates are offline; refreshing every ${POLL_MS / 1000} seconds.`;
 
 const els = {
-  menuButton: document.getElementById("menu-button"),
-  drawer: document.getElementById("drawer"),
-  drawerNav: document.getElementById("drawer-nav"),
-  screenTitle: document.getElementById("screen-title"),
+  tabs: document.getElementById("tabs"),
 
   screens: {
     listen: document.getElementById("screen-listen"),
     frame: document.getElementById("screen-frame"),
-    art: document.getElementById("screen-art"),
+    gallery: document.getElementById("screen-gallery"),
     settings: document.getElementById("screen-settings"),
   },
 
@@ -331,6 +327,8 @@ const state = {
   // page shows the frame settings as unknown rather than wrong.
   screen: "listen",
   frameControl: null,
+  // True once the frame mirrors have been fetched at least once.
+  framesProbed: false,
   fsKindsBuilt: false,
 
   // The pairing window lives in the pair controller (pair-controller.js): the
@@ -368,7 +366,7 @@ async function start() {
   wireDevices();
   renderDevices();
   resolveSelectedFrame();
-  showScreen(screenFromHash(window.location.hash));
+  applyHash();
   renderPairing();
   refreshHealth();
   // Read the frame-control document first (it sets the legacy flag and the frame
@@ -440,26 +438,19 @@ function reducedMotion() {
 }
 
 // --------------------------------------------------------------------------- //
-// Page chrome: the screen drawer and the "Open in" sheet, both real dialogs
-// (focus trapped, Escape closes). The hamburger switches between four screens,
-// each addressed by the URL hash so Back and refresh keep the screen.
+// Page chrome: the tab bar and the "Open in" sheet (a real dialog: focus
+// trapped, Escape closes). The tabs switch between screens, each addressed by
+// the URL hash so Back and refresh keep the screen.
 // --------------------------------------------------------------------------- //
 
-const SCREEN_LABELS = {
-  listen: "Listen",
-  frame: "Frame",
-  art: "Art",
-  settings: "Settings",
-};
-
 function wireChrome() {
-  els.menuButton.addEventListener("click", openDrawer);
-  // A click on the dialog's own box (the backdrop area) closes it.
-  els.drawer.addEventListener("click", (event) => {
-    if (event.target === els.drawer) {
-      els.drawer.close();
-    }
-  });
+  // Setting the hash routes through hashchange, which calls showScreen, so the
+  // history entry and the screen stay in step.
+  for (const tab of els.tabs.querySelectorAll(".tab")) {
+    tab.addEventListener("click", () => {
+      window.location.hash = `#${tab.dataset.screen}`;
+    });
+  }
 
   els.sheetClose.addEventListener("click", () => els.openSheet.close());
   els.openSheet.addEventListener("click", (event) => {
@@ -469,21 +460,65 @@ function wireChrome() {
   });
 }
 
-// Show one screen and hide the others, mark the title, and scroll to the top so
-// switching screens starts at the beginning, not wherever the last one was
-// scrolled.
+// Which optional tabs show. Frame needs at least one frame in the hub's list
+// (the same signals the Frame screen already uses); Climate waits on the flag in
+// nav-model.js.
+function navVisible() {
+  return {
+    frame: frameTabVisible(state.frameControl, state.mirrors, state.framesProbed),
+    climate: CLIMATE_ENABLED,
+  };
+}
+
+// Show one screen and hide the others, mark the current tab, and scroll to the
+// top so switching screens starts at the beginning, not wherever the last one
+// was scrolled.
 function showScreen(name) {
-  const screen = SCREENS.includes(name) ? name : "listen";
+  const screen = name in els.screens ? name : "listen";
   state.screen = screen;
-  for (const key of SCREENS) {
-    els.screens[key].hidden = key !== screen;
+  for (const [key, el] of Object.entries(els.screens)) {
+    el.hidden = key !== screen;
   }
-  els.screenTitle.textContent = SCREEN_LABELS[screen];
+  syncTabs();
   window.scrollTo({ top: 0, behavior: "auto" });
   // Entering Settings shows the pairing state, so fetch it now rather than
   // waiting up to a second for the next tick. The devices list too.
   maybePollPairing();
   maybePollDevices();
+}
+
+// Show the tabs that are visible, in bar order, and mark the current one.
+function syncTabs() {
+  const visible = visibleTabs(navVisible());
+  for (const tab of els.tabs.querySelectorAll(".tab")) {
+    const name = tab.dataset.screen;
+    tab.hidden = !visible.includes(name);
+    if (name === state.screen) {
+      tab.setAttribute("aria-current", "page");
+    } else {
+      tab.removeAttribute("aria-current");
+    }
+  }
+}
+
+// The frame signals may have just changed: show or hide the Frame tab, and
+// leave the Frame screen if it is no longer there.
+function syncFrameTab() {
+  if (state.screen === "frame" && !navVisible().frame) {
+    applyHash();
+  } else {
+    syncTabs();
+  }
+}
+
+// Resolve the URL hash to a screen. An alias (#art) or a hidden or unknown
+// screen has its hash rewritten in place, so Back never lands on it.
+function applyHash() {
+  const { screen, hash } = resolveScreen(window.location.hash, navVisible());
+  if (window.location.hash !== hash) {
+    history.replaceState(null, "", hash);
+  }
+  showScreen(screen);
 }
 
 // The known frame ids (from the parsed frame-control document), and whether the
@@ -531,7 +566,7 @@ function selectFrame(id) {
 // re-render the switcher and the frame-scoped controls and re-fetch that frame's
 // mirror and history, so every per-frame view follows the chosen frame.
 function onHashChange() {
-  showScreen(screenFromHash(window.location.hash));
+  applyHash();
   resolveSelectedFrame();
   renderFrameSwitcher();
   renderFrameControl();
@@ -539,32 +574,6 @@ function onHashChange() {
     refreshFrame();
     refreshArt();
   }
-}
-
-function openDrawer() {
-  els.drawerNav.replaceChildren();
-  const title = document.createElement("p");
-  title.className = "drawer-title";
-  title.textContent = "Screens";
-  els.drawerNav.append(title);
-  for (const name of SCREENS) {
-    const link = document.createElement("button");
-    link.className = "drawer-link";
-    link.type = "button";
-    link.textContent = SCREEN_LABELS[name];
-    if (name === state.screen) {
-      link.setAttribute("aria-current", "page");
-      link.classList.add("current");
-    }
-    link.addEventListener("click", () => {
-      els.drawer.close();
-      // Setting the hash routes through hashchange, which calls showScreen, so
-      // the history entry and the screen stay in step.
-      window.location.hash = `#${name}`;
-    });
-    els.drawerNav.append(link);
-  }
-  els.drawer.showModal();
 }
 
 // --------------------------------------------------------------------------- //
@@ -832,6 +841,8 @@ async function refreshFrame() {
   // the caption with the latest reading (the piece itself comes from refreshArt).
   renderFrameCaption(state.artCurrent);
   updateSections();
+  state.framesProbed = true;
+  syncFrameTab();
 }
 
 // The frame switcher: one button per known frame, in published order, the chosen
@@ -989,6 +1000,7 @@ async function refreshFrameControl() {
   resolveSelectedFrame();
   renderFrameControl();
   renderFrameSwitcher();
+  syncFrameTab();
   if (frameContextChanged()) {
     refreshFrame();
     refreshArt();
@@ -2363,13 +2375,13 @@ function showInLibrary(current) {
     renderLibrary();
   }
 
-  // The library lives on the Art screen. Routing through the hash calls
+  // The library lives on the Gallery screen. Routing through the hash calls
   // showScreen, which scrolls the body to the top, so the scroll to the piece
   // has to run after that lands or it is immediately overridden. When the hash
   // actually changes, scroll on the next hashchange (after showScreen); when we
-  // are already on #art, no hashchange fires, so scroll now.
+  // are already on #gallery, no hashchange fires, so scroll now.
   const target = piece ? piece.id : null;
-  if (window.location.hash === "#art") {
+  if (window.location.hash === "#gallery") {
     scrollToPiece(target);
   } else {
     window.addEventListener(
@@ -2377,7 +2389,7 @@ function showInLibrary(current) {
       () => scrollToPiece(target),
       { once: true },
     );
-    window.location.hash = "#art";
+    window.location.hash = "#gallery";
   }
 }
 

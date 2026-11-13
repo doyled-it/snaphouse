@@ -33,7 +33,9 @@ import {
 test("screenFromHash maps each known hash to its screen", () => {
   assert.equal(screenFromHash("#listen"), "listen");
   assert.equal(screenFromHash("#frame"), "frame");
-  assert.equal(screenFromHash("#art"), "art");
+  assert.equal(screenFromHash("#art"), "gallery");
+  assert.equal(screenFromHash("#gallery"), "gallery");
+  assert.equal(screenFromHash("#climate"), "climate");
   assert.equal(screenFromHash("#settings"), "settings");
 });
 
@@ -61,7 +63,7 @@ test("screenFromHash falls back to listen for an unknown hash", () => {
 test("screenFromHash accepts a hash without the leading # and ignores case", () => {
   assert.equal(screenFromHash("frame"), "frame");
   assert.equal(screenFromHash("#Settings"), "settings");
-  assert.equal(screenFromHash("ART"), "art");
+  assert.equal(screenFromHash("ART"), "gallery");
 });
 
 // --------------------------------------------------------------------------- #
