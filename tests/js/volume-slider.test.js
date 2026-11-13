@@ -86,8 +86,19 @@ test("render writes aria-valuenow at once and transforms in one frame", () => {
   assert.equal(frames.length, 1);
   flushFrames();
   assert.equal(slider.el.children[0].style.transform, "scaleX(0.5)");
-  assert.match(slider.el.children[1].style.transform, /^translateX\(/);
+  assert.match(slider.el.children[1].style.translate, /^[\d.]+px 0px$/);
   assert.deepEqual(renders, [50]);
+});
+
+test("thumb moves with the translate property so its held scale cannot stretch the travel", () => {
+  // CSS applies the individual `scale` property before `transform`, so a
+  // translateX in `transform` was multiplied by the 1.2 held scale and the
+  // thumb overshot the track near 100. `translate` is applied first, unscaled.
+  const { slider, flushFrames } = setup();
+  slider.set(100);
+  flushFrames();
+  assert.equal(slider.el.children[1].style.transform || "", "");
+  assert.match(slider.el.children[1].style.translate, /px 0px$/);
 });
 
 test("pointer drag sends, buzzes and ends with a hold", () => {
