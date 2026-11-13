@@ -627,6 +627,10 @@ a.frame-title {
   font-weight: 600;
 }
 
+.everything-off[hidden] {
+  display: none;
+}
+
 .everything-off {
   margin-left: auto;
   min-height: 44px;
@@ -1667,8 +1671,12 @@ a.row-title {
     min-height: 56px;
   }
 
+  /* Bottom left, clear of the rooms column, so it never covers a room row. */
   .toast {
+    left: 12px;
+    transform: none;
     bottom: 16px;
+    max-width: 420px;
   }
 
   /* Two columns on Listen: now playing and the play history on the left, the

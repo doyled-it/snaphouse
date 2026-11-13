@@ -106,3 +106,22 @@ test("loadBluetoothName accepts a name of exactly 64 characters", async () => {
   const name = "x".repeat(64);
   assert.equal(await loadBluetoothName(async () => ({ name })), name);
 });
+
+test("applyPlan overlays the sent plan on the rooms, keeping reachability", async () => {
+  const { applyPlan } = await import("../../roles/room_picker/files/site/listen-model.js");
+  const rooms = [room("a", true), room("b", false), room("c", true, false)];
+  const out = applyPlan(rooms, [{ id: "a", on: false }, { id: "c", on: false }]);
+  assert.deepEqual(out.map((r) => [r.id, r.on, r.reachable]), [["a", false, true], ["b", false, true], ["c", false, false]]);
+  assert.equal(rooms[0].on, true);
+});
+
+test("Undo pressed before any status echo still reverts what was sent", async () => {
+  const { applyPlan, onlyHerePlan } = await import("../../roles/room_picker/files/site/listen-model.js");
+  const { snapshotRooms, undoPlan } = await import("../../roles/room_picker/files/site/undo.js");
+  const rooms = four();
+  const snapshot = snapshotRooms(rooms);
+  const plan = onlyHerePlan(rooms, "c");
+  // No echo: the status still says the old state, so overlay the plan.
+  const undo = undoPlan(snapshot, applyPlan(rooms, plan));
+  assert.deepEqual(undo, [{ id: "a", on: true }, { id: "b", on: true }, { id: "c", on: false }]);
+});

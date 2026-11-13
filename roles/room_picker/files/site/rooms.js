@@ -81,7 +81,7 @@ import { createHaptics } from "./haptics.js";
 import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
-import { everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, roomState } from "./listen-model.js";
+import { applyPlan, everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -491,6 +491,7 @@ function showScreen(name) {
     el.hidden = key !== screen;
   }
   syncTabs();
+  els.everythingOff.hidden = screen !== "listen";
   window.scrollTo({ top: 0, behavior: "auto" });
   // Entering Settings shows the pairing state, so fetch it now rather than
   // waiting up to a second for the next tick. The devices list too.
@@ -812,9 +813,10 @@ function setRoomPower(id, next) {
   if (entry) {
     entry.toggle.setAttribute("aria-checked", next ? "true" : "false");
     entry.toggle.textContent = next ? "On" : "Off";
-    const vol = entry.stateEl.dataset.mode;
-    if (next && vol !== "volume") {
+    if (next) {
       entry.stateEl.dataset.mode = "volume";
+      const known = state.rooms.get(id);
+      if (known) entry.stateEl.textContent = `${Math.round(known.volume)}%`;
     }
     if (!next) {
       entry.stateEl.dataset.mode = "text";
@@ -850,7 +852,7 @@ function runPlan(plan, message) {
     setRoomPower(step.id, step.on);
   }
   showToast(message, () => {
-    for (const step of undoPlan(snapshot, listenRooms())) {
+    for (const step of undoPlan(snapshot, applyPlan(listenRooms(), plan))) {
       setRoomPower(step.id, step.on);
     }
   });

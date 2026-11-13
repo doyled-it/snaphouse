@@ -64,3 +64,11 @@ export async function loadBluetoothName(fetchJson) {
   if (name.trim().length === 0 || name.length > MAX_NAME) return null;
   return name;
 }
+
+// The rooms as they will be once `plan` lands: the plan overlaid on the latest
+// known rooms. Reachability and volume stay as last reported. Undo diffs against
+// this, so it reverts what was sent even before the status echo arrives.
+export function applyPlan(rooms, plan) {
+  const want = new Map(plan.map((s) => [s.id, s.on]));
+  return rooms.map((r) => (want.has(r.id) ? { ...r, on: want.get(r.id) } : r));
+}
