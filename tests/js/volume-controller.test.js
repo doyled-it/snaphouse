@@ -198,6 +198,41 @@ test("dispose clears timers", () => {
   assert.deepEqual(h.sent, [30]);
 });
 
+test("end() with a request in flight at release still sends the final value once", async () => {
+  const resolvers = [];
+  const h = harness({
+    send: () => new Promise((resolve) => resolvers.push(resolve)),
+  });
+  h.c.begin(10);
+  h.tick(500);
+  h.c.move(80);
+  h.c.end();
+  h.tick(500);
+  assert.deepEqual(h.sent, [10]);
+  resolvers[0]();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(h.sent, [10, 80]);
+  resolvers[1]();
+  await new Promise((r) => setImmediate(r));
+  h.tick(500);
+  assert.deepEqual(h.sent, [10, 80]);
+});
+
+test("begin() while a prior request is in flight sends the begun value when it settles", async () => {
+  const resolvers = [];
+  const h = harness({
+    send: () => new Promise((resolve) => resolvers.push(resolve)),
+  });
+  h.c.begin(10);
+  h.c.end();
+  h.tick(500);
+  h.c.begin(65);
+  assert.deepEqual(h.sent, [10]);
+  resolvers[0]();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(h.sent, [10, 65]);
+});
+
 test("valueFromPointer clamps and rounds", () => {
   assert.equal(valueFromPointer(50, 0, 200), 25);
   assert.equal(valueFromPointer(-5, 0, 200), 0);
