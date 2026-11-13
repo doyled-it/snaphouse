@@ -2356,6 +2356,40 @@ a.row-title {
   color: var(--ink-2);
 }
 
+/* The switch row: label left, the shared .toggle on the right. */
+.cl-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+
+/* A quiet line, not an alarm: the helper may simply be restarting. */
+.cl-stale {
+  margin: 0 0 8px;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+/* Last-known values read as remembered, not live: muted, never accent. */
+.cl-people.last-known,
+#cl-thermostat-panel.last-known .cl-mode,
+#cl-thermostat-panel.last-known .cl-set b {
+  color: var(--ink-2);
+  opacity: 0.75;
+}
+
+#cl-thermostat-panel.last-known .cl-temp {
+  color: var(--ink-2);
+}
+
+.cl-known {
+  color: var(--ink-2);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
 #cl-last {
   margin: 10px 0 0;
 }

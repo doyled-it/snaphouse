@@ -331,6 +331,7 @@
           <div class="climate-col">
             <section id="cl-people-panel" class="section panel" aria-labelledby="cl-people-h">
               <h2 id="cl-people-h" class="section-h">Who is home</h2>
+              <p id="cl-stale" class="cl-stale" role="status" hidden></p>
               <ul id="cl-people" class="cl-people"></ul>
               <p id="cl-people-empty" class="settings-note" hidden></p>
             </section>
@@ -339,7 +340,7 @@
               <h2 id="cl-thermo-h" class="section-h">Thermostat</h2>
               <div class="cl-reading">
                 <p id="cl-temp" class="cl-temp" aria-label="Temperature now">--</p>
-                <p class="cl-set"><span id="cl-mode" class="cl-mode"></span> <span id="cl-setpoint-wrap">set to <b id="cl-setpoint">--</b></span></p>
+                <p class="cl-set"><span id="cl-mode" class="cl-mode"></span> <span id="cl-setpoint-wrap">set to <b id="cl-setpoint">--</b></span> <span id="cl-known" class="cl-known" hidden></span></p>
               </div>
               <p id="cl-thermo-msg" class="cl-msg" role="status" hidden></p>
               <p id="cl-last" class="settings-note"></p>
@@ -352,10 +353,10 @@
               <h2 id="cl-auto-h" class="section-h cl-auto-h">Automatic changes</h2>
               <span class="save-status" data-status="climate" role="status"></span>
             </div>
-            <label class="switch-field">
-              <input id="cl-enabled" type="checkbox" class="switch-input" />
+            <div class="cl-switch-row">
               <span class="field-label">Change the thermostat for me</span>
-            </label>
+              <button id="cl-enabled" type="button" class="toggle" role="switch" aria-checked="false" aria-label="Change the thermostat for me">Off</button>
+            </div>
             <p class="settings-note">Cools less when everyone has left, and returns to your comfort temperature when someone comes home.</p>
 
             <div class="cl-steppers">

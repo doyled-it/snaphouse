@@ -119,9 +119,9 @@ test("peopleLines labels and last seen", () => {
     ],
   }));
   assert.deepEqual(peopleLines(parsed, NOW), [
-    { name: "Person A", state: "home", label: "Home", seen: "seen 3 min ago" },
-    { name: "Person B", state: "away", label: "Away", seen: "seen 3 hr ago" },
-    { name: "Person C", state: "unknown", label: "Not sure yet", seen: "" },
+    { name: "Person A", state: "home", label: "Home", seen: "seen 3 min ago", lastKnown: false },
+    { name: "Person B", state: "away", label: "Away", seen: "seen 3 hr ago", lastKnown: false },
+    { name: "Person C", state: "unknown", label: "Not sure yet", seen: "", lastKnown: false },
   ]);
 });
 
@@ -133,7 +133,7 @@ test("peopleLines is empty with nobody listed, and the empty text is plain", () 
 
 test("thermostatView reads, unreachable and checking", () => {
   assert.deepEqual(thermostatView(parseClimate(doc())), {
-    status: "ok", message: "", temperature: "74°", setpoint: "72°", mode: "Cooling",
+    status: "ok", message: "", lastKnown: false, lastKnownLabel: "", temperature: "74°", setpoint: "72°", mode: "Cooling",
   });
   const off = thermostatView(parseClimate(doc({ thermostat: { reachable: true, mode: "off", setpoint_f: 72, temperature_f: 71.5 } })));
   assert.equal(off.mode, "Off");
@@ -145,7 +145,7 @@ test("thermostatView reads, unreachable and checking", () => {
   const odd = thermostatView(parseClimate(doc({ thermostat: { reachable: true, mode: "emergency_heat", setpoint_f: 68, temperature_f: 66 } })));
   assert.equal(odd.mode, "Emergency heat");
   const nulls = thermostatView(parseClimate(doc({ thermostat: { reachable: true, mode: null, setpoint_f: null, temperature_f: null } })));
-  assert.deepEqual(nulls, { status: "ok", message: "", temperature: "--", setpoint: "--", mode: "" });
+  assert.deepEqual(nulls, { status: "ok", message: "", lastKnown: false, lastKnownLabel: "", temperature: "--", setpoint: "--", mode: "" });
 
   const down = thermostatView(parseClimate(doc({ thermostat: { reachable: false, mode: "cool", setpoint_f: 72, temperature_f: 74 } })));
   assert.equal(down.status, "unreachable");
@@ -214,4 +214,126 @@ test("settingsBody sends only the keys that differ", () => {
   assert.deepEqual(settingsBody(held, { ...held, comfort_f: 70, away_minutes: 30 }), { comfort_f: 70, away_minutes: 30 });
   assert.deepEqual(settingsBody(held, { ...held }), {});
   assert.deepEqual(settingsBody(held, { ...held, extra: 1 }), {});
+});
+
+import {
+  STALE_AFTER_MS,
+  editSetting,
+  staleness,
+} from "../../roles/room_picker/files/site/climate-model.js";
+
+test("parseClimate keeps the updated time, null when missing or bad", () => {
+  assert.equal(parseClimate(doc()).updatedMs, Date.parse("2026-11-13T15:09:58Z"));
+  assert.equal(parseClimate(doc({ updated: undefined })).updatedMs, null);
+  assert.equal(parseClimate(doc({ updated: "nope" })).updatedMs, null);
+});
+
+test("a fresh document is not stale, at or under three minutes", () => {
+  assert.equal(STALE_AFTER_MS, 180_000);
+  const parsed = parseClimate(doc({ updated: new Date(NOW - 180_000).toISOString() }));
+  assert.deepEqual(staleness(parsed, NOW), { stale: false, text: "" });
+});
+
+test("a document older than three minutes is stale, in plain words", () => {
+  const parsed = parseClimate(doc({ updated: new Date(NOW - 12 * 60_000).toISOString() }));
+  assert.deepEqual(staleness(parsed, NOW), {
+    stale: true,
+    text: "Last update 12 min ago. The climate helper may be stopped.",
+  });
+});
+
+test("staleness reads hours and days, and never says homebody", () => {
+  const hours = parseClimate(doc({ updated: new Date(NOW - 3 * 3_600_000).toISOString() }));
+  assert.match(staleness(hours, NOW).text, /^Last update 3 hr ago\./);
+  const days = parseClimate(doc({ updated: new Date(NOW - 2 * 86_400_000).toISOString() }));
+  assert.match(staleness(days, NOW).text, /^Last update 2 days ago\./);
+  assert.doesNotMatch(staleness(days, NOW).text, /homebody/i);
+});
+
+test("a document with no readable updated time is not called stale", () => {
+  assert.deepEqual(staleness(parseClimate(doc({ updated: undefined })), NOW), { stale: false, text: "" });
+});
+
+test("a clock a little behind the hub is not stale", () => {
+  const parsed = parseClimate(doc({ updated: new Date(NOW + 60_000).toISOString() }));
+  assert.equal(staleness(parsed, NOW).stale, false);
+});
+
+test("stale people lines are marked last known", () => {
+  const parsed = parseClimate(doc());
+  assert.equal(peopleLines(parsed, NOW)[0].lastKnown, false);
+  assert.equal(peopleLines(parsed, NOW, true)[0].lastKnown, true);
+});
+
+test("thermostat view is live when reachable and fresh", () => {
+  const v = thermostatView(parseClimate(doc()));
+  assert.equal(v.lastKnown, false);
+  assert.equal(v.lastKnownLabel, "");
+});
+
+test("an unreachable thermostat shows mode and setpoint as last known", () => {
+  const v = thermostatView(parseClimate(doc({ thermostat: { reachable: false, mode: "cool", setpoint_f: 72, temperature_f: 74 } })));
+  assert.equal(v.status, "unreachable");
+  assert.equal(v.lastKnown, true);
+  assert.equal(v.lastKnownLabel, "last known");
+  assert.equal(v.mode, "Cooling");
+  assert.equal(v.setpoint, "72°");
+});
+
+test("a stale document marks the thermostat last known, even when reachable", () => {
+  const v = thermostatView(parseClimate(doc()), true);
+  assert.equal(v.status, "ok");
+  assert.equal(v.lastKnown, true);
+});
+
+test("a checking thermostat is not labelled last known", () => {
+  const v = thermostatView(parseClimate(doc({ thermostat: { reachable: null, mode: "cool", setpoint_f: 72, temperature_f: 74 } })));
+  assert.equal(v.lastKnown, false);
+});
+
+test("a valid edit is accepted and refuses nothing", () => {
+  const out = editSetting({ comfort_f: 72, away_f: 82, away_minutes: 20 }, new Map(), "comfort_f", 70, {});
+  assert.deepEqual(out.draft, { comfort_f: 70, away_f: 82, away_minutes: 20 });
+  assert.equal(out.refused.size, 0);
+  assert.deepEqual(out.accepted, { comfort_f: 70 });
+});
+
+test("a bad edit is refused for that field only and the draft is kept", () => {
+  const draft = { comfort_f: 72, away_f: 82, away_minutes: 20 };
+  const out = editSetting(draft, new Map(), "comfort_f", 5, {});
+  assert.deepEqual([...out.refused.keys()], ["comfort_f"]);
+  assert.deepEqual(out.draft, draft);
+  assert.deepEqual(out.accepted, {});
+});
+
+test("a valid edit to a third field leaves two refused fields flagged", () => {
+  const draft = { comfort_f: 72, away_f: 82, away_minutes: 20 };
+  let out = editSetting(draft, new Map(), "comfort_f", 5, {});
+  out = editSetting(out.draft, out.refused, "away_f", 200, { comfort_f: 5 });
+  out = editSetting(out.draft, out.refused, "away_minutes", 30, { comfort_f: 5, away_f: 200 });
+  assert.deepEqual([...out.refused.keys()].sort(), ["away_f", "comfort_f"]);
+  assert.deepEqual(out.accepted, { away_minutes: 30 });
+});
+
+test("a refused field is cleared once its own value is valid", () => {
+  const draft = { comfort_f: 72, away_f: 82, away_minutes: 20 };
+  let out = editSetting(draft, new Map(), "comfort_f", 5, {});
+  out = editSetting(out.draft, out.refused, "comfort_f", 70, {});
+  assert.equal(out.refused.size, 0);
+  assert.deepEqual(out.accepted, { comfort_f: 70 });
+});
+
+test("a refused comfort is accepted when raising away makes it valid", () => {
+  const draft = { comfort_f: 72, away_f: 82, away_minutes: 20 };
+  let out = editSetting(draft, new Map(), "comfort_f", 84, {});
+  assert.deepEqual([...out.refused.keys()], ["comfort_f"]);
+  out = editSetting(out.draft, out.refused, "away_f", 90, { comfort_f: 84 });
+  assert.equal(out.refused.size, 0);
+  assert.deepEqual(out.draft, { comfort_f: 84, away_f: 90, away_minutes: 20 });
+  assert.deepEqual(out.accepted, { away_f: 90, comfort_f: 84 });
+});
+
+test("refusals carry the message", () => {
+  const out = editSetting({ comfort_f: 72, away_f: 82, away_minutes: 20 }, new Map(), "away_minutes", 1, {});
+  assert.match(out.refused.get("away_minutes"), /between 5 and 120/);
 });

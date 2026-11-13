@@ -88,9 +88,11 @@ import {
   checkSettings,
   lastChangeText,
   overrideText,
+  editSetting,
   parseClimateText,
   parseWhole,
   peopleLines,
+  staleness,
   settingsBody,
   thermostatView,
 } from "./climate-model.js";
@@ -3622,6 +3624,8 @@ function renderDevices() {
 // --------------------------------------------------------------------------- //
 
 const climateEls = {
+  stale: document.getElementById("cl-stale"),
+  known: document.getElementById("cl-known"),
   people: document.getElementById("cl-people"),
   peopleEmpty: document.getElementById("cl-people-empty"),
   panel: document.getElementById("cl-thermostat-panel"),
@@ -3646,7 +3650,7 @@ const climateEls = {
 // saved), the fields refused inline, and a tick counter for the idle poll.
 let climateWritten = {};
 let climateDraft = {};
-let climateInvalid = new Set();
+let climateRefused = new Map();
 let climateState = "idle";
 let climateTicks = 0;
 let climatePeopleKey = "";
@@ -3687,7 +3691,7 @@ function applyClimate(doc) {
   if (doc) {
     climateWritten = climateFlat(doc);
     climateQueue.seed(climateWritten);
-    if (settled(climateState) && climateInvalid.size === 0) {
+    if (settled(climateState) && climateRefused.size === 0) {
       climateDraft = { ...doc.settings };
     }
     renderClimate();
@@ -3713,7 +3717,12 @@ function renderClimate() {
   }
   const now = Date.now();
 
-  const lines = peopleLines(doc, now);
+  const { stale, text: staleText } = staleness(doc, now);
+  climateEls.stale.hidden = staleText === "";
+  climateEls.stale.textContent = staleText;
+  climateEls.people.classList.toggle("last-known", stale);
+
+  const lines = peopleLines(doc, now, stale);
   const key = JSON.stringify(lines);
   if (key !== climatePeopleKey) {
     climatePeopleKey = key;
@@ -3746,8 +3755,11 @@ function renderClimate() {
   climateEls.peopleEmpty.hidden = lines.length > 0;
   climateEls.peopleEmpty.textContent = lines.length > 0 ? "" : EMPTY_PEOPLE_TEXT;
 
-  const thermo = thermostatView(doc);
+  const thermo = thermostatView(doc, stale);
   climateEls.panel.dataset.status = thermo.status;
+  climateEls.panel.classList.toggle("last-known", thermo.lastKnown);
+  climateEls.known.hidden = !thermo.lastKnown;
+  climateEls.known.textContent = thermo.lastKnownLabel;
   climateEls.temp.textContent = thermo.temperature;
   climateEls.mode.textContent = thermo.mode;
   climateEls.setpoint.textContent = thermo.setpoint;
@@ -3762,20 +3774,26 @@ function renderClimate() {
 
   // The owner's pending, failed or refused edits are never overwritten.
   if (settled(climateState)) {
-    if (document.activeElement !== climateEls.enabled) {
-      climateEls.enabled.checked = doc.enabled;
-    }
+    setClimateSwitch(doc.enabled);
     for (const [name, input] of Object.entries(climateEls.inputs)) {
-      if (!climateInvalid.has(name)) {
+      if (!climateRefused.has(name)) {
         setFieldValue(input, String(doc.settings[name]));
       }
     }
   }
 }
 
+// The same switch the room rows use: aria-checked carries the state, the text
+// is for screen readers only.
+function setClimateSwitch(on) {
+  climateEls.enabled.setAttribute("aria-checked", on ? "true" : "false");
+  climateEls.enabled.textContent = on ? "On" : "Off";
+}
+
 function wireClimate() {
-  climateEls.enabled.addEventListener("change", () => {
-    const on = climateEls.enabled.checked;
+  climateEls.enabled.addEventListener("click", () => {
+    const on = climateEls.enabled.getAttribute("aria-checked") !== "true";
+    setClimateSwitch(on);
     if (on) haptics.roomOn();
     else haptics.roomOff();
     climateQueue.edit({ enabled: on }, { delayMs: 0 });
@@ -3801,21 +3819,34 @@ function wireClimate() {
 // without writing; otherwise queue it (saved 600 ms after the last change, or on
 // blur).
 function editClimateNumber(name, value) {
-  const candidate = { ...climateDraft, [name]: value };
-  const message = checkSettings(candidate);
-  if (message) {
-    climateInvalid.add(name);
-    climateEls.inputs[name].setAttribute("aria-invalid", "true");
-    showFieldError(climateEls.error, message);
-    return;
+  const raws = {};
+  for (const other of climateRefused.keys()) {
+    raws[other] = parseWhole(climateEls.inputs[other].value);
   }
-  climateInvalid = new Set();
-  for (const input of Object.values(climateEls.inputs)) {
-    input.removeAttribute("aria-invalid");
+  const out = editSetting(climateDraft, climateRefused, name, value, raws);
+  climateRefused = out.refused;
+  climateDraft = out.draft;
+  for (const [field, input] of Object.entries(climateEls.inputs)) {
+    if (climateRefused.has(field)) {
+      input.setAttribute("aria-invalid", "true");
+    } else {
+      input.removeAttribute("aria-invalid");
+    }
   }
-  clearFieldError(climateEls.error);
-  climateDraft = candidate;
-  climateQueue.edit({ [name]: value });
+  const [first] = climateRefused.values();
+  if (first) {
+    showFieldError(climateEls.error, first);
+  } else {
+    clearFieldError(climateEls.error);
+  }
+  for (const [field, accepted] of Object.entries(out.accepted)) {
+    if (field !== name) {
+      setFieldValue(climateEls.inputs[field], String(accepted));
+    }
+  }
+  if (Object.keys(out.accepted).length > 0) {
+    climateQueue.edit(out.accepted);
+  }
 }
 
 async function writeClimate(obj) {

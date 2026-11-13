@@ -80,6 +80,7 @@ export function parseClimate(raw) {
     return null;
   }
   return {
+    updatedMs: stamp(raw.updated),
     enabled: raw.enabled,
     occupied: typeof raw.occupied === "boolean" ? raw.occupied : null,
     people: raw.people.map(parsePerson).filter(Boolean),
@@ -125,12 +126,14 @@ export function relativeSeen(ms, now) {
 
 const STATE_LABELS = { home: "Home", away: "Away", unknown: "Not sure yet" };
 
-export function peopleLines(doc, now) {
+// `lastKnown` is true when the whole document is stale, so the page can mute it.
+export function peopleLines(doc, now, lastKnown = false) {
   return doc.people.map((person) => ({
     name: person.name,
     state: person.state,
     label: STATE_LABELS[person.state],
     seen: relativeSeen(person.lastSeenMs, now),
+    lastKnown,
   }));
 }
 
@@ -151,7 +154,40 @@ function degrees(value) {
   return value === null ? "--" : `${Math.round(value)}°`;
 }
 
-export function thermostatView(doc) {
+// The hub's helper rewrites the document every few seconds. Past this age the
+// helper has probably stopped, and what the page shows is the last thing it knew.
+export const STALE_AFTER_MS = 3 * MIN;
+
+function ageWords(age) {
+  if (age < HOUR) {
+    return `${Math.max(1, Math.floor(age / MIN))} min`;
+  }
+  if (age < DAY) {
+    return `${Math.floor(age / HOUR)} hr`;
+  }
+  const days = Math.floor(age / DAY);
+  return days === 1 ? "1 day" : `${days} days`;
+}
+
+// { stale, text }: text is the quiet line to show, empty when the document is
+// fresh or carries no readable time (then there is nothing to say).
+export function staleness(doc, now) {
+  if (doc.updatedMs === null || doc.updatedMs === undefined) {
+    return { stale: false, text: "" };
+  }
+  const age = now - doc.updatedMs;
+  if (age <= STALE_AFTER_MS) {
+    return { stale: false, text: "" };
+  }
+  return {
+    stale: true,
+    text: `Last update ${ageWords(age)} ago. The climate helper may be stopped.`,
+  };
+}
+
+// `stale` is the whole document being old. Either that or an unreachable
+// thermostat makes the mode and setpoint last-known values, not live ones.
+export function thermostatView(doc, stale = false) {
   const t = doc.thermostat;
   let status = "ok";
   let message = "";
@@ -162,9 +198,12 @@ export function thermostatView(doc) {
     status = "checking";
     message = "Checking the thermostat";
   }
+  const lastKnown = t.reachable === false || stale;
   return {
     status,
     message,
+    lastKnown,
+    lastKnownLabel: lastKnown ? "last known" : "",
     temperature: degrees(t.temperatureF),
     setpoint: degrees(t.setpointF),
     mode: modeLabel(t.mode),
@@ -244,4 +283,35 @@ export function settingsBody(written, next) {
     }
   }
   return body;
+}
+
+// One number was edited. Returns the new valid `draft`, the `refused` Map
+// (field -> sentence, per field, so a refused field stays flagged until its own
+// value is valid), and `accepted`, the values to queue for saving. `raws` holds
+// the parsed text of fields already refused, so raising away can release a
+// comfort that was refused only for sitting at or above it.
+export function editSetting(draft, refused, name, value, raws) {
+  const nextRefused = new Map(refused);
+  let nextDraft = draft;
+  const accepted = {};
+  const message = checkSettings({ ...draft, [name]: value });
+  if (message) {
+    nextRefused.set(name, message);
+  } else {
+    nextRefused.delete(name);
+    nextDraft = { ...draft, [name]: value };
+    accepted[name] = value;
+  }
+  for (const other of [...nextRefused.keys()]) {
+    if (other === name || !(other in raws)) {
+      continue;
+    }
+    const retry = { ...nextDraft, [other]: raws[other] };
+    if (!checkSettings(retry)) {
+      nextRefused.delete(other);
+      nextDraft = retry;
+      accepted[other] = raws[other];
+    }
+  }
+  return { draft: nextDraft, refused: nextRefused, accepted };
 }

@@ -128,3 +128,12 @@ test("the top bar bleeds across the body gutters", () => {
   assert.match(rule, /margin:\s*0 calc\(-1 \* var\(--gutter-r\)\) 8px calc\(-1 \* var\(--gutter-l\)\)/);
   assert.match(rule, /padding:[^;]*var\(--gutter-r\)[^;]*var\(--gutter-l\)/);
 });
+
+test("the climate automation control is the shared switch, not a checkbox", () => {
+  const tag = html.match(/<button[^>]*id="cl-enabled"[^>]*>/);
+  assert.ok(tag, "cl-enabled is a button");
+  assert.match(tag[0], /class="toggle"/);
+  assert.match(tag[0], /role="switch"/);
+  assert.match(tag[0], /aria-label="Change the thermostat for me"/);
+  assert.doesNotMatch(html, /<input[^>]*id="cl-enabled"/);
+});
