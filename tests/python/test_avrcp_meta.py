@@ -420,3 +420,42 @@ def test_disconnect_then_control_returns_an_error_and_does_not_crash():
     avrcp_meta.serve(player, events, out, lambda _n: None)
     last = _read_messages(out)[-1]
     assert last["error"]["code"] == -32603
+
+
+def _variant(value):
+    return ("v", value)
+
+
+def test_player_events_emit_path_then_initial_track_status_position():
+    props = {
+        "Track": _variant({"Title": _variant("Soul Town"), "Artist": _variant("A")}),
+        "Status": _variant("paused"),
+        "Position": _variant(4000),
+    }
+    events = list(avrcp_meta.player_events("/org/bluez/hci0/dev_X/player0", props))
+    assert events == [
+        ("player", "/org/bluez/hci0/dev_X/player0"),
+        ("track", {"Title": "Soul Town", "Artist": "A"}),
+        ("status", "paused"),
+        ("position", 4000),
+    ]
+
+
+def test_player_events_with_no_properties_still_announces_the_player():
+    # A phone that connects paused may carry no Track at all; it must still be
+    # controllable at once.
+    assert list(avrcp_meta.player_events("/p", {})) == [("player", "/p")]
+
+
+@pytest.mark.parametrize(
+    "current, signal, expected",
+    [
+        (None, "/p0", True),
+        ("/p0", "/p0", True),
+        ("/p0", "/p1", False),
+        ("/p0", None, False),
+        (None, None, False),
+    ],
+)
+def test_follows_player_only_adopts_a_path_when_none_is_held(current, signal, expected):
+    assert avrcp_meta.follows_player(current, signal) is expected

@@ -322,6 +322,8 @@ def handle_request(
         if player.path is None:
             return _error(request_id, -32603, "No phone is connected")
         try:
+            # Synchronous on the event loop: the real control waits up to 2 s, which
+            # delays other events and replies meanwhile. Keep only short calls here.
             control(name)
         except Exception as exc:  # noqa: BLE001 - any failure is reported, never raised
             return _error(request_id, -32603, f"Control failed: {exc}")
@@ -409,6 +411,37 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return args
 
 
+def _unwrap(value: Any) -> Any:
+    # jeepney returns a variant as a (signature, value) tuple; the payload is the
+    # second item.
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+        return value[1]
+    return value
+
+
+def player_events(path: str, properties: dict) -> Iterable[tuple]:
+    """The events for a MediaPlayer1 that has just appeared (at startup, or via
+    InterfacesAdded when a phone connects): the player path first, so the stream
+    is controllable at once even when the phone is paused and sends no Track,
+    then whatever initial Track, Status and Position it carries."""
+    yield ("player", path)
+    if "Track" in properties:
+        yield ("track", {k: _unwrap(v) for k, v in _unwrap(properties["Track"]).items()})
+    if "Status" in properties:
+        yield ("status", _unwrap(properties["Status"]))
+    if "Position" in properties:
+        yield ("position", _unwrap(properties["Position"]))
+
+
+def follows_player(current_path: str | None, signal_path: str | None) -> bool:
+    """Whether a PropertiesChanged from `signal_path` belongs to the player being
+    followed. A new path is adopted only when none is held (a cleared path means
+    the last phone left), so two connected devices cannot flip the control target."""
+    if signal_path is None:
+        return False
+    return current_path is None or signal_path == current_path
+
+
 def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
     """Yield ("track", dict), ("status", value) and ("player", path | None) as
     BlueZ MediaPlayer1 changes.
@@ -419,13 +452,6 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
     """
     from jeepney import DBusAddress, HeaderFields, MatchRule, message_bus, new_method_call
     from jeepney.io.blocking import open_dbus_connection
-
-    def unwrap(value: Any) -> Any:
-        # jeepney returns a variant as a (signature, value) tuple; the payload is
-        # the second item. Dicts of variants are unwrapped one level deep.
-        if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
-            return value[1]
-        return value
 
     connection = open_dbus_connection(bus="SYSTEM")
 
@@ -445,6 +471,12 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
         member="InterfacesRemoved",
     )
     connection.send_and_get_reply(message_bus.AddMatch(removed.serialise()))
+    added = MatchRule(
+        type="signal",
+        interface="org.freedesktop.DBus.ObjectManager",
+        member="InterfacesAdded",
+    )
+    connection.send_and_get_reply(message_bus.AddMatch(added.serialise()))
 
     current_path: str | None = None
 
@@ -461,18 +493,21 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
         if not player:
             continue
         current_path = _path
-        yield ("player", _path)
-        if "Track" in player:
-            yield ("track", {k: unwrap(v) for k, v in unwrap(player["Track"]).items()})
-        if "Status" in player:
-            yield ("status", unwrap(player["Status"]))
-        if "Position" in player:
-            yield ("position", unwrap(player["Position"]))
+        yield from player_events(_path, player)
 
     while True:
         message = connection.receive()
         body = message.body
         member = message.header.fields.get(HeaderFields.member)
+        if member == "InterfacesAdded":
+            # BlueZ creates the MediaPlayer1 object when a phone connects, and a
+            # paused phone sends no PropertiesChanged, so learn the path here.
+            added_path, added_interfaces = body[0], body[1]
+            player_props = added_interfaces.get(MEDIA_PLAYER_INTERFACE)
+            if player_props is not None and (current_path is None or added_path == current_path):
+                current_path = added_path
+                yield from player_events(added_path, player_props)
+            continue
         if member == "InterfacesRemoved":
             removed_path, interfaces = body[0], body[1]
             if MEDIA_PLAYER_INTERFACE in interfaces and removed_path == current_path:
@@ -485,15 +520,17 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
         if interface != MEDIA_PLAYER_INTERFACE:
             continue
         signal_path = message.header.fields.get(HeaderFields.path)
-        if signal_path and signal_path != current_path:
+        if not follows_player(current_path, signal_path):
+            continue
+        if signal_path != current_path:
             current_path = signal_path
             yield ("player", signal_path)
         if "Track" in changed:
-            yield ("track", {k: unwrap(v) for k, v in unwrap(changed["Track"]).items()})
+            yield ("track", {k: _unwrap(v) for k, v in _unwrap(changed["Track"]).items()})
         if "Status" in changed:
-            yield ("status", unwrap(changed["Status"]))
+            yield ("status", _unwrap(changed["Status"]))
         if "Position" in changed:
-            yield ("position", unwrap(changed["Position"]))
+            yield ("position", _unwrap(changed["Position"]))
 
 
 class _BluezControl:  # pragma: no cover
