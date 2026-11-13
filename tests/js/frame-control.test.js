@@ -21,9 +21,15 @@ import {
   validateFrameSettings,
   framePinBody,
   frameUnpinBody,
+  keepShowingBody,
+  repinBody,
+  pinControlState,
   weatherLocationLabel,
   weatherSaveBody,
   weatherClearBody,
+  effectiveQuietHours,
+  quietOverrideFromFields,
+  frameQuietHoursBody,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // --------------------------------------------------------------------------- #
@@ -33,7 +39,9 @@ import {
 test("screenFromHash maps each known hash to its screen", () => {
   assert.equal(screenFromHash("#listen"), "listen");
   assert.equal(screenFromHash("#frame"), "frame");
-  assert.equal(screenFromHash("#art"), "art");
+  assert.equal(screenFromHash("#art"), "gallery");
+  assert.equal(screenFromHash("#gallery"), "gallery");
+  assert.equal(screenFromHash("#climate"), "climate");
   assert.equal(screenFromHash("#settings"), "settings");
 });
 
@@ -61,7 +69,7 @@ test("screenFromHash falls back to listen for an unknown hash", () => {
 test("screenFromHash accepts a hash without the leading # and ignores case", () => {
   assert.equal(screenFromHash("frame"), "frame");
   assert.equal(screenFromHash("#Settings"), "settings");
-  assert.equal(screenFromHash("ART"), "art");
+  assert.equal(screenFromHash("ART"), "gallery");
 });
 
 // --------------------------------------------------------------------------- #
@@ -197,7 +205,7 @@ test("pinSummary names what is pinned and its end time", () => {
   );
   assert.equal(
     pinSummary({ what: "art", until: "2026-11-10T16:12:00-08:00" }, NOW),
-    "Pinned: this art piece until 4:12"
+    "Pinned: this picture until 4:12"
   );
   assert.equal(
     pinSummary({ what: "now_playing", until: "2026-11-10T16:12:00-08:00" }, NOW),
@@ -371,4 +379,111 @@ test("weatherSaveBody wraps a trimmed query, or null when blank", () => {
 
 test("weatherClearBody clears the location", () => {
   assert.deepEqual(weatherClearBody(), { weather_location: null });
+});
+
+// --------------------------------------------------------------------------- #
+// One quiet-hours control per frame, merged from the shared and per-frame split
+// --------------------------------------------------------------------------- #
+
+test("effectiveQuietHours follows the shared window when a frame has no override", () => {
+  const shared = { start: "22:00", end: "07:00" };
+  assert.deepEqual(effectiveQuietHours(shared, null), { enabled: true, start: "22:00", end: "07:00" });
+});
+
+test("effectiveQuietHours uses a custom window, and keeps the shared times when quiet hours are off", () => {
+  const shared = { start: "22:00", end: "07:00" };
+  assert.deepEqual(effectiveQuietHours(shared, { start: "23:00", end: "06:30" }), {
+    enabled: true,
+    start: "23:00",
+    end: "06:30",
+  });
+  assert.deepEqual(effectiveQuietHours(shared, { enabled: false }), {
+    enabled: false,
+    start: "22:00",
+    end: "07:00",
+  });
+});
+
+test("quietOverrideFromFields builds the stored override from the switch and times", () => {
+  assert.deepEqual(quietOverrideFromFields({ enabled: false, start: "", end: "" }), { enabled: false });
+  assert.deepEqual(quietOverrideFromFields({ enabled: true, start: "23:00", end: "06:30" }), {
+    start: "23:00",
+    end: "06:30",
+  });
+  assert.equal(quietOverrideFromFields({ enabled: true, start: "", end: "06:30" }), undefined);
+  assert.equal(quietOverrideFromFields({ enabled: true, start: "25:00", end: "06:30" }), undefined);
+});
+
+test("quietOverrideFromFields produces null for a reset, so the frame follows the default hours", () => {
+  assert.equal(quietOverrideFromFields({ reset: true }), null);
+  assert.equal(quietOverrideFromFields({ reset: true, enabled: false, start: "", end: "" }), null);
+});
+
+test("a reset override is accepted by frameQuietHoursBody as quiet_hours null", () => {
+  assert.deepEqual(frameQuietHoursBody("office", quietOverrideFromFields({ reset: true })), {
+    ok: true,
+    value: { frame: "office", quiet_hours: null },
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// keepShowingBody / pinControlState: the one-tap Keep showing control
+// --------------------------------------------------------------------------- #
+
+test("keepShowingBody matches the form's this-image / until-I-unpin body", () => {
+  assert.deepEqual(keepShowingBody("office"), framePinBody("office", "art", "forever"));
+  assert.deepEqual(keepShowingBody("office"), { frame: "office", what: "art", duration: "forever" });
+});
+
+test("keepShowingBody is null for a malformed frame id", () => {
+  assert.equal(keepShowingBody("../x"), null);
+  assert.equal(keepShowingBody(""), null);
+});
+
+test("pinControlState is not visible without frame control", () => {
+  assert.equal(pinControlState(null, null).visible, false);
+  assert.equal(pinControlState({ available: false }, null).visible, false);
+});
+
+test("pinControlState offers Keep showing this when nothing is pinned", () => {
+  assert.deepEqual(pinControlState({ available: true }, null), {
+    visible: true,
+    pinned: false,
+    label: "Keep showing this",
+  });
+});
+
+test("pinControlState offers Unpin while a pin is held", () => {
+  const pin = { what: "art", until: null };
+  assert.deepEqual(pinControlState({ available: true }, pin), {
+    visible: true,
+    pinned: true,
+    label: "Unpin",
+  });
+});
+
+test("repinBody undoes an unpin with a duration that covers what was left", () => {
+  const now = Date.parse("2026-11-13T10:00:00Z");
+  const at = (min) => new Date(now + min * 60000).toISOString();
+  assert.deepEqual(repinBody("office", { what: "art", until: null }, now), {
+    frame: "office",
+    what: "art",
+    duration: "forever",
+  });
+  assert.equal(repinBody("office", { what: "weather", until: at(40) }, now).duration, "1h");
+  assert.equal(repinBody("office", { what: "art", until: at(120) }, now).duration, "4h");
+  assert.equal(repinBody("office", { what: "art", until: at(600) }, now).duration, "morning");
+});
+
+test("repinBody is null without a pin or with a bad frame", () => {
+  assert.equal(repinBody("office", null, 0), null);
+  assert.equal(repinBody("../x", { what: "art", until: null }, 0), null);
+});
+
+test("pinControlState says Keep showing art while the frame shows now playing", () => {
+  const fc = { available: true };
+  assert.equal(pinControlState(fc, null, false).label, "Keep showing art");
+  assert.equal(pinControlState(fc, null, true).label, "Keep showing this");
+  assert.equal(pinControlState(fc, null).label, "Keep showing this");
+  assert.equal(pinControlState(fc, { what: "art", until: null }, false).label, "Unpin");
 });

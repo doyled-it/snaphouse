@@ -142,3 +142,64 @@ def test_page_location_revalidates_so_a_phone_never_mixes_old_and_new_modules():
     block = _prefix_location_block(TEMPLATE.read_text(), "/")
     assert "root /var/lib/snaphouse/room-picker;" in block
     assert 'add_header Cache-Control "no-cache";' in block
+
+
+BT_TEMPLATE = "roles/room_picker/templates/bluetooth.json.j2"
+TASKS_FILE = REPO / "roles/room_picker/tasks/main.yml"
+PLACEHOLDER_ALIAS = "Den Speaker"
+
+
+def _render_bluetooth(**extra) -> dict:
+    """Render bluetooth.json.j2 with Ansible's to_json (json.dumps here)."""
+    env = Environment(loader=FileSystemLoader(str(REPO)), keep_trailing_newline=True)
+    env.filters["to_json"] = json.dumps
+    variables = {"house_stream_name": "House", **extra}
+    return json.loads(env.get_template(BT_TEMPLATE).render(**variables))
+
+
+def test_a_task_templates_bluetooth_json_into_the_web_root():
+    with open(TASKS_FILE, encoding="utf-8") as handle:
+        tasks = yaml.safe_load(handle)
+    matches = [
+        t["ansible.builtin.template"]
+        for t in tasks
+        if "ansible.builtin.template" in t
+        and t["ansible.builtin.template"].get("src") == "bluetooth.json.j2"
+    ]
+    assert len(matches) == 1
+    assert matches[0]["dest"] == "/var/lib/snaphouse/room-picker/bluetooth.json"
+    assert matches[0]["mode"] == "0644"
+
+
+def test_bluetooth_json_carries_the_alias_when_set():
+    assert _render_bluetooth(bt_receive_alias=PLACEHOLDER_ALIAS) == {
+        "name": PLACEHOLDER_ALIAS
+    }
+
+
+def test_bluetooth_json_falls_back_to_the_house_stream_name():
+    assert _render_bluetooth(bt_receive_alias="") == {"name": "House"}
+    assert _render_bluetooth() == {"name": "House"}
+
+
+def test_bluetooth_json_escapes_the_name():
+    assert _render_bluetooth(bt_receive_alias='Den "Quote" \\ Speaker') == {
+        "name": 'Den "Quote" \\ Speaker'
+    }
+
+
+def test_bluetooth_template_has_no_literal_name_and_example_is_a_placeholder():
+    text = (REPO / BT_TEMPLATE).read_text(encoding="utf-8")
+    assert "bt_receive_alias" in text and "house_stream_name" in text
+    assert re.findall(r'"name"\s*:\s*"[^"{]', text) == []
+    example = (REPO / "local.example.yml").read_text(encoding="utf-8")
+    assert "# bt_receive_alias:" in example
+
+
+def test_targets_mark_a_host_not_installed_from_the_inventory_flag():
+    config = _render_targets()
+    flags = {t["name"]: t.get("installed") for t in config["targets"]}
+    for name, spec in _load_hosts().items():
+        assert flags[name] is spec.get("installed", True)
+    assert flags["nightstand-frame"] is True
+    assert flags["panel"] is False

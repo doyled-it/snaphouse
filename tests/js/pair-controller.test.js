@@ -60,7 +60,7 @@ test("a start that never answers times out, clears pending and says so", async (
   assert.equal(pair.state.pending, true);
   await started;
   assert.equal(pair.state.pending, false, "the in-flight flag must clear when the request times out");
-  assert.match(pair.state.error, /did not answer/i);
+  assert.match(pair.state.error, /took too long/i);
 });
 
 test("polls keep reaching the service while a POST is in flight", async () => {

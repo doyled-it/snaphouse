@@ -18,6 +18,7 @@ import {
   apiRequest,
   libraryRefreshMayRebuild,
   trashRestoreId,
+  movedPieceId,
   ALLOWED_INTERVALS,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
@@ -289,7 +290,7 @@ test("rotationSummary counts landscape pieces in enabled folders", () => {
   // Collection has a landscape wave and a portrait tower; only the wave rotates.
   assert.equal(summary.count, 1);
   assert.equal(summary.empty, false);
-  assert.match(summary.text, /1 piece/);
+  assert.match(summary.text, /1 picture will/);
 });
 
 test("rotationSummary counts across every enabled folder", () => {
@@ -298,7 +299,7 @@ test("rotationSummary counts across every enabled folder", () => {
   const summary = rotationSummary(index, control);
   // wave (Collection) and beach (Photos) are landscape; tower is portrait.
   assert.equal(summary.count, 2);
-  assert.match(summary.text, /2 pieces/);
+  assert.match(summary.text, /2 pictures will/);
 });
 
 test("rotationSummary says nothing is in rotation when enabled folders are empty or all portrait", () => {
@@ -307,7 +308,7 @@ test("rotationSummary says nothing is in rotation when enabled folders are empty
   const none = rotationSummary(index, parseArtControl(controlDoc({ settings: { rotate_minutes: 60, folders_enabled: [] } })));
   assert.equal(none.count, 0);
   assert.equal(none.empty, true);
-  assert.match(none.text, /[Nn]othing/);
+  assert.match(none.text, /No pictures will be shown/);
 
   // A folder with only a portrait piece enabled: the tower is portrait, so the
   // folder contributes nothing. Build an index whose only enabled folder is all
@@ -438,4 +439,13 @@ test("trashRestoreId returns null when nothing matches or the input is unusable"
   assert.equal(trashRestoreId(null, "x.jpg"), null);
   assert.equal(trashRestoreId(trash, ""), null);
   assert.equal(trashRestoreId(trash, null), null);
+});
+
+test("movedPieceId finds a moved piece in its new folder by file name", () => {
+  const index = parseArtIndex(indexDoc());
+  const beach = index.pieces.find((p) => p.file === "beach.jpg");
+  assert.equal(movedPieceId(index, "Photos", { file: "beach.jpg" }), beach.id);
+  assert.equal(movedPieceId(index, "Collection", { file: "beach.jpg" }), null);
+  assert.equal(movedPieceId(null, "Photos", { file: "beach.jpg" }), null);
+  assert.equal(movedPieceId(index, "Photos", null), null);
 });

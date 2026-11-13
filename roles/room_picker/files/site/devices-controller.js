@@ -67,8 +67,8 @@ export function createDevicesController({
         ok: false,
         error:
           err && err.message === "timeout"
-            ? "The hub did not answer. Try again."
-            : "Could not reach the hub.",
+            ? "That took too long. Try again."
+            : "Couldn't connect. Try again.",
       };
     } finally {
       state.pending = false;

@@ -16,37 +16,28 @@
   </head>
   <body>
     <header class="topbar">
-      <button id="menu-button" class="menu-button" type="button" aria-haspopup="dialog" aria-label="Open the menu">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-        </svg>
-      </button>
       <h1 class="house">House</h1>
-      <span id="screen-title" class="screen-title" aria-hidden="true">Listen</span>
+      <button id="everything-off" class="btn btn-small everything-off" type="button" disabled>Everything off</button>
     </header>
 
-    <dialog id="drawer" class="drawer" aria-label="Screens">
-      <nav id="drawer-nav" class="drawer-nav"></nav>
-    </dialog>
-
+    <p id="speakers" class="banner connection" role="status" hidden></p>
     <p id="health" class="banner health" role="status" hidden></p>
     <p id="connection" class="banner connection" role="status" hidden></p>
 
     <main>
       <!-- Listen: what is playing on the House stream, the rooms, and the plays. -->
       <section class="screen" id="screen-listen" aria-label="Listen">
-        <!-- Now playing on the House stream. -->
-        <section id="now-playing" class="section panel" aria-labelledby="np-h" hidden>
-          <h2 id="np-h" class="section-h">Now playing</h2>
-          <div class="np">
+        <!-- Now playing on the House stream, as a compact strip. With no track it
+             shows how to start something. -->
+        <section id="now-playing" class="section panel" aria-label="Now playing">
+          <div id="np" class="np" hidden>
             <div class="np-cover">
               <img id="np-art-img" class="np-art-img" alt="" hidden />
               <div id="np-art-ph" class="np-art-ph" aria-hidden="true"></div>
             </div>
             <div class="np-info">
               <p id="np-title" class="np-title"></p>
-              <p id="np-artist" class="np-artist" hidden></p>
-              <p id="np-album" class="np-album" hidden></p>
+              <p id="np-source" class="np-source" hidden></p>
               <div id="np-progress" class="np-progress" hidden>
                 <div class="np-track"><div id="np-fill" class="np-fill"></div></div>
                 <div class="np-times">
@@ -55,14 +46,13 @@
                 </div>
               </div>
               <p id="np-status" class="np-status" hidden>Paused</p>
-              <p id="np-rooms" class="np-rooms" hidden></p>
             </div>
           </div>
+          <p id="np-howto" class="np-howto"></p>
         </section>
 
-        <!-- The rooms, a plain list of rows. -->
-        <section id="rooms-section" class="section panel" aria-labelledby="rooms-h">
-          <h2 id="rooms-h" class="section-h">Rooms</h2>
+        <!-- The rooms: name and state, Only here, the switch, the slider. -->
+        <section id="rooms-section" class="section panel" aria-label="Rooms">
           <ul id="rooms" class="rooms"></ul>
         </section>
 
@@ -93,46 +83,45 @@
 
           <div id="frame-controls" class="frame-controls" hidden>
             <button id="frame-back" class="btn" type="button">Back</button>
-            <button id="frame-next" class="btn" type="button">Next piece</button>
+            <button id="frame-next" class="btn" type="button">Next picture</button>
             <details id="frame-menu" class="menu">
               <summary class="btn menu-summary">More</summary>
               <div class="menu-body">
-                <button id="frame-show" class="menu-item" type="button">Show in library</button>
-                <button id="frame-delete" class="menu-item danger" type="button">Delete this piece</button>
+                <button id="frame-show" class="menu-item" type="button">Show in Gallery</button>
+                <button id="frame-delete" class="menu-item danger" type="button">Move to trash</button>
               </div>
             </details>
           </div>
           <p id="frame-hint" class="hint" hidden>The frame takes about 30 seconds to change.</p>
-        </section>
 
-        <!-- Pinning: keep one thing on the frame for a while, or until unpinned. -->
-        <section id="pin" class="section panel" aria-labelledby="pin-h" hidden>
-          <h2 id="pin-h" class="section-h">Pin</h2>
-          <p id="pin-status" class="pin-status" role="status" hidden></p>
-          <div id="pin-current" class="pin-current" hidden>
-            <button id="pin-unpin" class="btn danger" type="button">Unpin</button>
+          <!-- Keep showing: one tap pins this image until unpinned (the button
+               then reads Unpin). "For how long..." opens the full choice. The
+               whole block is gone when the hub has no frame-control document. -->
+          <div id="pin" class="keep" hidden>
+            <p id="pin-status" class="pin-status" role="status" hidden></p>
+            <button id="keep-toggle" class="btn keep-toggle" type="button">Keep showing this</button>
+            <details id="keep-more" class="keep-more">
+              <summary class="keep-more-summary">For how long...</summary>
+              <div id="pin-form" class="pin-form">
+                <label class="field">Keep
+                  <select id="pin-what" class="select">
+                    <option value="art">this image</option>
+                    <option value="weather">the weather</option>
+                    <option value="now_playing">now playing</option>
+                  </select>
+                </label>
+                <label class="field">for
+                  <select id="pin-duration" class="select">
+                    <option value="1h">1 hour</option>
+                    <option value="4h">4 hours</option>
+                    <option value="morning">until morning</option>
+                    <option value="forever">until I unpin</option>
+                  </select>
+                </label>
+                <button id="pin-set" class="btn" type="button">Keep it</button>
+              </div>
+            </details>
           </div>
-          <div id="pin-form" class="pin-form">
-            <label class="field">Keep
-              <select id="pin-what" class="select">
-                <option value="art">this art piece</option>
-                <option value="weather">the weather</option>
-                <option value="now_playing">now playing</option>
-              </select>
-            </label>
-            <label class="field">for
-              <select id="pin-duration" class="select">
-                <option value="1h">1 hour</option>
-                <option value="4h">4 hours</option>
-                <option value="morning">until morning</option>
-                <option value="forever">until I unpin</option>
-              </select>
-            </label>
-            <button id="pin-set" class="btn" type="button">Pin</button>
-          </div>
-          <p id="pin-unavailable" class="empty" hidden>
-            Frame settings are not available right now. The frame is running on its own.
-          </p>
         </section>
 
         <!-- The frame's art history, each entry deletable. -->
@@ -140,66 +129,189 @@
           <h2 id="ah-h" class="section-h">Art history</h2>
           <ul id="art-history" class="rows"></ul>
         </section>
+
+        <!-- Frame settings: every field saves itself. Now playing kinds, quiet
+             hours, morning weather and the weather city, then rotation. -->
+        <section id="frame-settings" class="section panel" aria-labelledby="fs-h">
+          <h2 id="fs-h" class="section-h">Frame settings</h2>
+          <p id="fs-unavailable" class="empty" hidden>
+            Frame settings are not available right now. The frame is running on its own.
+          </p>
+          <div id="fs-body" class="fs-body" hidden>
+            <div class="settings-group">
+              <div class="group-head">
+                <span class="field-label">Now playing on the frame</span>
+                <span class="save-status" data-status="kinds" role="status"></span>
+              </div>
+              <p class="settings-note">Choose which kinds of audio take over the frame while they play.</p>
+              <div id="fs-kinds" class="chips" role="group" aria-label="Kinds that take the frame"></div>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-head">
+                <label class="switch-field">
+                  <input id="fs-quiet-enabled" type="checkbox" class="switch-input" />
+                  <span class="field-label">Quiet hours</span>
+                </label>
+                <span class="save-status" data-status="quiet" role="status"></span>
+              </div>
+              <p id="fs-quiet-note" class="settings-note">During quiet hours the frame dims and stops changing.</p>
+              <div id="fs-quiet-times" class="time-row">
+                <label class="field">From
+                  <input id="fs-quiet-start" class="text time-input" type="time" />
+                </label>
+                <label class="field">to
+                  <input id="fs-quiet-end" class="text time-input" type="time" />
+                </label>
+              </div>
+              <button id="fs-quiet-reset" class="link-btn" type="button" hidden>Use the default hours</button>
+              <p id="fs-quiet-error" class="fs-error" role="alert" hidden></p>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-head">
+                <label class="switch-field">
+                  <input id="fs-morning-enabled" type="checkbox" class="switch-input" />
+                  <span class="field-label">Morning weather</span>
+                </label>
+                <span class="save-status" data-status="morning" role="status"></span>
+              </div>
+              <div id="fs-morning-times" class="morning-times">
+                <div class="time-row">
+                  <span class="time-row-label">Weekdays</span>
+                  <input id="fs-weekday-start" class="text time-input" type="time" aria-label="Weekday morning start" />
+                  <span class="time-row-to">to</span>
+                  <input id="fs-weekday-end" class="text time-input" type="time" aria-label="Weekday morning end" />
+                </div>
+                <div class="time-row">
+                  <span class="time-row-label">Weekends</span>
+                  <input id="fs-weekend-start" class="text time-input" type="time" aria-label="Weekend morning start" />
+                  <span class="time-row-to">to</span>
+                  <input id="fs-weekend-end" class="text time-input" type="time" aria-label="Weekend morning end" />
+                </div>
+              </div>
+              <p id="fs-morning-error" class="fs-error" role="alert" hidden></p>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-head">
+                <label class="field-label" for="fs-weather-input">Weather city</label>
+                <span class="save-status" data-status="city" role="status"></span>
+              </div>
+              <p class="settings-note">
+                The city the frame shows the morning forecast for. The house looks it
+                up; only the city name leaves your network. Leave it empty to use
+                the frame's own setting.
+              </p>
+              <input id="fs-weather-input" class="text" type="text"
+                     placeholder="San Diego, CA"
+                     maxlength="100" autocomplete="off" />
+              <p id="fs-weather-error" class="fs-error" role="alert" hidden></p>
+            </div>
+          </div>
+
+          <!-- Rotation: how often the frame changes art, and which folders rotate. -->
+          <div id="rotation" class="settings-group" hidden>
+            <div class="group-head">
+              <span class="field-label">How often the art changes</span>
+              <span class="save-status" data-status="rotation" role="status"></span>
+            </div>
+            <p id="art-rotation-summary" class="rotation-summary"></p>
+            <label class="field">Change every
+              <select id="art-interval" class="select"></select>
+            </label>
+            <div class="chips-field">
+              <span class="field-label">Folders to show</span>
+              <div id="art-folder-chips" class="chips" role="group" aria-label="Folders to show"></div>
+            </div>
+          </div>
+        </section>
       </section>
 
-      <!-- Art: the library, folders, upload, and trash. -->
-      <section class="screen" id="screen-art" aria-label="Art" hidden>
-        <!-- The library, collapsed and paged. -->
-        <section id="library" class="section panel" aria-labelledby="lib-h" hidden>
-          <h2 id="lib-h" class="section-h">Library</h2>
-          <details id="library-details" class="library">
-            <summary class="library-summary">
-              <span id="library-count" class="library-count">Library</span>
-            </summary>
+      <!-- Gallery: the grid, the image viewer, upload, folders, and trash. -->
+      <section class="screen" id="screen-gallery" aria-label="Gallery" hidden>
+        <div id="gallery-grid-view">
+          <section id="library" class="section panel" aria-labelledby="lib-h" hidden>
+            <h2 id="lib-h" class="section-h">Gallery</h2>
+            <p id="library-count" class="library-count">Gallery</p>
             <div class="library-body">
               <label class="field">Show
                 <select id="art-folder-filter" class="select"></select>
               </label>
               <ul id="art-grid" class="grid"></ul>
-              <p id="art-grid-empty" class="empty" hidden>No pieces here yet.</p>
+              <p id="art-grid-empty" class="empty" hidden>No pictures here yet.</p>
               <div id="library-pager" class="pager" hidden>
                 <button id="lib-prev" class="btn" type="button">Previous</button>
                 <span id="lib-page" class="pager-label" role="status"></span>
                 <button id="lib-next" class="btn" type="button">Next</button>
               </div>
             </div>
-          </details>
-        </section>
+          </section>
 
-        <!-- Upload, with folder management. -->
-        <section id="upload" class="section panel" aria-labelledby="up-h" hidden>
-          <h2 id="up-h" class="section-h">Upload</h2>
-          <div class="upload-row">
-            <label class="field">Add to
-              <select id="art-upload-folder" class="select"></select>
-            </label>
-            <label class="btn file-btn">
-              Choose images
-              <input id="art-upload-input" class="file-input" type="file" accept="image/*" multiple />
-            </label>
+          <!-- Upload with its target folder, then the folder manager. -->
+          <section id="upload" class="section panel" aria-labelledby="up-h" hidden>
+            <h2 id="up-h" class="section-h">Add pictures</h2>
+            <div class="upload-row">
+              <label class="field">Add to
+                <select id="art-upload-folder" class="select"></select>
+              </label>
+              <label class="btn file-btn">
+                Choose images
+                <input id="art-upload-input" class="file-input" type="file" accept="image/*" multiple />
+              </label>
+            </div>
+            <ul id="art-upload-progress" class="upload-progress"></ul>
+
+            <details id="art-folders" class="folders">
+              <summary class="sub-h">Manage folders</summary>
+              <form id="art-folder-create" class="folder-create">
+                <input id="art-folder-name" class="text" type="text" placeholder="New folder name"
+                       maxlength="40" aria-label="New folder name" />
+                <button class="btn" type="submit">Create</button>
+              </form>
+              <ul id="art-folder-list" class="folder-list"></ul>
+            </details>
+          </section>
+
+          <!-- Trash, restorable for 30 days. -->
+          <section id="trash" class="section panel" aria-labelledby="tr-h" hidden>
+            <h2 id="tr-h" class="section-h">Trash</h2>
+            <p class="settings-note">Pictures in the trash can be restored for 30 days.</p>
+            <ul id="art-trash-list" class="rows"></ul>
+            <p id="art-trash-empty" class="empty" hidden>Trash is empty.</p>
+          </section>
+        </div>
+
+        <!-- The viewer: one picture, large, with its actions. It has its own
+             hash entry (#gallery/<id>), so Back closes it. -->
+        <section id="gallery-viewer" class="viewer" aria-label="Picture" hidden>
+          <div class="viewer-top">
+            <button id="viewer-close" class="btn btn-ghost" type="button">Back to gallery</button>
+            <span id="viewer-position" class="viewer-position" role="status"></span>
           </div>
-          <ul id="art-upload-progress" class="upload-progress"></ul>
-
-          <details id="art-folders" class="folders">
-            <summary class="sub-h">Folders</summary>
-            <form id="art-folder-create" class="folder-create">
-              <input id="art-folder-name" class="text" type="text" placeholder="New folder name"
-                     maxlength="40" aria-label="New folder name" />
-              <button class="btn" type="submit">Create</button>
-            </form>
-            <ul id="art-folder-list" class="folder-list"></ul>
-          </details>
-        </section>
-
-        <!-- Trash, restorable for 30 days. -->
-        <section id="trash" class="section panel" aria-labelledby="tr-h" hidden>
-          <h2 id="tr-h" class="section-h">Trash</h2>
-          <ul id="art-trash-list" class="rows"></ul>
-          <p id="art-trash-empty" class="empty" hidden>Trash is empty.</p>
+          <div id="viewer-stage" class="viewer-stage">
+            <button id="viewer-prev" class="viewer-step viewer-prev" type="button" aria-label="Previous picture">&#8249;</button>
+            <img id="viewer-image" class="viewer-image" alt="" decoding="async" />
+            <button id="viewer-next" class="viewer-step viewer-next" type="button" aria-label="Next picture">&#8250;</button>
+          </div>
+          <div class="viewer-meta">
+            <span id="viewer-title" class="viewer-title"></span>
+            <span id="viewer-sub" class="viewer-sub"></span>
+          </div>
+          <div id="viewer-actions" class="viewer-actions">
+            <button id="viewer-show" class="btn" type="button">Show on the frame</button>
+            <button id="viewer-pin" class="btn" type="button">Keep it there</button>
+            <label class="viewer-move">
+              <span class="viewer-move-label">Move to</span>
+              <select id="viewer-move" class="select" aria-label="Move to folder"></select>
+            </label>
+            <button id="viewer-trash" class="btn danger" type="button">Move to trash</button>
+          </div>
+          <p id="viewer-note" class="settings-note" hidden></p>
         </section>
       </section>
 
-      <!-- Settings: what takes the frame, rotation, quiet hours, morning weather. -->
+      <!-- Settings: Phones only, plus machines that are not set up yet. -->
       <section class="screen" id="screen-settings" aria-label="Settings" hidden>
         <!-- Pair a phone: make the hub discoverable for a short window. The hub
              accepts the first phone that asks, so there is no code to read here:
@@ -232,8 +344,8 @@
           <!-- Contact with the pairing service is lost (it restarted or crashed):
                a plain message and a way to retry or close, never a dead window. -->
           <div id="pair-lost" class="pair-view" hidden>
-            <p class="pair-lost-text">Lost contact with the pairing service.</p>
-            <p class="settings-note">The window may still be open on the hub. It closes on its own.</p>
+            <p class="pair-lost-text">Lost contact while pairing.</p>
+            <p class="settings-note">Pairing may still be open on the speaker. It closes on its own.</p>
             <div class="pair-actions">
               <button id="pair-retry" class="btn" type="button">Try again</button>
               <button id="pair-close" class="btn btn-ghost" type="button">Close</button>
@@ -263,124 +375,23 @@
             <button id="dev-reminder-dismiss" class="btn btn-small dev-btn" type="button">Got it</button>
           </p>
           <ul id="dev-list" class="rows dev-rows" aria-label="Paired phones"></ul>
-          <p id="dev-loading" class="empty">Checking the hub.</p>
+          <p id="dev-loading" class="empty">Looking for paired phones.</p>
           <p id="dev-empty" class="empty" hidden>No phones are paired yet. Use Pair a phone above.</p>
-          <p id="dev-stale" class="settings-note" hidden>Cannot reach the hub. Showing the last list.</p>
+          <p id="dev-stale" class="settings-note" hidden>Can't refresh the list right now. Showing the last one.</p>
           <p id="dev-error" class="fs-error" role="alert" hidden></p>
         </section>
 
-        <!-- Now playing on the frame: one toggle per kind of audio. -->
-        <section id="frame-settings" class="section panel" aria-labelledby="fs-h">
-          <h2 id="fs-h" class="section-h">Now playing on the frame</h2>
-          <p id="fs-unavailable" class="empty" hidden>
-            Frame settings are not available right now. The frame is running on its own.
-          </p>
-          <div id="fs-body" class="fs-body" hidden>
-            <p class="settings-note">Choose which kinds of audio take over the frame while they play.</p>
-            <div id="fs-kinds" class="chips" role="group" aria-label="Kinds that take the frame"></div>
-
-            <div class="settings-group">
-              <span class="field-label">Quiet hours</span>
-              <div class="time-row">
-                <label class="field">From
-                  <input id="fs-quiet-start" class="text time-input" type="time" />
-                </label>
-                <label class="field">to
-                  <input id="fs-quiet-end" class="text time-input" type="time" />
-                </label>
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <label class="switch-field">
-                <input id="fs-morning-enabled" type="checkbox" class="switch-input" />
-                <span class="field-label">Morning weather</span>
-              </label>
-              <div id="fs-morning-times" class="morning-times">
-                <div class="time-row">
-                  <span class="time-row-label">Weekdays</span>
-                  <input id="fs-weekday-start" class="text time-input" type="time" aria-label="Weekday morning start" />
-                  <span class="time-row-to">to</span>
-                  <input id="fs-weekday-end" class="text time-input" type="time" aria-label="Weekday morning end" />
-                </div>
-                <div class="time-row">
-                  <span class="time-row-label">Weekends</span>
-                  <input id="fs-weekend-start" class="text time-input" type="time" aria-label="Weekend morning start" />
-                  <span class="time-row-to">to</span>
-                  <input id="fs-weekend-end" class="text time-input" type="time" aria-label="Weekend morning end" />
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <span class="field-label">Weather city</span>
-              <p class="settings-note">
-                The city the frame shows the morning forecast for. The hub looks it
-                up; only the city name leaves your network.
-              </p>
-              <p id="fs-weather-current" class="weather-current">Not set</p>
-              <div class="weather-row">
-                <input id="fs-weather-input" class="text" type="text"
-                       placeholder="San Diego, CA" aria-label="Weather city"
-                       maxlength="100" autocomplete="off" />
-                <button id="fs-weather-save" class="btn" type="button">Save</button>
-                <button id="fs-weather-clear" class="btn btn-ghost" type="button">Clear</button>
-              </div>
-              <p id="fs-weather-error" class="fs-error" role="alert" hidden></p>
-            </div>
-
-            <div class="settings-actions">
-              <button id="fs-save" class="btn" type="button">Save frame settings</button>
-              <p id="fs-error" class="fs-error" role="alert" hidden></p>
-            </div>
-          </div>
+        <!-- Machines that stopped answering or failed a check, with the plain reason. -->
+        <section id="needs-attention" class="section panel" aria-labelledby="na-h" hidden>
+          <h2 id="na-h" class="section-h">Needs attention</h2>
+          <ul id="needs-attention-list" class="rows" aria-label="Needs attention"></ul>
         </section>
 
-        <!-- Quiet hours per frame: each frame can follow the shared hours, keep
-             none, or set its own. Shown only on the new multi-frame contract. -->
-        <section id="frame-quiet" class="section panel" aria-labelledby="fq-h" hidden>
-          <h2 id="fq-h" class="section-h">Quiet hours by frame</h2>
-          <div id="fq-body" class="fs-body">
-            <label class="field" id="fq-frame-field" hidden>Frame
-              <select id="fq-frame" class="select"></select>
-            </label>
-            <p class="settings-note">
-              Each frame can keep its own quiet hours, or follow the shared hours above.
-              During quiet hours the frame dims and stops changing.
-            </p>
-            <label class="field">Quiet hours
-              <select id="fq-mode" class="select">
-                <option value="shared">Follow the shared hours</option>
-                <option value="off">No quiet hours</option>
-                <option value="custom">Set custom hours</option>
-              </select>
-            </label>
-            <div id="fq-custom" class="time-row" hidden>
-              <label class="field">From
-                <input id="fq-start" class="text time-input" type="time" aria-label="Frame quiet hours start" />
-              </label>
-              <label class="field">to
-                <input id="fq-end" class="text time-input" type="time" aria-label="Frame quiet hours end" />
-              </label>
-            </div>
-            <div class="settings-actions">
-              <button id="fq-save" class="btn" type="button">Save quiet hours</button>
-              <p id="fq-error" class="fs-error" role="alert" hidden></p>
-            </div>
-          </div>
-        </section>
-
-        <!-- Rotation: how often the frame changes art, and which folders rotate. -->
-        <section id="rotation" class="section panel" aria-labelledby="rot-h" hidden>
-          <h2 id="rot-h" class="section-h">Rotation</h2>
-          <p id="art-rotation-summary" class="rotation-summary"></p>
-          <label class="field">Change every
-            <select id="art-interval" class="select"></select>
-          </label>
-          <div class="chips-field">
-            <span class="field-label">In rotation</span>
-            <div id="art-folder-chips" class="chips" role="group" aria-label="Folders in rotation"></div>
-          </div>
+        <!-- Parts of the house the inventory lists but that are not built yet. They
+             never raise the health banner. -->
+        <section id="not-set-up" class="section panel" aria-labelledby="nsu-h" hidden>
+          <h2 id="nsu-h" class="section-h">Not set up yet</h2>
+          <ul id="not-set-up-list" class="rows" aria-label="Not set up yet"></ul>
         </section>
       </section>
     </main>
@@ -392,6 +403,29 @@
       </div>
       <div id="sheet-links" class="sheet-links"></div>
     </dialog>
+
+    <nav id="tabs" class="tabs" aria-label="Pages">
+      <button type="button" class="tab" data-screen="listen">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12M9 18a3 3 0 1 1-3-3 3 3 0 0 1 3 3zm10-2a3 3 0 1 1-3-3 3 3 0 0 1 3 3z"/></svg>
+        <span>Listen</span>
+      </button>
+      <button type="button" class="tab" data-screen="frame" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 15l3-3 2 2 3-3"/></svg>
+        <span>Frame</span>
+      </button>
+      <button type="button" class="tab" data-screen="gallery">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+        <span>Gallery</span>
+      </button>
+      <button type="button" class="tab" data-screen="climate" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7l14 10M19 7L5 17"/></svg>
+        <span>Climate</span>
+      </button>
+      <button type="button" class="tab" data-screen="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 

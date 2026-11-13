@@ -108,7 +108,7 @@ html {
 
 body {
   margin: 0 auto;
-  padding: 0 var(--gutter-r) calc(32px + env(safe-area-inset-bottom)) var(--gutter-l);
+  padding: 0 var(--gutter-r) calc(88px + env(safe-area-inset-bottom)) var(--gutter-l);
   max-width: var(--page);
   background:
     radial-gradient(120% 70% at 0% 0%, oklch(0.36 calc(0.09 * var(--k)) var(--h)), transparent 60%),
@@ -126,7 +126,7 @@ a {
   color: var(--accent);
 }
 
-/* --- Top bar and the section drawer -------------------------------------- */
+/* --- Top bar and the tab bar -------------------------------------- */
 
 .topbar {
   position: sticky;
@@ -140,40 +140,11 @@ a {
   background: linear-gradient(oklch(0.15 calc(0.03 * var(--k)) var(--h) / 0.55) 70%, transparent);
 }
 
-.menu-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  margin-left: -10px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-}
-
-.menu-button svg {
-  width: 24px;
-  height: 24px;
-}
-
 .house {
   margin: 0;
   font-size: 1.15rem;
   font-weight: 600;
   letter-spacing: 0.01em;
-}
-
-/* The current screen's name, quiet, to the right of the title. */
-.screen-title {
-  margin-left: auto;
-  color: var(--ink-2);
-  font-size: 0.95rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
 }
 
 /* Each screen is a stack of panels. */
@@ -183,59 +154,54 @@ a {
   align-content: start;
 }
 
-/* The current screen, marked in the drawer. */
-.drawer-link.current {
+/* The tab bar: fixed to the bottom on a phone, a left rail on the kiosk. */
+.tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  padding: 6px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  background: oklch(0.18 calc(0.02 * var(--k)) var(--h) / 0.78);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  backdrop-filter: blur(24px) saturate(1.3);
+  border-top: 1px solid var(--line-strong);
+}
+
+.tab {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab svg {
+  width: 24px;
+  height: 24px;
+}
+
+.tab[aria-current="page"] {
   background: var(--fill);
   color: var(--accent);
 }
 
-.drawer {
-  margin: 0;
-  padding: 0;
-  border: none;
-  width: min(84vw, 300px);
-  max-width: 300px;
-  height: 100dvh;
-  max-height: 100dvh;
-  inset: 0 auto 0 0; /* pinned to the left edge */
-  border-radius: 0 24px 24px 0;
-  background: oklch(0.18 calc(0.02 * var(--k)) var(--h) / 0.78);
-  -webkit-backdrop-filter: blur(24px) saturate(1.3);
-  backdrop-filter: blur(24px) saturate(1.3);
-  color: var(--ink);
-  box-shadow: var(--shadow);
-}
-
-.drawer::backdrop {
-  background: oklch(0 0 0 / 0.5);
-}
-
-.drawer-nav {
-  display: flex;
-  flex-direction: column;
-  padding: max(16px, env(safe-area-inset-top)) 12px 16px;
-  gap: 2px;
-}
-
-.drawer-title {
-  margin: 0 0 8px;
-  padding: 0 12px;
-  color: var(--ink-2);
-  font-size: 0.85rem;
-}
-
-.drawer-link {
-  appearance: none;
-  text-align: left;
-  min-height: 48px;
-  padding: 0 12px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-size: 1.05rem;
-  cursor: pointer;
+.tab[hidden] {
+  display: none;
 }
 
 /* --- Press feedback, hover and focus, shared ------------------------------ */
@@ -243,11 +209,10 @@ a {
 .btn,
 .btn-ghost,
 .toggle,
-.menu-button,
-.drawer-link,
+.tab,
 .frame-tab,
 .chip,
-.tile,
+.tile-open,
 .row-link,
 .row-tappable,
 .menu-item,
@@ -263,11 +228,10 @@ a {
 .btn:active,
 .btn-ghost:active,
 .toggle:active,
-.menu-button:active,
-.drawer-link:active,
+.tab:active,
 .frame-tab:active,
 .chip:active,
-.tile:active,
+.tile-open:active,
 .row-link:active,
 .row-tappable:active,
 .menu-item:active,
@@ -283,8 +247,7 @@ a {
   }
 
   .btn-ghost:hover:not(:disabled),
-  .menu-button:hover,
-  .drawer-link:hover,
+  .tab:not([aria-current]):hover,
   .menu-item:hover,
   .sheet-link:hover,
   .frame-tab:not(.current):hover,
@@ -549,21 +512,25 @@ a.frame-title {
   color: var(--red-text);
 }
 
-/* --- Now playing --------------------------------------------------------- */
+/* --- Now playing: a compact strip ---------------------------------------- */
+
+#now-playing {
+  padding: 12px 16px;
+}
 
 .np {
   display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 16px;
+  grid-template-columns: 48px 1fr;
+  gap: 12px;
   align-items: center;
 }
 
 .np-art-img,
 .np-art-ph {
   display: block;
-  width: 72px;
-  height: 72px;
-  border-radius: 12px;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
   object-fit: cover;
   background: var(--fill);
 }
@@ -587,44 +554,48 @@ a.frame-title {
 }
 
 .np-art-ph::before {
-  font-size: 1.9rem;
+  font-size: 1.4rem;
 }
 
 .np-info {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .np-title,
-.np-artist,
-.np-album,
-.np-rooms {
+.np-source,
+.np-howto {
   margin: 0;
   overflow-wrap: anywhere;
 }
 
 .np-title {
   font-weight: 600;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1.2;
 }
 
-.np-artist,
-.np-album {
+.np-source {
   color: var(--ink-2);
   font-size: 12.5px;
 }
 
+.np-howto {
+  color: var(--ink-2);
+  font-size: 0.95rem;
+}
+
 .np-progress {
-  margin-top: 10px;
+  margin-top: 6px;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 10px;
 }
 
 .np-track {
+  flex: 1;
   height: 4px;
   border-radius: 999px;
   background: oklch(1 0 0 / 0.12);
@@ -643,24 +614,26 @@ a.frame-title {
 
 .np-times {
   display: flex;
-  justify-content: space-between;
   gap: 10px;
   color: var(--ink-2);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
 
 .np-status {
-  margin-top: 4px;
+  margin: 2px 0 0;
   color: var(--ink-2);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
 }
 
-.np-rooms {
-  margin-top: 4px;
-  color: var(--accent);
-  font-size: 0.9rem;
+.everything-off[hidden] {
+  display: none;
+}
+
+.everything-off {
+  margin-left: auto;
+  min-height: 44px;
 }
 
 /* --- Rooms, as rows ------------------------------------------------------ */
@@ -670,14 +643,14 @@ a.frame-title {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 16px;
+  gap: 4px;
 }
 
 .room {
   display: grid;
   grid-template-columns: 1fr auto auto;
   grid-template-areas:
-    "label pct toggle"
+    "name only toggle"
     "volume volume volume";
   align-items: center;
   column-gap: 14px;
@@ -688,18 +661,54 @@ a.frame-title {
   opacity: 0.5;
 }
 
+.room-name {
+  grid-area: name;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .room-label {
-  grid-area: label;
   font-size: 1.05rem;
   font-weight: 600;
 }
 
-/* The volume figure, driven by the slider's render callback. */
-.pct {
-  grid-area: pct;
+/* "54%", "Off" or "Not responding". */
+.room-state {
   color: var(--ink-2);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+.only-here {
+  grid-area: only;
+  min-height: 44px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--dur-press) var(--ease-out),
+    background-color 0.2s var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.only-here:active {
+  transform: scale(0.96);
+}
+
+.only-here[hidden] {
+  display: none;
+}
+
+.only-here:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* The switch: a 50x30 track with a 24px thumb that springs. The "On"/"Off" text
@@ -770,7 +779,7 @@ a.frame-title {
   position: relative;
   width: 100%;
   height: 44px;
-  margin-top: 10px;
+  margin-top: 0;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -846,33 +855,10 @@ a.frame-title {
 
 /* --- Library: collapsed, paged grid -------------------------------------- */
 
-.library-summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  cursor: pointer;
-  list-style: none;
-  font-size: 1.05rem;
-  font-weight: 600;
-}
-
-.library-summary::-webkit-details-marker {
-  display: none;
-}
-
-.library-summary::before {
-  content: "";
-  width: 9px;
-  height: 9px;
-  border-right: 2px solid var(--ink-2);
-  border-bottom: 2px solid var(--ink-2);
-  transform: rotate(-45deg);
-  transition: transform 0.15s var(--ease-out);
-}
-
-.library[open] .library-summary::before {
-  transform: rotate(45deg);
+.library-count {
+  margin: -4px 0 0;
+  color: var(--ink-2);
+  font-size: 0.95rem;
 }
 
 .library-body {
@@ -886,7 +872,7 @@ a.frame-title {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
   gap: 14px;
 }
 
@@ -915,12 +901,33 @@ a.frame-title {
   }
 }
 
+.tile-open {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tile-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
 .tile-thumb-wrap {
   position: relative;
 }
 
-.tile-thumb {
+.tile .tile-thumb {
   width: 100%;
+  height: auto;
   aspect-ratio: 1 / 1;
   object-fit: cover;
   border-radius: var(--radius-sm);
@@ -969,17 +976,6 @@ a.frame-title {
 
 .menu-summary::-webkit-details-marker {
   display: none;
-}
-
-.tile .menu-summary {
-  min-height: 36px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  font-size: 0.88rem;
-  font-weight: 600;
-  justify-content: flex-start;
 }
 
 .menu-body {
@@ -1154,7 +1150,7 @@ a.row-title {
 }
 
 .chip {
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 14px;
   border: none;
   border-radius: 999px;
@@ -1267,13 +1263,24 @@ a.row-title {
 
 .folder-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
 
+.folder-ask {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.folder-row:has(.folder-ask) {
+  flex-wrap: wrap;
+}
+
 .folder-rename {
   display: flex;
-  flex: 1;
+  flex: 1 1 200px;
   gap: 8px;
   min-width: 0;
 }
@@ -1355,12 +1362,13 @@ a.row-title {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(16px + env(safe-area-inset-bottom));
+  bottom: calc(80px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 16px;
+  width: max-content;
   max-width: calc(100vw - 32px);
   padding: 12px 16px;
   border-radius: 999px;
@@ -1373,13 +1381,14 @@ a.row-title {
 }
 
 .toast-text {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .toast-undo {
   flex: 0 0 auto;
-  min-height: 36px;
-  padding: 0 6px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 10px;
   border: none;
   background: none;
   color: var(--accent);
@@ -1395,8 +1404,32 @@ a.row-title {
   font-weight: 600;
 }
 
-.pin-current {
-  margin-bottom: 14px;
+.keep {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.keep .pin-status {
+  margin: 0;
+}
+
+.keep-toggle {
+  width: 100%;
+  min-height: 48px;
+}
+
+.keep-more-summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.keep-more[open] .keep-more-summary {
+  margin-bottom: 6px;
 }
 
 .pin-form {
@@ -1489,28 +1522,60 @@ a.row-title {
   gap: 10px 14px;
 }
 
-.weather-current {
-  margin: 0;
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.weather-row {
+/* A group's title row: the label on the left, its save status on the right. */
+.group-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
+  justify-content: space-between;
+  gap: 4px 12px;
+  min-height: 28px;
 }
 
-.weather-row .text {
-  flex: 1 1 200px;
-  min-width: 160px;
+/* "Saved" for a moment after a write lands; "Couldn't save. Retry" stays until
+   it is sent again. Empty while nothing is worth saying. */
+.save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--ink-2);
+  font-size: 0.9rem;
 }
 
-/* A secondary action (Clear) that reads as lighter than the primary Save. */
-.btn-ghost {
+.save-status:empty {
+  display: none;
+}
+
+.save-status.failed {
+  color: var(--red-text);
+  font-weight: 600;
+}
+
+/* A small text-style action; the tap target is still 44 px tall. */
+.link-btn {
+  justify-self: start;
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.95rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.save-retry {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   background: var(--fill);
   color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .fs-error {
@@ -1633,8 +1698,51 @@ a.row-title {
 @media (min-width: 720px) and (max-height: 540px) {
   body {
     max-width: 960px;
-    --gutter-l: max(24px, env(safe-area-inset-left));
+    --rail: 88px;
+    --gutter-l: calc(var(--rail) + 20px);
     --gutter-r: max(24px, env(safe-area-inset-right));
+    padding-bottom: 8px;
+  }
+
+  /* A shown banner is one tight line so four rooms still fit without scrolling. */
+  .banner {
+    margin: 4px 0;
+    padding: 6px 12px;
+    font-size: 0.85rem;
+  }
+
+  /* Only the first shown banner fits on the kiosk; a second would push the last room off screen. */
+  .banner:not([hidden]) ~ .banner:not([hidden]) {
+    display: none;
+  }
+
+  /* The tabs become a vertical rail down the left edge. */
+  .tabs {
+    top: 0;
+    right: auto;
+    width: var(--rail);
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 8px;
+    border-top: none;
+    border-right: 1px solid var(--line-strong);
+    background: oklch(0.2 0.02 var(--h) / 0.72);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+    min-height: 56px;
+  }
+
+  /* Bottom left, clear of the rooms column, so it never covers a room row. */
+  .toast {
+    left: 12px;
+    transform: none;
+    bottom: 16px;
+    max-width: 420px;
   }
 
   /* Two columns on Listen: now playing and the play history on the left, the
@@ -1661,12 +1769,22 @@ a.row-title {
     grid-area: rooms;
   }
 
+  /* Four rooms with their sliders fit 480px: the chip stays at 44px and the
+     rooms panel is tighter than the other panels. */
+  #rooms-section {
+    padding-block: 8px;
+  }
+
+  .rooms {
+    gap: 0;
+  }
+
   /* Each column's first section sits at the top of its column, so the shared
      top hairline would read as a stray rule: drop it. */
   /* The Frame, Art, and Settings screens stay one readable column, centered, so
      the mirror and forms do not stretch the full panel width. */
   #screen-frame,
-  #screen-art,
+  #screen-gallery,
   #screen-settings {
     max-width: 600px;
     margin-inline: auto;
@@ -1699,10 +1817,6 @@ a.row-title {
     --tp: 9px;
   }
 
-  .menu-button {
-    width: 48px;
-    height: 48px;
-  }
 }
 
 
@@ -1833,4 +1947,171 @@ a.row-title {
 
 .dev-btn.danger {
   color: var(--red-text);
+}
+
+
+/* --- Gallery viewer ------------------------------------------------------ */
+
+.viewer {
+  display: grid;
+  gap: 12px;
+}
+
+.viewer[hidden] {
+  display: none;
+}
+
+.viewer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.viewer-position {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  border-radius: var(--radius);
+  background: var(--fill);
+  touch-action: pan-y;
+  overflow: hidden;
+}
+
+.viewer-image {
+  display: block;
+  max-width: 100%;
+  max-height: 52vh;
+  object-fit: contain;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.viewer-step {
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+  width: 44px;
+  height: 64px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: oklch(0.2 calc(0.02 * var(--k)) var(--h) / 0.55);
+  color: var(--on-accent);
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.viewer-prev {
+  left: 6px;
+}
+
+.viewer-next {
+  right: 6px;
+}
+
+.viewer-step:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.viewer-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.viewer-title a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.viewer-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.viewer-sub {
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+.viewer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viewer-move {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.viewer-move-label {
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+@media (min-width: 720px) and (max-height: 540px) {
+  /* The panel: the picture on the left, name and actions in a column beside it,
+     so nothing needs the page to scroll. */
+  .viewer {
+    grid-template-columns: minmax(0, 1fr) 220px;
+    grid-template-areas:
+      "top top"
+      "stage meta"
+      "stage actions"
+      "stage note";
+    align-items: start;
+    gap: 8px 16px;
+  }
+
+  .viewer-top {
+    grid-area: top;
+  }
+
+  .viewer-stage {
+    grid-area: stage;
+    min-height: 0;
+    height: calc(100vh - 150px);
+  }
+
+  .viewer-image {
+    max-height: calc(100vh - 150px);
+  }
+
+  .viewer-meta {
+    grid-area: meta;
+  }
+
+  .viewer-actions {
+    grid-area: actions;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .viewer-actions .btn,
+  .viewer-actions .select {
+    width: 100%;
+  }
+
+  .viewer-move {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+
+  #viewer-note {
+    grid-area: note;
+    margin: 0;
+  }
 }

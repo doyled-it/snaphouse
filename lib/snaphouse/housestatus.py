@@ -290,7 +290,15 @@ def aggregate(targets: list[dict], fetch: Fetch, now: Now) -> dict:
             status = fetch(target["url"])
         except Exception:
             status = None
-        machines.append({"name": target["name"], "status": status})
+        machines.append(
+            {
+                "name": target["name"],
+                "status": status,
+                # From the inventory, not from history: a host that is not built
+                # yet is "not set up", while one that stops answering is trouble.
+                "installed": target.get("installed", True) is not False,
+            }
+        )
     return {"checked_at": now().isoformat(), "machines": machines}
 
 

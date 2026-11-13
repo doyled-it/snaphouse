@@ -35,7 +35,7 @@ export function safeJsonParse(text) {
 //   - a JSON-RPC error field throws its message.
 export function interpretRpcResponse(ok, text) {
   if (!ok) {
-    throw new Error("snapserver is not reachable");
+    throw new Error("The speakers are not reachable");
   }
   const body = safeJsonParse(text);
   if (body === null) {
@@ -125,37 +125,6 @@ export function volumeRequest(id, percent) {
     method: "Client.SetVolume",
     params: { id, volume: { percent: clamped } },
   };
-}
-
-// The health line, or null when the whole house is well.
-//
-// One entry per host: { host, status } where status is the parsed status.json
-// object, or null when the fetch failed. The host name travels with the status
-// because an unreachable host has no body to read its own name from. A host is
-// troubled when it is unreachable, its last verify did not pass, or the commit
-// it is running is not the main commit it last saw (an apply in flight or stuck).
-export function healthBanner(statuses) {
-  const troubled = statuses.filter(isTroubled).map((entry) => entry.host);
-  if (troubled.length === 0) {
-    return null;
-  }
-  const names = troubled.join(", ");
-  const verb = troubled.length === 1 ? "needs" : "need";
-  return `${names} ${verb} attention`;
-}
-
-function isTroubled(entry) {
-  const status = entry.status;
-  if (!status) {
-    return true;
-  }
-  if (status.verify !== "pass") {
-    return true;
-  }
-  if (status.commit !== status.main_commit) {
-    return true;
-  }
-  return false;
 }
 
 // The art shown on the nightstand frame, for the "On the frame" section.
@@ -676,10 +645,10 @@ export function rotationSummary(index, control) {
   const pieces = index?.pieces ?? [];
   const count = pieces.filter((piece) => enabled.has(piece.folder) && piece.landscape).length;
   if (count === 0) {
-    return { count: 0, empty: true, text: "Nothing is in rotation." };
+    return { count: 0, empty: true, text: "No pictures will be shown. Turn on a folder." };
   }
-  const noun = count === 1 ? "piece" : "pieces";
-  return { count, empty: false, text: `${count} ${noun} in rotation.` };
+  const noun = count === 1 ? "picture" : "pictures";
+  return { count, empty: false, text: `${count} ${noun} will be shown.` };
 }
 
 // Decide whether a library refresh may rebuild the grid right now. Rebuilding
@@ -847,6 +816,18 @@ export function trashRestoreId(trash, target) {
     .filter((e) => e && e.original === target && typeof e.id === "string" && e.id.length > 0)
     .sort((a, b) => (Date.parse(b.deletedAt || "") || 0) - (Date.parse(a.deletedAt || "") || 0));
   return matches.length > 0 ? matches[0].id : null;
+}
+
+// The id a piece has after a move into `folder`, found in the fresh index by its
+// file name, or null when it is not there (a name collision renames it, so the
+// caller then points the owner at the folder instead of guessing).
+export function movedPieceId(index, folder, piece) {
+  if (!index || !Array.isArray(index.pieces) || !piece || typeof piece.file !== "string") {
+    return null;
+  }
+  const base = (name) => String(name).split("/").pop();
+  const hit = index.pieces.find((p) => p.folder === folder && base(p.file) === base(piece.file));
+  return hit ? hit.id : null;
 }
 
 // The frame mirror's visibility and "Updated" caption, from the hub's
@@ -1021,9 +1002,9 @@ export function openInLinks(play) {
 // /api/frame/* endpoints take. All pure, so the view glue in rooms.js stays a
 // thin DOM layer, exactly as the rest of the model is split.
 
-// The four screens the hamburger drawer switches between, each addressed by the
+// The screens the tab bar switches between, each addressed by the
 // URL hash so Back and refresh keep the screen (design "Page: screens").
-export const SCREENS = ["listen", "frame", "art", "settings"];
+export const SCREENS = ["listen", "frame", "gallery", "climate", "settings"];
 
 // The default screen when the hash is empty or unknown (design: Listen).
 const DEFAULT_SCREEN = "listen";
@@ -1037,7 +1018,9 @@ export function screenFromHash(hash) {
   if (typeof hash !== "string") {
     return DEFAULT_SCREEN;
   }
-  const name = hash.replace(/^#/, "").split("/")[0].toLowerCase();
+  const raw = hash.replace(/^#/, "").split("/")[0].toLowerCase();
+  // "#art" is the old name of the Gallery screen.
+  const name = raw === "art" ? "gallery" : raw;
   return SCREENS.includes(name) ? name : DEFAULT_SCREEN;
 }
 
@@ -1186,6 +1169,37 @@ export function frameQuietHoursBody(frame, override) {
     return { ok: false, error: "Use 24-hour times like 07:30 for quiet hours." };
   }
   return { ok: true, value: { frame, quiet_hours: quiet } };
+}
+
+// The one quiet-hours control a frame shows. A frame follows the shared window
+// until it has an override of its own; an override is a window or
+// { enabled: false }. Off keeps the shared times so switching back on has
+// something sensible to show.
+export function effectiveQuietHours(shared, override) {
+  if (override && override.enabled === false) {
+    return { enabled: false, start: shared.start, end: shared.end };
+  }
+  if (override && isClock(override.start) && isClock(override.end)) {
+    return { enabled: true, start: override.start, end: override.end };
+  }
+  return { enabled: true, start: shared.start, end: shared.end };
+}
+
+// The override stored for the switch and the two times (null for a reset, so
+// the frame follows the default hours again), or undefined while a
+// time is missing or not a 24-hour clock time (the view then shows the error
+// and does not write).
+export function quietOverrideFromFields({ enabled, start, end, reset }) {
+  if (reset) {
+    return null;
+  }
+  if (!enabled) {
+    return { enabled: false };
+  }
+  if (isClock(start) && isClock(end)) {
+    return { start, end };
+  }
+  return undefined;
 }
 
 // A sentinel distinct from null so "fall back to shared" (null) never collides
@@ -1484,7 +1498,7 @@ export function pinSummary(pin, nowMs) {
 }
 
 const PIN_WHAT_LABELS = {
-  art: "this art piece",
+  art: "this picture",
   weather: "weather",
   now_playing: "now playing",
 };
@@ -1565,6 +1579,52 @@ export function frameUnpinBody(frame) {
   return { frame };
 }
 
+// The body the one-tap "Keep showing this" sends: pin the frame's current image
+// until it is unpinned. The same body the full form sends for "this art piece /
+// until I unpin", or null for a malformed frame id.
+export function keepShowingBody(frame) {
+  return framePinBody(frame, "art", "forever");
+}
+
+// The body that puts a pin back after Unpin was tapped by mistake: the same
+// target, for the shortest fixed duration that covers the time it had left
+// (until you unpin stays until you unpin). Null without a pin.
+export function repinBody(frame, pin, nowMs) {
+  if (!pin || typeof pin !== "object") {
+    return null;
+  }
+  let duration = "forever";
+  if (pin.until !== null && pin.until !== undefined) {
+    const left = Date.parse(pin.until) - nowMs;
+    if (Number.isNaN(left)) {
+      duration = "morning";
+    } else if (left <= 60 * 60000) {
+      duration = "1h";
+    } else if (left <= 4 * 60 * 60000) {
+      duration = "4h";
+    } else {
+      duration = "morning";
+    }
+  }
+  return framePinBody(frame, pin.what, duration);
+}
+
+// What the Frame tab's Keep showing control looks like: hidden without the
+// frame-control document, "Keep showing this" with no pin, "Unpin" while one is
+// held. `pin` is the chosen frame's pin (already cleared once it has expired).
+export function pinControlState(frameControl, pin, showingArt = true) {
+  // The pin always holds art, so while another screen (now playing) is on the
+  // glass the label says "art" rather than promise to keep that screen.
+  const keep = showingArt ? "Keep showing this" : "Keep showing art";
+  if (!frameControl || !frameControl.available) {
+    return { visible: false, pinned: false, label: keep };
+  }
+  if (pin) {
+    return { visible: true, pinned: true, label: "Unpin" };
+  }
+  return { visible: true, pinned: false, label: keep };
+}
+
 // A 24-hour HH:MM clock string (00:00 to 23:59), the format the hub stores and
 // the page sends. Anything else (a single-digit hour, an out-of-range value, a
 // different separator) is rejected.
@@ -1611,10 +1671,8 @@ function clock12FromIso(iso) {
 const PAIR_STATES = ["idle", "open", "paired", "failed"];
 
 // The sentence shown while a window is open, built so the speaker name is a
-// single point of change. The page cannot learn the hub's Bluetooth name today
-// (it is in the untracked local config, never published to the page), so the
-// fallback "the house speaker" is what shows; pass a real name here the day the
-// page can read one.
+// single point of change. The page reads the name from bluetooth.json
+// (loadBluetoothName); without it the generic "the house speaker" shows.
 export function pairInstruction(speakerName) {
   const speaker =
     typeof speakerName === "string" && speakerName.trim().length > 0
@@ -1705,12 +1763,12 @@ export function interpretPairResponse(status, text, endpoint = "start") {
   const body = safeJsonParse(text);
   const reason = body && typeof body.error === "string" && body.error.length > 0 ? body.error : null;
   if (status === 403) {
-    return { ok: false, forbidden: true, error: reason || "The pairing service refused the request." };
+    return { ok: false, forbidden: true, error: reason || "That was not allowed. Try again." };
   }
   if (status === 409) {
-    return { ok: false, conflict: true, error: "The pairing window is already open." };
+    return { ok: false, conflict: true, error: "Pairing is already open." };
   }
-  return { ok: false, error: reason || `The pairing service could not be reached (${status}).` };
+  return { ok: false, error: reason || `Couldn't connect (${status}). Try again.` };
 }
 
 // After this many polls in a row with no good answer, the pairing service is
@@ -1902,7 +1960,7 @@ export function interpretDeviceResponse(status, text, kind = "disconnect") {
   const body = safeJsonParse(text);
   const reason = body && typeof body.error === "string" && body.error.length > 0 ? body.error : null;
   if (status === 403) {
-    return { ok: false, forbidden: true, error: reason || "The hub refused the request." };
+    return { ok: false, forbidden: true, error: reason || "That was not allowed. Try again." };
   }
   if (status === 404) {
     return { ok: false, gone: true, error: "That phone is no longer paired." };
@@ -1910,7 +1968,7 @@ export function interpretDeviceResponse(status, text, kind = "disconnect") {
   if (status === 409) {
     return { ok: false, stale: true, error: "That phone is not connected any more." };
   }
-  return { ok: false, error: reason || `The hub could not be reached (${status}).` };
+  return { ok: false, error: reason || `Couldn't connect (${status}). Try again.` };
 }
 
 // Which buttons a row shows. Disconnect only while connected; Forget always. While

@@ -1,0 +1,7 @@
+{#
+  The hub's Bluetooth name for the page's how-to text, built from variables only
+  (bt_receive_alias lives in /etc/snaphouse/local.yml, never in the repo). Same
+  expression as the system-alias task in roles/bluetooth. The page treats a
+  missing or malformed file as "no name".
+#}
+{"name": {{ (bt_receive_alias | default(house_stream_name, true)) | to_json }}}

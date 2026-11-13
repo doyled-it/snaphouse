@@ -149,7 +149,7 @@ test("a forget that never answers times out, clears pending and keeps the row", 
   c.askForget(PIXEL.id);
   await c.confirmForget();
   assert.equal(c.state.pending, false);
-  assert.match(c.state.error, /did not answer/i);
+  assert.match(c.state.error, /took too long/i);
   assert.equal(c.state.devices.length, 2);
 });
 

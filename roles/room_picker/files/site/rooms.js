@@ -21,7 +21,6 @@ import {
   toggleRequest,
   volumeRequest,
   groupUnmuteRequest,
-  healthBanner,
   artFromHistory,
   nowPlayingFromBody,
   progressAt,
@@ -36,6 +35,7 @@ import {
   intervalOptions,
   apiRequest,
   libraryRefreshMayRebuild,
+  movedPieceId,
   mirrorState,
   mirrorCaption,
   historyDeleteTarget,
@@ -43,15 +43,15 @@ import {
   openInLinks,
   pageCount,
   pageSlice,
-  screenFromHash,
-  SCREENS,
   FRAME_KINDS,
   frameControlAfterFetch,
   pinSummary,
   validateFrameSettings,
   framePinBody,
   frameUnpinBody,
-  weatherLocationLabel,
+  keepShowingBody,
+  pinControlState,
+  repinBody,
   weatherSaveBody,
   weatherClearBody,
   selectedFrameFrom,
@@ -60,6 +60,8 @@ import {
   frameUrls,
   artCommandBody,
   frameQuietHoursBody,
+  effectiveQuietHours,
+  quietOverrideFromFields,
   pairCountdown,
   formatCountdown,
   pairPhase,
@@ -75,12 +77,18 @@ import {
   forgetPrompt,
   forgetReminder,
 } from "./rooms-model.js";
+import { createAutosave, changedKeys, saveStatus } from "./autosave-queue.js";
+import { CLIMATE_ENABLED, frameTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
 import { createPairController } from "./pair-controller.js";
 import { createDevicesController } from "./devices-controller.js";
 import { createVolumeSlider } from "./volume-slider.js";
 import { createHaptics } from "./haptics.js";
 import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
+import { galleryHash, idAfterRemoval, pieceIdFromHash, stepIndex, swipeDirection, viewerSource, viewerState } from "./gallery-viewer.js";
+import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
+import { classifyMachines, healthMessage, reasonLabel, speakerBanner } from "./health-model.js";
+import { applyPlan, everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -118,30 +126,30 @@ const PAIR_MS = 1000;
 // The Bluetooth devices list changes at a human pace (a phone connects or
 // leaves), so it is polled every few seconds under the same visibility rule.
 const DEVICES_MS = 5000;
-// How long a toast lingers before it clears itself.
-const TOAST_MS = 7000;
 
 // Shown on the connection line when a status reply will not parse. The page
 // keeps its last good render and says so quietly rather than breaking.
-const STATUS_UNAVAILABLE_MSG = "Status unavailable; showing the last update.";
+const STATUS_UNAVAILABLE_MSG = "Can't read the latest. Showing the last update.";
 // Shown while the live WebSocket is down and the page is polling instead.
-const OFFLINE_MSG = `Live updates are offline; refreshing every ${POLL_MS / 1000} seconds.`;
+const OFFLINE_MSG = `Updates are slower than usual. Refreshing every ${POLL_MS / 1000} seconds.`;
 
 const els = {
-  menuButton: document.getElementById("menu-button"),
-  drawer: document.getElementById("drawer"),
-  drawerNav: document.getElementById("drawer-nav"),
-  screenTitle: document.getElementById("screen-title"),
+  tabs: document.getElementById("tabs"),
 
   screens: {
     listen: document.getElementById("screen-listen"),
     frame: document.getElementById("screen-frame"),
-    art: document.getElementById("screen-art"),
+    gallery: document.getElementById("screen-gallery"),
     settings: document.getElementById("screen-settings"),
   },
 
   health: document.getElementById("health"),
   connection: document.getElementById("connection"),
+  speakers: document.getElementById("speakers"),
+  needsAttention: document.getElementById("needs-attention"),
+  needsAttentionList: document.getElementById("needs-attention-list"),
+  notSetUp: document.getElementById("not-set-up"),
+  notSetUpList: document.getElementById("not-set-up-list"),
 
   frame: document.getElementById("frame"),
   frameSwitcher: document.getElementById("frame-switcher"),
@@ -160,13 +168,12 @@ const els = {
 
   pin: document.getElementById("pin"),
   pinStatus: document.getElementById("pin-status"),
-  pinCurrent: document.getElementById("pin-current"),
-  pinUnpin: document.getElementById("pin-unpin"),
+  keepToggle: document.getElementById("keep-toggle"),
+  keepMore: document.getElementById("keep-more"),
   pinForm: document.getElementById("pin-form"),
   pinWhat: document.getElementById("pin-what"),
   pinDuration: document.getElementById("pin-duration"),
   pinSet: document.getElementById("pin-set"),
-  pinUnavailable: document.getElementById("pin-unavailable"),
 
   frameSettings: document.getElementById("frame-settings"),
   fsUnavailable: document.getElementById("fs-unavailable"),
@@ -174,18 +181,18 @@ const els = {
   fsKinds: document.getElementById("fs-kinds"),
   fsQuietStart: document.getElementById("fs-quiet-start"),
   fsQuietEnd: document.getElementById("fs-quiet-end"),
+  fsQuietReset: document.getElementById("fs-quiet-reset"),
+  fsQuietEnabled: document.getElementById("fs-quiet-enabled"),
+  fsQuietNote: document.getElementById("fs-quiet-note"),
+  fsQuietError: document.getElementById("fs-quiet-error"),
   fsMorningEnabled: document.getElementById("fs-morning-enabled"),
   fsMorningTimes: document.getElementById("fs-morning-times"),
+  fsMorningError: document.getElementById("fs-morning-error"),
   fsWeekdayStart: document.getElementById("fs-weekday-start"),
   fsWeekdayEnd: document.getElementById("fs-weekday-end"),
   fsWeekendStart: document.getElementById("fs-weekend-start"),
   fsWeekendEnd: document.getElementById("fs-weekend-end"),
-  fsSave: document.getElementById("fs-save"),
-  fsError: document.getElementById("fs-error"),
-  fsWeatherCurrent: document.getElementById("fs-weather-current"),
   fsWeatherInput: document.getElementById("fs-weather-input"),
-  fsWeatherSave: document.getElementById("fs-weather-save"),
-  fsWeatherClear: document.getElementById("fs-weather-clear"),
   fsWeatherError: document.getElementById("fs-weather-error"),
 
   pairing: document.getElementById("pairing"),
@@ -215,33 +222,37 @@ const els = {
   devReminderText: document.getElementById("dev-reminder-text"),
   devReminderDismiss: document.getElementById("dev-reminder-dismiss"),
 
-  frameQuiet: document.getElementById("frame-quiet"),
-  fqFrameField: document.getElementById("fq-frame-field"),
-  fqFrame: document.getElementById("fq-frame"),
-  fqMode: document.getElementById("fq-mode"),
-  fqCustom: document.getElementById("fq-custom"),
-  fqStart: document.getElementById("fq-start"),
-  fqEnd: document.getElementById("fq-end"),
-  fqSave: document.getElementById("fq-save"),
-  fqError: document.getElementById("fq-error"),
-
-  npSection: document.getElementById("now-playing"),
   npArtImg: document.getElementById("np-art-img"),
   npArtPh: document.getElementById("np-art-ph"),
   npTitle: document.getElementById("np-title"),
-  npArtist: document.getElementById("np-artist"),
-  npAlbum: document.getElementById("np-album"),
+  np: document.getElementById("np"),
+  npSource: document.getElementById("np-source"),
+  npHowto: document.getElementById("np-howto"),
+  everythingOff: document.getElementById("everything-off"),
   npProgress: document.getElementById("np-progress"),
   npFill: document.getElementById("np-fill"),
   npElapsed: document.getElementById("np-elapsed"),
   npEnds: document.getElementById("np-ends"),
   npStatus: document.getElementById("np-status"),
-  npRooms: document.getElementById("np-rooms"),
 
   rooms: document.getElementById("rooms"),
 
   library: document.getElementById("library"),
-  libraryDetails: document.getElementById("library-details"),
+  galleryGridView: document.getElementById("gallery-grid-view"),
+  galleryViewer: document.getElementById("gallery-viewer"),
+  viewerClose: document.getElementById("viewer-close"),
+  viewerPosition: document.getElementById("viewer-position"),
+  viewerStage: document.getElementById("viewer-stage"),
+  viewerPrev: document.getElementById("viewer-prev"),
+  viewerNext: document.getElementById("viewer-next"),
+  viewerImage: document.getElementById("viewer-image"),
+  viewerTitle: document.getElementById("viewer-title"),
+  viewerSub: document.getElementById("viewer-sub"),
+  viewerShow: document.getElementById("viewer-show"),
+  viewerPin: document.getElementById("viewer-pin"),
+  viewerMove: document.getElementById("viewer-move"),
+  viewerTrash: document.getElementById("viewer-trash"),
+  viewerNote: document.getElementById("viewer-note"),
   libraryCount: document.getElementById("library-count"),
   artFolderFilter: document.getElementById("art-folder-filter"),
   artGrid: document.getElementById("art-grid"),
@@ -295,6 +306,9 @@ const state = {
   // npArtSrc is the cover src last set, so the image is swapped only on change.
   nowTrack: null,
   npArtSrc: null,
+  btName: null,
+  speakers: "up",
+  connectionMessage: "",
 
   // The frame mirror state (mirrorState result) for the chosen frame and the
   // cover-busting src set.
@@ -323,7 +337,24 @@ const state = {
   libPage: 0,
   artIntervalBuilt: false,
   artRefreshPending: false,
-  toastTimer: null,
+
+  // The Gallery viewer: the piece id it shows (null when closed), whether this
+  // page session pushed its hash entry (so Back closes it), the grid's scroll
+  // position to return to, the folder row asking to confirm a delete, and the
+  // folder list's last rendered signature.
+  viewerId: null,
+  // "grid" or "history": which list the open viewer steps through.
+  viewerKind: "grid",
+  // History entries removed this page session, so a log that still lists a
+  // trashed piece does not bring it back until Undo.
+  historyHidden: new Set(),
+  // History ids that moved to another folder this session (old id to new id),
+  // so the viewer and the rows follow the piece.
+  historyMoved: new Map(),
+  viewerPushed: false,
+  gridScroll: 0,
+  folderConfirm: null,
+  folderSig: "",
 
   // The current screen (hash-routed), and the hub's parsed /frame-control.json
   // (shared settings plus each frame's quiet hours and pin), null until read
@@ -331,6 +362,8 @@ const state = {
   // page shows the frame settings as unknown rather than wrong.
   screen: "listen",
   frameControl: null,
+  // True once the frame mirrors have been fetched at least once.
+  framesProbed: false,
   fsKindsBuilt: false,
 
   // The pairing window lives in the pair controller (pair-controller.js): the
@@ -360,15 +393,17 @@ start();
 async function start() {
   await loadConfig();
   buildCards();
+  els.npHowto.textContent = howToText(null);
   connect();
   wireChrome();
+  els.everythingOff.addEventListener("click", onEverythingOff);
   wireArtManager();
   wireFrameControl();
   wirePairing();
   wireDevices();
   renderDevices();
   resolveSelectedFrame();
-  showScreen(screenFromHash(window.location.hash));
+  applyHash();
   renderPairing();
   refreshHealth();
   // Read the frame-control document first (it sets the legacy flag and the frame
@@ -378,6 +413,15 @@ async function start() {
   await refreshFrameControl();
   refreshLibrary();
   refreshNowPlaying();
+  loadBluetoothName((url) =>
+    fetch(url, { cache: "no-store" }).then((r) => {
+      if (!r.ok) throw new Error("no name");
+      return r.json();
+    }),
+  ).then((name) => {
+    state.btName = name;
+    if (!state.nowTrack) els.npHowto.textContent = howToText(name);
+  });
   refreshHistory();
   timers.add(refreshHealth, HEALTH_MS);
   timers.add(refreshFrame, FRAME_MS);
@@ -396,12 +440,14 @@ async function start() {
   // The URL hash is the screen and the chosen frame: Back, forward, and a shared
   // link all land on the right one.
   window.addEventListener("hashchange", onHashChange);
+  window.addEventListener("pagehide", flushSettings);
 
   // A phone that was asleep comes back with a dead socket and stale cards. On
   // return to the foreground, reconnect if needed, re-read the status, and
   // refresh everything so the page is current at a glance.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") {
+      flushSettings();
       timers.pause();
       stopProgressLoop();
       return;
@@ -431,7 +477,7 @@ async function loadConfig() {
     const response = await fetch("rooms.json", { cache: "no-store" });
     state.config = await response.json();
   } catch (err) {
-    setConnection("Could not load the room list.");
+    setConnection("Couldn't load the rooms. Reload the page.");
   }
 }
 
@@ -440,26 +486,19 @@ function reducedMotion() {
 }
 
 // --------------------------------------------------------------------------- //
-// Page chrome: the screen drawer and the "Open in" sheet, both real dialogs
-// (focus trapped, Escape closes). The hamburger switches between four screens,
-// each addressed by the URL hash so Back and refresh keep the screen.
+// Page chrome: the tab bar and the "Open in" sheet (a real dialog: focus
+// trapped, Escape closes). The tabs switch between screens, each addressed by
+// the URL hash so Back and refresh keep the screen.
 // --------------------------------------------------------------------------- //
 
-const SCREEN_LABELS = {
-  listen: "Listen",
-  frame: "Frame",
-  art: "Art",
-  settings: "Settings",
-};
-
 function wireChrome() {
-  els.menuButton.addEventListener("click", openDrawer);
-  // A click on the dialog's own box (the backdrop area) closes it.
-  els.drawer.addEventListener("click", (event) => {
-    if (event.target === els.drawer) {
-      els.drawer.close();
-    }
-  });
+  // Setting the hash routes through hashchange, which calls showScreen, so the
+  // history entry and the screen stay in step.
+  for (const tab of els.tabs.querySelectorAll(".tab")) {
+    tab.addEventListener("click", () => {
+      window.location.hash = `#${tab.dataset.screen}`;
+    });
+  }
 
   els.sheetClose.addEventListener("click", () => els.openSheet.close());
   els.openSheet.addEventListener("click", (event) => {
@@ -469,21 +508,70 @@ function wireChrome() {
   });
 }
 
-// Show one screen and hide the others, mark the title, and scroll to the top so
-// switching screens starts at the beginning, not wherever the last one was
-// scrolled.
+// Which optional tabs show. Frame needs at least one frame in the hub's list
+// (the same signals the Frame screen already uses); Climate waits on the flag in
+// nav-model.js.
+function navVisible() {
+  return {
+    frame: frameTabVisible(state.frameControl, state.mirrors, state.framesProbed),
+    climate: CLIMATE_ENABLED,
+  };
+}
+
+// Show one screen and hide the others, mark the current tab, and scroll to the
+// top so switching screens starts at the beginning, not wherever the last one
+// was scrolled.
 function showScreen(name) {
-  const screen = SCREENS.includes(name) ? name : "listen";
+  const screen = name in els.screens ? name : "listen";
+  const changed = screen !== state.screen;
   state.screen = screen;
-  for (const key of SCREENS) {
-    els.screens[key].hidden = key !== screen;
+  for (const [key, el] of Object.entries(els.screens)) {
+    el.hidden = key !== screen;
   }
-  els.screenTitle.textContent = SCREEN_LABELS[screen];
-  window.scrollTo({ top: 0, behavior: "auto" });
+  syncTabs();
+  els.everythingOff.hidden = screen !== "listen";
+  if (changed) {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
   // Entering Settings shows the pairing state, so fetch it now rather than
   // waiting up to a second for the next tick. The devices list too.
   maybePollPairing();
   maybePollDevices();
+}
+
+// Show the tabs that are visible, in bar order, and mark the current one.
+function syncTabs() {
+  const visible = visibleTabs(navVisible());
+  for (const tab of els.tabs.querySelectorAll(".tab")) {
+    const name = tab.dataset.screen;
+    tab.hidden = !visible.includes(name);
+    if (name === state.screen) {
+      tab.setAttribute("aria-current", "page");
+    } else {
+      tab.removeAttribute("aria-current");
+    }
+  }
+}
+
+// The frame signals may have just changed: show or hide the Frame tab, and
+// leave the Frame screen if it is no longer there.
+function syncFrameTab() {
+  if (state.screen === "frame" && !navVisible().frame) {
+    applyHash();
+  } else {
+    syncTabs();
+  }
+}
+
+// Resolve the URL hash to a screen. An alias (#art) or a hidden or unknown
+// screen has its hash rewritten in place, so Back never lands on it.
+function applyHash() {
+  const { screen, hash } = resolveScreen(window.location.hash, navVisible());
+  if (window.location.hash !== hash) {
+    history.replaceState(null, "", hash);
+  }
+  showScreen(screen);
+  syncViewer();
 }
 
 // The known frame ids (from the parsed frame-control document), and whether the
@@ -531,7 +619,7 @@ function selectFrame(id) {
 // re-render the switcher and the frame-scoped controls and re-fetch that frame's
 // mirror and history, so every per-frame view follows the chosen frame.
 function onHashChange() {
-  showScreen(screenFromHash(window.location.hash));
+  applyHash();
   resolveSelectedFrame();
   renderFrameSwitcher();
   renderFrameControl();
@@ -539,32 +627,6 @@ function onHashChange() {
     refreshFrame();
     refreshArt();
   }
-}
-
-function openDrawer() {
-  els.drawerNav.replaceChildren();
-  const title = document.createElement("p");
-  title.className = "drawer-title";
-  title.textContent = "Screens";
-  els.drawerNav.append(title);
-  for (const name of SCREENS) {
-    const link = document.createElement("button");
-    link.className = "drawer-link";
-    link.type = "button";
-    link.textContent = SCREEN_LABELS[name];
-    if (name === state.screen) {
-      link.setAttribute("aria-current", "page");
-      link.classList.add("current");
-    }
-    link.addEventListener("click", () => {
-      els.drawer.close();
-      // Setting the hash routes through hashchange, which calls showScreen, so
-      // the history entry and the screen stay in step.
-      window.location.hash = `#${name}`;
-    });
-    els.drawerNav.append(link);
-  }
-  els.drawer.showModal();
 }
 
 // --------------------------------------------------------------------------- //
@@ -580,9 +642,21 @@ function buildCards() {
     const card = document.createElement("li");
     card.className = "room";
 
-    const label = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "room-name";
+    const label = document.createElement("span");
     label.className = "room-label";
     label.textContent = room.label;
+    const stateEl = document.createElement("span");
+    stateEl.className = "room-state";
+    name.append(label, stateEl);
+
+    const only = document.createElement("button");
+    only.className = "only-here";
+    only.type = "button";
+    only.textContent = "Only here";
+    only.setAttribute("aria-label", `Play only in ${room.label}`);
+    only.addEventListener("click", () => onOnlyHere(room.id));
 
     const toggle = document.createElement("button");
     toggle.className = "toggle";
@@ -591,22 +665,25 @@ function buildCards() {
     toggle.setAttribute("aria-label", `${room.label} on or off`);
     toggle.addEventListener("click", () => onToggle(room.id));
 
-    const pct = document.createElement("div");
-    pct.className = "pct";
-    pct.setAttribute("aria-hidden", "true");
-
-    const slider = createVolumeSlider({
+    const entry = { card, toggle, only, stateEl, slider: null };
+    entry.slider = createVolumeSlider({
       label: `${room.label} volume`,
-      onSend: (p) => sendControl(volumeRequest(room.id, p)),
+      onSend: (p) => {
+        // Dragging an off room wakes it: unmute first, then the volume.
+        if (entry.toggle.getAttribute("aria-checked") !== "true") {
+          setRoomPower(room.id, true);
+        }
+        sendControl(volumeRequest(room.id, p));
+      },
       onRender: (p) => {
-        pct.textContent = `${p}%`;
+        if (stateEl.dataset.mode === "volume") {
+          stateEl.textContent = `${p}%`;
+        }
       },
       haptics,
     });
 
-    const entry = { card, toggle, slider };
-
-    card.append(label, pct, toggle, slider.el);
+    card.append(name, only, toggle, entry.slider.el);
     els.rooms.append(card);
     state.cards.set(room.id, entry);
   }
@@ -686,7 +763,7 @@ function requestStatus() {
       if (err && err.parseFailed) {
         setConnection(STATUS_UNAVAILABLE_MSG);
       } else {
-        setConnection("snapserver is not reachable.");
+        setSpeakers("down");
       }
     });
 }
@@ -711,7 +788,7 @@ function sendControl(request) {
   }
   return postRpc(request.method, request.params)
     .then(() => requestStatus())
-    .catch(() => setConnection("Could not reach snapserver."));
+    .catch(() => setSpeakers("down"));
 }
 
 function startPolling() {
@@ -730,21 +807,71 @@ function stopPolling() {
   }
 }
 
+// The rows in the shape listen-model.js reads: `reachable` is snapserver's
+// `connected`.
+function listenRooms() {
+  return state.config.rooms
+    .map((r) => state.rooms.get(r.id))
+    .filter(Boolean)
+    .map((r) => ({ id: r.id, on: r.on, reachable: r.connected, volume: r.volume }));
+}
+
 function render(status) {
+  setSpeakers("up");
   const rooms = roomsFromStatus(status, state.config.rooms);
   for (const room of rooms) {
     state.rooms.set(room.id, room);
+  }
+  renderListen();
+}
+
+// Paint every row and the header button from the latest rooms.
+function renderListen() {
+  const all = listenRooms();
+  const speakersDown = state.speakers === "down";
+  for (const room of all) {
     const entry = state.cards.get(room.id);
     if (!entry) {
       continue;
     }
-    entry.card.classList.toggle("disconnected", !room.connected);
+    const st = roomState(room, all);
+    entry.card.classList.toggle("disconnected", !room.reachable);
     entry.toggle.setAttribute("aria-checked", room.on ? "true" : "false");
     entry.toggle.textContent = room.on ? "On" : "Off";
-    entry.toggle.disabled = !room.connected;
+    const off = st.disabled || speakersDown;
+    entry.toggle.disabled = off;
+    entry.only.hidden = !st.showOnlyHere;
+    entry.only.disabled = off;
+    entry.stateEl.dataset.mode = room.reachable && room.on ? "volume" : "text";
+    entry.stateEl.textContent = st.label;
     entry.slider.applyStatus(room.volume);
-    entry.slider.setEnabled(room.connected);
+    entry.slider.setEnabled(!off);
   }
+  els.everythingOff.disabled = speakersDown || everythingOffPlan(all).length === 0;
+}
+
+// Turn one room on or off: the row flips at once, a muted group is unmuted
+// first, then the client is switched.
+function setRoomPower(id, next) {
+  const entry = state.cards.get(id);
+  if (entry) {
+    entry.toggle.setAttribute("aria-checked", next ? "true" : "false");
+    entry.toggle.textContent = next ? "On" : "Off";
+    if (next) {
+      entry.stateEl.dataset.mode = "volume";
+      const known = state.rooms.get(id);
+      if (known) entry.stateEl.textContent = `${Math.round(known.volume)}%`;
+    }
+    if (!next) {
+      entry.stateEl.dataset.mode = "text";
+      entry.stateEl.textContent = "Off";
+    }
+  }
+  const room = state.rooms.get(id);
+  if (next && room && room.groupMuted && room.groupId) {
+    sendControl(groupUnmuteRequest(room.groupId));
+  }
+  sendControl(toggleRequest(id, next));
 }
 
 function onToggle(id) {
@@ -752,18 +879,38 @@ function onToggle(id) {
   if (!entry) {
     return;
   }
-  const nowOn = entry.toggle.getAttribute("aria-checked") === "true";
-  const next = !nowOn;
-  entry.toggle.setAttribute("aria-checked", next ? "true" : "false");
-  entry.toggle.textContent = next ? "On" : "Off";
+  const next = entry.toggle.getAttribute("aria-checked") !== "true";
   if (next) haptics.roomOn();
   else haptics.roomOff();
+  setRoomPower(id, next);
+}
 
-  const room = state.rooms.get(id);
-  if (next && room && room.groupMuted && room.groupId) {
-    sendControl(groupUnmuteRequest(room.groupId));
+// Send a plan, then offer Undo. The snapshot is taken before any write, and Undo
+// replays on/off only, so volumes are never touched.
+function runPlan(plan, message) {
+  if (plan.length === 0) {
+    return;
   }
-  sendControl(toggleRequest(id, next));
+  const snapshot = snapshotRooms(listenRooms());
+  for (const step of plan) {
+    setRoomPower(step.id, step.on);
+  }
+  showToast(message, () => {
+    for (const step of undoPlan(snapshot, applyPlan(listenRooms(), plan))) {
+      setRoomPower(step.id, step.on);
+    }
+  });
+}
+
+function onOnlyHere(id) {
+  const room = state.config.rooms.find((r) => r.id === id);
+  haptics.roomOn();
+  runPlan(onlyHerePlan(listenRooms(), id), `Playing only in the ${room ? room.label : "room"}.`);
+}
+
+function onEverythingOff() {
+  haptics.roomOff();
+  runPlan(everythingOffPlan(listenRooms()), "Everything is off.");
 }
 
 async function refreshHealth() {
@@ -774,11 +921,15 @@ async function refreshHealth() {
     entries = (doc.machines || []).map((machine) => ({
       host: machine.name,
       status: machine.status,
+      installed: machine.installed !== false,
     }));
   } catch (err) {
     return;
   }
-  const message = healthBanner(entries);
+  const { troubled, notSetUp } = classifyMachines(entries);
+  renderNotSetUp(notSetUp);
+  renderNeedsAttention(troubled);
+  const message = healthMessage(troubled);
   if (message) {
     els.health.textContent = message;
     els.health.hidden = false;
@@ -832,6 +983,8 @@ async function refreshFrame() {
   // the caption with the latest reading (the piece itself comes from refreshArt).
   renderFrameCaption(state.artCurrent);
   updateSections();
+  state.framesProbed = true;
+  syncFrameTab();
 }
 
 // The frame switcher: one button per known frame, in published order, the chosen
@@ -864,7 +1017,7 @@ function renderFrameSwitcher() {
       button.classList.add("offline");
       const flag = document.createElement("span");
       flag.className = "frame-tab-flag";
-      flag.textContent = "Offline";
+      flag.textContent = "Not responding";
       button.append(flag);
     }
     button.addEventListener("click", () => {
@@ -938,32 +1091,32 @@ const KIND_LABELS = { music: "Music", podcast: "Podcasts", audiobook: "Audiobook
 
 function wireFrameControl() {
   els.pinSet.addEventListener("click", pinCurrent);
-  els.pinUnpin.addEventListener("click", unpinFrame);
-  els.fsSave.addEventListener("click", saveFrameTimes);
-  els.fsWeatherSave.addEventListener("click", saveWeatherCity);
-  els.fsWeatherClear.addEventListener("click", clearWeatherCity);
+  els.keepToggle.addEventListener("click", toggleKeepShowing);
+
+  // Every field saves itself. Switches write at once; time and text fields
+  // write after a short pause (the queue's delay) and at once on blur.
+  els.fsQuietEnabled.addEventListener("change", () => editQuietHours(true));
+  for (const input of [els.fsQuietStart, els.fsQuietEnd]) {
+    input.addEventListener("input", () => editQuietHours(false));
+    input.addEventListener("blur", flushQuietHours);
+  }
+  els.fsQuietReset.addEventListener("click", resetQuietHours);
+  els.fsMorningEnabled.addEventListener("change", () => editMorning(true));
+  for (const input of [els.fsWeekdayStart, els.fsWeekdayEnd, els.fsWeekendStart, els.fsWeekendEnd]) {
+    input.addEventListener("input", () => editMorning(false));
+    input.addEventListener("blur", () => sharedQueue.flush());
+  }
+  els.fsWeatherInput.addEventListener("input", editWeatherCity);
+  els.fsWeatherInput.addEventListener("blur", () => sharedQueue.flush());
   els.fsWeatherInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      saveWeatherCity();
+      sharedQueue.flush();
     }
   });
-  els.fsMorningEnabled.addEventListener("change", () => {
-    els.fsMorningTimes.classList.toggle("disabled", !els.fsMorningEnabled.checked);
+  els.artInterval.addEventListener("change", () => {
+    rotationQueue.edit({ rotate_minutes: Number(els.artInterval.value) }, { delayMs: 0 });
   });
-
-  // Per-frame quiet hours: the mode selector shows the custom times only when
-  // "custom" is chosen, and the frame selector routes through the hash so the
-  // chosen frame stays in step with the Frame screen switcher.
-  els.fqMode.addEventListener("change", () => {
-    els.fqCustom.hidden = els.fqMode.value !== "custom";
-  });
-  // The Settings frame selector changes which frame's quiet hours are edited
-  // without leaving the Settings screen (setting the "#frame/<id>" hash would
-  // route to the Frame screen). It picks the frame in place; the choice persists
-  // and the Frame screen switcher follows it.
-  els.fqFrame.addEventListener("change", () => selectFrame(els.fqFrame.value));
-  els.fqSave.addEventListener("click", saveFrameQuietHours);
 }
 
 async function refreshFrameControl() {
@@ -989,6 +1142,7 @@ async function refreshFrameControl() {
   resolveSelectedFrame();
   renderFrameControl();
   renderFrameSwitcher();
+  syncFrameTab();
   if (frameContextChanged()) {
     refreshFrame();
     refreshArt();
@@ -1020,81 +1174,159 @@ function selectedFramePin() {
   return entry ? entry.pin : null;
 }
 
+let frameControlVisible = false;
+
 function renderFrameControl() {
   const fc = state.frameControl;
   const available = Boolean(fc && fc.available);
 
-  // Pin control (Frame screen): the chosen frame's own pin.
-  els.pinForm.hidden = !available;
-  els.pinUnavailable.hidden = available;
-  if (available) {
-    const summary = pinSummary(selectedFramePin(), Date.now());
-    if (summary) {
-      els.pinStatus.textContent = summary;
-      els.pinStatus.hidden = false;
-      els.pinCurrent.hidden = false;
-    } else {
-      els.pinStatus.hidden = true;
-      els.pinStatus.textContent = "";
-      els.pinCurrent.hidden = true;
-    }
-  } else {
-    els.pinStatus.hidden = true;
-    els.pinStatus.textContent = "";
-    els.pinCurrent.hidden = true;
-  }
+  // Keep showing (Frame screen): the chosen frame's own pin. One button that
+  // becomes Unpin; gone when the hub has no frame-control document.
+  const pin = selectedFramePin();
+  const control = pinControlState(fc, pinSummary(pin, Date.now()) ? pin : null, state.frameShowing.isArt);
+  frameControlVisible = control.visible;
+  els.keepToggle.textContent = control.label;
+  els.keepToggle.classList.toggle("danger", control.pinned);
+  els.keepToggle.dataset.pinned = control.pinned ? "1" : "0";
+  const summary = control.pinned ? pinSummary(pin, Date.now()) : null;
+  els.pinStatus.hidden = !summary;
+  els.pinStatus.textContent = summary || "";
+  updateSections();
 
-  // Frame settings (Settings screen).
+  // Frame settings (Frame screen).
   els.fsUnavailable.hidden = available;
   els.fsBody.hidden = !available;
   if (available) {
-    renderFrameSettings(fc.settings);
+    renderFrameSettings(fc);
   }
-
-  renderFrameQuiet();
 }
 
-// The per-frame quiet-hours section (Settings). It only applies on the new
-// multi-frame contract, where each frame carries its own quiet-hours override;
-// on the old single-frame contract (legacy) or while the document is
-// unavailable, the shared quiet hours above still work and this section is
-// hidden. The frame selector appears only when there is more than one frame.
-function renderFrameQuiet() {
-  const fc = state.frameControl;
-  const show = Boolean(fc && fc.available && !fc.legacy);
-  els.frameQuiet.hidden = !show;
-  if (!show) {
+// --------------------------------------------------------------------------- //
+// Frame settings. Every field saves itself through an autosave queue
+// (autosave-queue.js): one queue per settings object, so the shared settings
+// (kinds, morning weather, weather city), each frame's quiet hours, and the art
+// rotation each write one request at a time, latest edit wins. Switches and
+// chips write at once; time and text fields after a short pause or on blur.
+// "Saved" shows next to the setting for a moment; a failure shows "Couldn't
+// save." with Retry. A bad time is explained in place and never written.
+// --------------------------------------------------------------------------- //
+
+// The editable shared settings the hub last stored, so a write sends only what
+// changed (the city is geocoded each time it is sent).
+let sharedWritten = {};
+let sharedState = "idle";
+// The groups the last shared write carried, so "Saved" or Retry shows next to
+// the fields actually written, not the field edited last.
+let sharedWriteGroups = new Set();
+const SHARED_KEY_GROUPS = {
+  now_playing_kinds: "kinds",
+  quiet_hours: "quiet",
+  morning_weather: "morning",
+  weather_city: "city",
+};
+const frameQuietQueues = new Map();
+const frameQuietStates = new Map();
+let rotationWritten = {};
+let rotationState = "idle";
+
+const sharedQueue = createAutosave({
+  write: writeSharedSettings,
+  onState: (next) => {
+    sharedState = next;
+    showSharedStatus(next);
+  },
+});
+
+const rotationQueue = createAutosave({
+  write: writeRotation,
+  onState: (next) => {
+    rotationState = next;
+    showSaveStatus("rotation", next, () => rotationQueue.retry());
+  },
+});
+
+// Send any edit still waiting out its pause (a tab hidden or closed mid-edit).
+function flushSettings() {
+  sharedQueue.flush();
+  rotationQueue.flush();
+  for (const queue of frameQuietQueues.values()) {
+    queue.flush();
+  }
+}
+
+function showSharedStatus(queueState) {
+  const legacy = Boolean(state.frameControl && state.frameControl.legacy);
+  const groups = ["kinds", "morning", "city", ...(legacy ? ["quiet"] : [])];
+  const writing = queueState === "saved" || queueState === "failed" || queueState === "idle";
+  for (const group of groups) {
+    const here = writing && sharedWriteGroups.has(group);
+    showSaveStatus(group, here ? queueState : "idle", () => sharedQueue.retry());
+  }
+}
+
+function frameQuietQueue(frame) {
+  let queue = frameQuietQueues.get(frame);
+  if (!queue) {
+    queue = createAutosave({
+      write: (obj) => writeFrameQuiet(frame, obj),
+      onState: (next) => {
+        frameQuietStates.set(frame, next);
+        if (frame === state.selectedFrame) {
+          showSaveStatus("quiet", next, () => queue.retry());
+        }
+      },
+    });
+    frameQuietQueues.set(frame, queue);
+  }
+  return queue;
+}
+
+// A queue's values are safe to overwrite from the hub's document only when
+// nothing of the owner's is waiting, in flight, or failed.
+function settled(queueState) {
+  return queueState === "idle" || queueState === "saved";
+}
+
+function showSaveStatus(group, queueState, onRetry) {
+  const el = document.querySelector(`[data-status="${group}"]`);
+  if (!el) {
     return;
   }
-
-  const rows = frameList(fc, state.mirrors);
-  if (rows.length > 1) {
-    fillSelect(
-      els.fqFrame,
-      rows.map((row) => ({ value: row.id, label: row.label })),
-      state.selectedFrame
-    );
-    els.fqFrameField.hidden = false;
-  } else {
-    els.fqFrameField.hidden = true;
+  const info = saveStatus(queueState);
+  el.replaceChildren();
+  el.classList.toggle("failed", info.retry);
+  if (info.text) {
+    el.append(document.createTextNode(info.text));
   }
-
-  const entry = fc.frames[state.selectedFrame];
-  const override = entry ? entry.quietHours : null;
-  if (override && override.start && override.end) {
-    els.fqMode.value = "custom";
-    els.fqStart.value = override.start;
-    els.fqEnd.value = override.end;
-  } else if (override && override.enabled === false) {
-    els.fqMode.value = "off";
-  } else {
-    els.fqMode.value = "shared";
+  if (info.retry) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "save-retry";
+    button.textContent = "Retry";
+    button.addEventListener("click", onRetry);
+    el.append(button);
   }
-  els.fqCustom.hidden = els.fqMode.value !== "custom";
 }
 
-function renderFrameSettings(settings) {
-  const kinds = new Set(settings.now_playing_kinds);
+function showFieldError(el, message) {
+  el.textContent = message;
+  el.hidden = false;
+}
+
+function clearFieldError(el) {
+  el.hidden = true;
+  el.textContent = "";
+}
+
+// Do not overwrite the field the owner is typing in.
+function setFieldValue(input, value) {
+  if (document.activeElement !== input) {
+    input.value = value;
+  }
+}
+
+function renderFrameSettings(fc) {
+  const settings = fc.settings;
   if (!state.fsKindsBuilt) {
     els.fsKinds.replaceChildren();
     for (const kind of FRAME_KINDS) {
@@ -1103,90 +1335,243 @@ function renderFrameSettings(settings) {
       chip.type = "button";
       chip.dataset.kind = kind;
       chip.textContent = KIND_LABELS[kind];
-      chip.addEventListener("click", () => toggleKind(kind));
+      chip.addEventListener("click", () => toggleKind(chip));
       els.fsKinds.append(chip);
     }
     state.fsKindsBuilt = true;
   }
-  for (const chip of els.fsKinds.querySelectorAll(".chip")) {
-    const on = kinds.has(chip.dataset.kind);
-    chip.classList.toggle("on", on);
-    chip.setAttribute("aria-pressed", on ? "true" : "false");
+
+  // Per-frame quiet hours exist on the multi-frame contract; on the old
+  // single-frame one the shared window is the only quiet-hours setting.
+  const perFrame = !fc.legacy;
+  const entry = perFrame ? fc.frames[state.selectedFrame] : null;
+  const override = entry ? entry.quietHours : null;
+  const quiet = effectiveQuietHours(settings.quiet_hours, override);
+  const quietQueue = perFrame ? frameQuietQueue(state.selectedFrame) : null;
+  const quietState = perFrame ? frameQuietStates.get(state.selectedFrame) || "idle" : sharedState;
+  els.fsQuietEnabled.closest(".switch-field").hidden = !perFrame;
+  const rows = frameList(fc, state.mirrors);
+  const frameName = rows.find((row) => row.id === state.selectedFrame);
+  els.fsQuietNote.textContent =
+    perFrame && rows.length > 1 && frameName
+      ? `Quiet hours for ${frameName.label}. The frame dims and stops changing.`
+      : "During quiet hours the frame dims and stops changing.";
+  if (perFrame) {
+    showSaveStatus("quiet", quietState, () => quietQueue.retry());
   }
 
-  els.fsQuietStart.value = settings.quiet_hours.start;
-  els.fsQuietEnd.value = settings.quiet_hours.end;
-  els.fsMorningEnabled.checked = settings.morning_weather.enabled;
-  els.fsMorningTimes.classList.toggle("disabled", !settings.morning_weather.enabled);
-  els.fsWeekdayStart.value = settings.morning_weather.weekday[0];
-  els.fsWeekdayEnd.value = settings.morning_weather.weekday[1];
-  els.fsWeekendStart.value = settings.morning_weather.weekend[0];
-  els.fsWeekendEnd.value = settings.morning_weather.weekend[1];
+  if (settled(sharedState)) {
+    const seed = {
+      now_playing_kinds: settings.now_playing_kinds,
+      quiet_hours: settings.quiet_hours,
+      morning_weather: settings.morning_weather,
+      weather_city: settings.weather_location ? settings.weather_location.name : "",
+    };
+    sharedWritten = JSON.parse(JSON.stringify(seed));
+    sharedQueue.seed(seed);
 
-  // The weather city shows the hub's resolved display name (or "Not set"). The
-  // input is left as the owner typed it, so a refresh after an unrelated change
-  // never clears a half-typed city.
-  els.fsWeatherCurrent.textContent = weatherLocationLabel(settings.weather_location);
+    const kinds = new Set(settings.now_playing_kinds);
+    for (const chip of els.fsKinds.querySelectorAll(".chip")) {
+      const on = kinds.has(chip.dataset.kind);
+      chip.classList.toggle("on", on);
+      chip.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    els.fsMorningEnabled.checked = settings.morning_weather.enabled;
+    els.fsMorningTimes.classList.toggle("disabled", !settings.morning_weather.enabled);
+    setFieldValue(els.fsWeekdayStart, settings.morning_weather.weekday[0]);
+    setFieldValue(els.fsWeekdayEnd, settings.morning_weather.weekday[1]);
+    setFieldValue(els.fsWeekendStart, settings.morning_weather.weekend[0]);
+    setFieldValue(els.fsWeekendEnd, settings.morning_weather.weekend[1]);
+    setFieldValue(els.fsWeatherInput, seed.weather_city);
+  }
+
+  if (settled(quietState)) {
+    if (perFrame) {
+      quietQueue.seed({ quiet_hours: override });
+    }
+    els.fsQuietEnabled.checked = quiet.enabled;
+    els.fsQuietReset.hidden = !(perFrame && override !== null);
+    els.fsQuietStart.disabled = !quiet.enabled;
+    els.fsQuietEnd.disabled = !quiet.enabled;
+    setFieldValue(els.fsQuietStart, quiet.start);
+    setFieldValue(els.fsQuietEnd, quiet.end);
+  }
 }
 
-// Toggle one now-playing kind and save, like the rotation folder chips: the
-// change is immediate and always valid, so there is no form to submit.
-async function toggleKind(kind) {
+// Toggle one now-playing kind. The chip flips at once and the write follows.
+function toggleKind(chip) {
+  const on = !chip.classList.contains("on");
+  chip.classList.toggle("on", on);
+  chip.setAttribute("aria-pressed", on ? "true" : "false");
+  const chosen = new Set(
+    [...els.fsKinds.querySelectorAll(".chip.on")].map((c) => c.dataset.kind)
+  );
+  sharedQueue.edit({ now_playing_kinds: FRAME_KINDS.filter((k) => chosen.has(k)) }, { delayMs: 0 });
+}
+
+function flushQuietHours() {
+  const fc = state.frameControl;
+  if (fc && !fc.legacy) {
+    frameQuietQueue(state.selectedFrame).flush();
+  } else {
+    sharedQueue.flush();
+  }
+}
+
+// The quiet-hours switch and times. A switch writes at once, a time after a
+// pause. An invalid time stays in the field with an explanation and no write.
+function editQuietHours(immediate) {
   const fc = state.frameControl;
   if (!fc || !fc.available) {
     return;
   }
-  const current = new Set(fc.settings.now_playing_kinds);
-  if (current.has(kind)) {
-    current.delete(kind);
-  } else {
-    current.add(kind);
-  }
-  const next = FRAME_KINDS.filter((k) => current.has(k));
-  await postFrameSettings({ now_playing_kinds: next });
-}
-
-// Save quiet hours and morning weather together, validated the way the hub
-// validates them, so a bad time is caught here and explained in place rather
-// than posted.
-async function saveFrameTimes() {
-  clearFsError();
-  const subset = {
-    quiet_hours: { start: els.fsQuietStart.value, end: els.fsQuietEnd.value },
-    morning_weather: {
-      enabled: els.fsMorningEnabled.checked,
-      weekday: [els.fsWeekdayStart.value, els.fsWeekdayEnd.value],
-      weekend: [els.fsWeekendStart.value, els.fsWeekendEnd.value],
-    },
-  };
-  const check = validateFrameSettings(subset);
-  if (!check.ok) {
-    showFsError(check.error);
+  const perFrame = !fc.legacy;
+  const enabled = perFrame ? els.fsQuietEnabled.checked : true;
+  els.fsQuietStart.disabled = !enabled;
+  els.fsQuietEnd.disabled = !enabled;
+  const override = quietOverrideFromFields({
+    enabled,
+    start: els.fsQuietStart.value,
+    end: els.fsQuietEnd.value,
+  });
+  if (override === undefined) {
+    showFieldError(els.fsQuietError, "Use 24-hour times like 07:30 for quiet hours.");
     return;
   }
-  const result = await postFrameSettings(check.value);
-  if (result.ok) {
-    showToast("Frame settings saved.");
+  clearFieldError(els.fsQuietError);
+  const options = immediate ? { delayMs: 0 } : undefined;
+  if (perFrame) {
+    frameQuietQueue(state.selectedFrame).edit({ quiet_hours: override }, options);
+  } else {
+      sharedQueue.edit({ quiet_hours: override }, options);
   }
 }
 
-// Validate a settings subset and post it, showing the server's error on failure.
-// Returns { ok } so a caller can confirm. Always refreshes afterwards so the
-// form reflects what the hub actually stored.
-async function postFrameSettings(subset) {
+// Give the chosen frame back to the default hours: writes quiet_hours null
+// through the same queue, so it saves, fails and retries like any other field.
+function resetQuietHours() {
+  const fc = state.frameControl;
+  if (!fc || !fc.available || fc.legacy) {
+    return;
+  }
+  clearFieldError(els.fsQuietError);
+  els.fsQuietReset.hidden = true;
+  frameQuietQueue(state.selectedFrame).edit(
+    { quiet_hours: quietOverrideFromFields({ reset: true }) },
+    { delayMs: 0 }
+  );
+}
+
+function editMorning(immediate) {
+  const morning = {
+    enabled: els.fsMorningEnabled.checked,
+    weekday: [els.fsWeekdayStart.value, els.fsWeekdayEnd.value],
+    weekend: [els.fsWeekendStart.value, els.fsWeekendEnd.value],
+  };
+  els.fsMorningTimes.classList.toggle("disabled", !morning.enabled);
+  const check = validateFrameSettings({ morning_weather: morning });
+  if (!check.ok) {
+    showFieldError(els.fsMorningError, check.error);
+    return;
+  }
+  clearFieldError(els.fsMorningError);
+  sharedQueue.edit({ morning_weather: check.value.morning_weather }, immediate ? { delayMs: 0 } : undefined);
+}
+
+function editWeatherCity() {
+  clearFieldError(els.fsWeatherError);
+  sharedQueue.edit({ weather_city: els.fsWeatherInput.value.trim() });
+}
+
+// The write behind the shared queue: only the settings that differ from what
+// the hub holds, so an unchanged city is not geocoded again. A failure throws
+// so the queue shows Retry; a city the hub could not find is explained in place.
+async function writeSharedSettings(obj) {
+  const changed = changedKeys(sharedWritten, obj);
+  sharedWriteGroups = new Set(changed.map((key) => SHARED_KEY_GROUPS[key]).filter(Boolean));
+  const subset = {};
+  for (const key of ["now_playing_kinds", "quiet_hours", "morning_weather"]) {
+    if (changed.includes(key)) {
+      subset[key] = obj[key];
+    }
+  }
   const check = validateFrameSettings(subset);
   if (!check.ok) {
-    showFsError(check.error);
-    return { ok: false };
+    throw new Error(check.error);
   }
-  const result = await postApi("/api/frame/settings", check.value);
+  const body = { ...check.value };
+  const cityChanged = changed.includes("weather_city");
+  if (cityChanged) {
+    Object.assign(body, obj.weather_city ? weatherSaveBody(obj.weather_city) : weatherClearBody());
+  }
+  if (Object.keys(body).length === 0) {
+    return;
+  }
+  const result = await postApi("/api/frame/settings", body);
   if (!result.ok) {
-    showToast(result.error);
+    if (cityChanged) {
+      showFieldError(els.fsWeatherError, result.error);
+    }
+    throw new Error(result.error);
   }
-  await refreshFrameControl();
-  return result;
+  clearFieldError(els.fsWeatherError);
+  sharedWritten = JSON.parse(JSON.stringify({ ...sharedWritten, ...obj }));
+  refreshFrameControl();
 }
 
+async function writeFrameQuiet(frame, obj) {
+  const built = frameQuietHoursBody(frame, obj.quiet_hours);
+  if (!built.ok) {
+    showFieldError(els.fsQuietError, built.error);
+    throw new Error(built.error);
+  }
+  const result = await postApi("/api/frame/settings", built.value);
+  if (!result.ok) {
+    showFieldError(els.fsQuietError, result.error);
+    throw new Error(result.error);
+  }
+  clearFieldError(els.fsQuietError);
+  refreshFrameControl();
+}
+
+// The rotation write: the change-every interval and each folder switch, one
+// request per changed key, in order.
+async function writeRotation(obj) {
+  for (const key of changedKeys(rotationWritten, obj)) {
+    let result;
+    if (key === "rotate_minutes") {
+      result = await postApi("/api/art/settings", { rotate_minutes: obj[key] });
+    } else if (key.startsWith("folder:")) {
+      result = await postApi("/api/art/folder/enable", { name: key.slice(7), enabled: obj[key] });
+    } else {
+      continue;
+    }
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    rotationWritten = { ...rotationWritten, [key]: obj[key] };
+  }
+  refreshArt();
+  refreshFrame();
+  refreshLibrary();
+}
+
+async function toggleKeepShowing() {
+  if (els.keepToggle.dataset.pinned === "1") {
+    await unpinFrame();
+    return;
+  }
+  const body = keepShowingBody(state.selectedFrame);
+  if (!body) {
+    return;
+  }
+  const result = await postApi("/api/frame/pin", body);
+  showToast(result.ok ? "Keeping this on the frame until you unpin it." : result.error);
+  await refreshFrameControl();
+  refreshFrame();
+}
+
+// The full choice behind "For how long...": what to keep, and for how long.
 async function pinCurrent() {
   // The pin is scoped to the chosen frame, so pinning one never moves another
   // (Review Focus 2).
@@ -1197,6 +1582,8 @@ async function pinCurrent() {
   const result = await postApi("/api/frame/pin", body);
   if (!result.ok) {
     showToast(result.error);
+  } else {
+    els.keepMore.open = false;
   }
   await refreshFrameControl();
   refreshFrame();
@@ -1207,109 +1594,28 @@ async function unpinFrame() {
   if (!body) {
     return;
   }
+  const before = selectedFramePin();
+  const undoBody = repinBody(state.selectedFrame, before, Date.now());
   const result = await postApi("/api/frame/unpin", body);
-  if (!result.ok) {
+  if (result.ok) {
+    showToast(
+      "Unpinned.",
+      undoBody
+        ? async () => {
+            const back = await postApi("/api/frame/pin", undoBody);
+            if (!back.ok) {
+              showToast(back.error);
+            }
+            await refreshFrameControl();
+            refreshFrame();
+          }
+        : null,
+    );
+  } else {
     showToast(result.error);
   }
   await refreshFrameControl();
   refreshFrame();
-}
-
-// Save the chosen frame's quiet-hours override: follow the shared hours
-// (null), keep none ({enabled:false}), or a custom window. A bad custom time is
-// caught by frameQuietHoursBody and shown in place rather than posted.
-async function saveFrameQuietHours() {
-  clearFqError();
-  const override = frameQuietOverrideFromForm();
-  const built = frameQuietHoursBody(state.selectedFrame, override);
-  if (!built.ok) {
-    showFqError(built.error);
-    return;
-  }
-  const result = await postApi("/api/frame/settings", built.value);
-  if (!result.ok) {
-    showFqError(result.error);
-    return;
-  }
-  showToast("Quiet hours saved.");
-  await refreshFrameControl();
-}
-
-// The quiet-hours override the per-frame form describes: null for "follow the
-// shared hours", {enabled:false} for "no quiet hours", or the custom window.
-function frameQuietOverrideFromForm() {
-  if (els.fqMode.value === "off") {
-    return { enabled: false };
-  }
-  if (els.fqMode.value === "custom") {
-    return { start: els.fqStart.value, end: els.fqEnd.value };
-  }
-  return null;
-}
-
-function showFqError(message) {
-  els.fqError.textContent = message;
-  els.fqError.hidden = false;
-}
-
-function clearFqError() {
-  els.fqError.hidden = true;
-  els.fqError.textContent = "";
-}
-
-function showFsError(message) {
-  els.fsError.textContent = message;
-  els.fsError.hidden = false;
-}
-
-function clearFsError() {
-  els.fsError.hidden = true;
-  els.fsError.textContent = "";
-}
-
-// Geocode and save the typed weather city. The body goes straight to
-// /api/frame/settings (not through the times validator, which only knows the
-// other keys): the hub geocodes the city, and on a bad city or an unreachable
-// geocoder its own error text is shown in place. Only the typed city name leaves
-// the network; the hub sends just the city part to the geocoder.
-async function saveWeatherCity() {
-  clearWeatherError();
-  const body = weatherSaveBody(els.fsWeatherInput.value);
-  if (!body) {
-    showWeatherError('Enter a city, like "San Diego, CA".');
-    return;
-  }
-  const result = await postApi("/api/frame/settings", body);
-  if (!result.ok) {
-    showWeatherError(result.error);
-    return;
-  }
-  els.fsWeatherInput.value = "";
-  showToast("Weather city saved.");
-  await refreshFrameControl();
-}
-
-// Clear the weather city, so the frame falls back to its own local config.
-async function clearWeatherCity() {
-  clearWeatherError();
-  const result = await postApi("/api/frame/settings", weatherClearBody());
-  if (!result.ok) {
-    showWeatherError(result.error);
-    return;
-  }
-  els.fsWeatherInput.value = "";
-  showToast("Weather city cleared.");
-  await refreshFrameControl();
-}
-
-function showWeatherError(message) {
-  els.fsWeatherError.textContent = message;
-  els.fsWeatherError.hidden = false;
-}
-
-function clearWeatherError() {
-  els.fsWeatherError.hidden = true;
-  els.fsWeatherError.textContent = "";
 }
 
 // --------------------------------------------------------------------------- //
@@ -1392,7 +1698,7 @@ function renderPairing() {
   // A coarse, once-only spoken cue for the active countdown; null elsewhere.
   let cue = null;
   if (phase === "open") {
-    els.pairInstruction.textContent = pairInstruction();
+    els.pairInstruction.textContent = pairInstruction(state.btName);
     const progress = pairProgress(parsed);
     els.pairProgress.hidden = progress === null;
     els.pairProgress.textContent = progress || "";
@@ -1507,13 +1813,36 @@ function renderFrameCaption(current) {
 function renderArtHistory(history) {
   els.artHistory.replaceChildren();
   for (const piece of history) {
+    const id = historyPieceId(piece);
+    if (id && state.historyHidden.has(id)) {
+      continue;
+    }
     els.artHistory.append(artHistoryRow(piece));
   }
 }
 
+// A history row is one button that opens the picture in the viewer. The title
+// is plain text here (a link inside a button is not valid); the viewer is where
+// the actions live.
+function historyPieceId(piece) {
+  const id = historyDeleteTarget(piece);
+  return id ? (state.historyMoved.get(id) ?? id) : null;
+}
+
 function artHistoryRow(piece) {
   const li = document.createElement("li");
-  li.className = "row";
+  const id = historyPieceId(piece);
+
+  const button = document.createElement("button");
+  button.className = "row row-tappable";
+  button.type = "button";
+  button.setAttribute("aria-label", `Open ${piece.title}`);
+  if (id) {
+    li.dataset.pieceId = id;
+    button.addEventListener("click", () => openViewer(id, "history"));
+  } else {
+    button.disabled = true;
+  }
 
   const thumb = document.createElement("img");
   thumb.className = "row-thumb";
@@ -1526,11 +1855,14 @@ function artHistoryRow(piece) {
   thumb.addEventListener("error", () => {
     thumb.replaceWith(thumbPlaceholder("row-thumb"));
   });
-  li.append(thumb);
+  button.append(thumb);
 
   const meta = document.createElement("div");
   meta.className = "row-meta";
-  meta.append(titleNode(piece, "row-title"));
+  const title = document.createElement("span");
+  title.className = "row-title";
+  title.textContent = piece.title;
+  meta.append(title);
   if (piece.artist) {
     const artist = document.createElement("span");
     artist.className = "row-sub";
@@ -1545,19 +1877,9 @@ function artHistoryRow(piece) {
     time.textContent = when;
     meta.append(time);
   }
-  li.append(meta);
+  button.append(meta);
 
-  // Delete is offered only when the entry can be targeted safely (an id, or a
-  // bare file name at the library root); otherwise the button is left out.
-  const target = historyDeleteTarget(piece);
-  if (target) {
-    const del = document.createElement("button");
-    del.className = "btn btn-small danger row-action";
-    del.type = "button";
-    del.textContent = "Delete";
-    del.addEventListener("click", () => moveToTrash(target));
-    li.append(del);
-  }
+  li.append(button);
   return li;
 }
 
@@ -1647,15 +1969,17 @@ function followCover(url) {
 
 function updateNowPlayingCard(track) {
   state.nowTrack = track;
+  els.np.hidden = !track;
+  els.npHowto.hidden = Boolean(track);
   if (!track) {
-    els.npSection.hidden = true;
+    els.npHowto.textContent = howToText(state.btName);
     if (state.npArtSrc !== null) {
       state.npArtSrc = null;
       followCover(null);
     }
+    stopProgressLoop();
     return;
   }
-  els.npSection.hidden = false;
 
   if (track.artUrl) {
     if (state.npArtSrc !== track.artUrl) {
@@ -1675,26 +1999,8 @@ function updateNowPlayingCard(track) {
   }
 
   els.npTitle.textContent = track.title;
-  setOptionalLine(els.npArtist, track.artist);
-  setOptionalLine(els.npAlbum, track.album);
-  if (track.rooms && track.rooms.length > 0) {
-    els.npRooms.textContent = `Playing in ${joinNames(track.rooms)}`;
-    els.npRooms.hidden = false;
-  } else {
-    els.npRooms.hidden = true;
-    els.npRooms.textContent = "";
-  }
+  setOptionalLine(els.npSource, [track.artist, track.album].filter(Boolean).join(" \u00b7 "));
   tickNowPlaying();
-}
-
-function joinNames(names) {
-  if (names.length === 1) {
-    return names[0];
-  }
-  if (names.length === 2) {
-    return `${names[0]} and ${names[1]}`;
-  }
-  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
 function setProgressFill(fraction) {
@@ -1713,7 +2019,7 @@ function writeProgressText(progress, paused) {
 
 function tickNowPlaying() {
   const track = state.nowTrack;
-  if (!track || els.npSection.hidden) {
+  if (!track) {
     stopProgressLoop();
     return;
   }
@@ -1744,7 +2050,7 @@ let progressSecond = -1;
 function progressLoopWanted() {
   const track = state.nowTrack;
   return Boolean(
-    track && track.status !== "paused" && !els.npSection.hidden && !els.npProgress.hidden && !document.hidden,
+    track && track.status !== "paused" && !els.npProgress.hidden && !document.hidden,
   );
 }
 
@@ -1934,10 +2240,6 @@ function wireArtManager() {
     frameDeleteCurrent();
   });
 
-  els.artInterval.addEventListener("change", () => {
-    runAction("/api/art/settings", { rotate_minutes: Number(els.artInterval.value) });
-  });
-
   els.artFolderFilter.addEventListener("change", () => {
     state.artFilter = els.artFolderFilter.value;
     state.libPage = 0;
@@ -1975,17 +2277,18 @@ function wireArtManager() {
     runAction("/api/art/folder/create", { name });
   });
 
-  // When a held refresh is pending, resume it once the grid goes idle: a menu
-  // closing (toggle does not bubble, so capture) or a select losing focus.
-  els.artGrid.addEventListener("toggle", maybeResumeLibraryRefresh, true);
-  els.artGrid.addEventListener("focusout", maybeResumeLibraryRefresh);
+  // When a held refresh is pending, resume it once the viewer's select loses focus.
+  els.galleryViewer.addEventListener("focusout", maybeResumeLibraryRefresh);
+
+  wireViewer();
 }
 
 function libraryMenuBusy() {
-  const menuOpen = els.artGrid.querySelector("details.menu[open]") !== null;
+  // No menus remain; a focused select in the viewer still holds a periodic
+  // rebuild so its list is not replaced while it is open.
   const active = document.activeElement;
-  const selectFocused = active instanceof HTMLSelectElement && els.artGrid.contains(active);
-  return { menuOpen, selectFocused };
+  const selectFocused = active instanceof HTMLSelectElement && els.galleryViewer.contains(active);
+  return { menuOpen: false, selectFocused };
 }
 
 function maybeResumeLibraryRefresh() {
@@ -2053,7 +2356,15 @@ function renderLibrary() {
     }
     state.artIntervalBuilt = true;
   }
-  els.artInterval.value = String(control.rotateMinutes);
+  if (settled(rotationState)) {
+    els.artInterval.value = String(control.rotateMinutes);
+    const seed = { rotate_minutes: control.rotateMinutes };
+    for (const folder of index.folders) {
+      seed[`folder:${folder.name}`] = control.foldersEnabled.includes(folder.name);
+    }
+    rotationWritten = seed;
+    rotationQueue.seed(seed);
+  }
 
   const summary = rotationSummary(index, control);
   els.artRotationSummary.textContent = summary.text;
@@ -2063,10 +2374,10 @@ function renderLibrary() {
   // The library count, in plain words.
   const total = index.pieces.length;
   if (total === 0) {
-    els.libraryCount.textContent = "Library is empty";
+    els.libraryCount.textContent = "No pictures yet";
   } else {
-    const noun = total === 1 ? "piece" : "pieces";
-    els.libraryCount.textContent = `Library: ${total} ${noun}, ${summary.count} in rotation`;
+    const noun = total === 1 ? "picture" : "pictures";
+    els.libraryCount.textContent = `${total} ${noun}, ${summary.count} in rotation`;
   }
 
   const folderNames = index.folders.map((f) => f.name);
@@ -2085,9 +2396,13 @@ function renderLibrary() {
   renderFolderList(index);
   renderTrash(index);
   updateSections();
+  syncViewer();
 }
 
 function renderFolderChips(index, control) {
+  if (!settled(rotationState)) {
+    return;
+  }
   const enabled = new Set(control.foldersEnabled);
   els.artFolderChips.replaceChildren();
   for (const folder of index.folders) {
@@ -2099,7 +2414,10 @@ function renderFolderChips(index, control) {
     chip.classList.toggle("on", on);
     chip.textContent = `${folder.name} (${folder.count})`;
     chip.addEventListener("click", () => {
-      runAction("/api/art/folder/enable", { name: folder.name, enabled: !on });
+      const next = chip.getAttribute("aria-pressed") !== "true";
+      chip.setAttribute("aria-pressed", next ? "true" : "false");
+      chip.classList.toggle("on", next);
+      rotationQueue.edit({ [`folder:${folder.name}`]: next }, { delayMs: 0 });
     });
     els.artFolderChips.append(chip);
   }
@@ -2120,7 +2438,7 @@ function renderLibraryGrid() {
     key: (piece) => String(piece.id),
     sig: (piece) =>
       JSON.stringify([piece.title, piece.artist, piece.thumb, piece.landscape, piece.folder, folderNames]),
-    create: (piece) => libraryTile(piece, index),
+    create: (piece) => libraryTile(piece),
   });
   els.artGridEmpty.hidden = pieces.length > 0;
 
@@ -2130,10 +2448,16 @@ function renderLibraryGrid() {
   els.libNext.disabled = state.libPage >= count - 1;
 }
 
-function libraryTile(piece, index) {
+function libraryTile(piece) {
   const li = document.createElement("li");
   li.className = "tile";
   li.dataset.pieceId = piece.id;
+
+  const open = document.createElement("button");
+  open.className = "tile-open";
+  open.type = "button";
+  open.setAttribute("aria-label", `Open ${piece.title}`);
+  open.addEventListener("click", () => openViewer(piece.id));
 
   const wrap = document.createElement("div");
   wrap.className = "tile-thumb-wrap";
@@ -2145,78 +2469,64 @@ function libraryTile(piece, index) {
     badge.title = "Too tall to rotate on the frame.";
     wrap.append(badge);
   }
-  li.append(wrap);
+  open.append(wrap);
 
   const title = document.createElement("span");
   title.className = "tile-title";
   title.textContent = piece.title;
-  li.append(title);
+  open.append(title);
 
   if (piece.artist) {
     const artist = document.createElement("span");
     artist.className = "tile-artist";
     artist.textContent = piece.artist;
-    li.append(artist);
+    open.append(artist);
   }
 
-  li.append(tileMenu(piece, index));
+  li.append(open);
   return li;
 }
 
-function tileMenu(piece, index) {
-  const menu = document.createElement("details");
-  menu.className = "menu";
-  const summary = document.createElement("summary");
-  summary.className = "btn menu-summary";
-  summary.textContent = "Options";
-  menu.append(summary);
-
-  const body = document.createElement("div");
-  body.className = "menu-body";
-
-  if (piece.landscape) {
-    body.append(menuButton("Show now", () => runArtCommand("show", piece.id)));
-  }
-
-  const others = index.folders.map((f) => f.name).filter((n) => n !== piece.folder);
-  if (others.length > 0) {
-    const moveLabel = document.createElement("label");
-    moveLabel.className = "menu-move";
-    moveLabel.append(document.createTextNode("Move to "));
-    const select = document.createElement("select");
-    select.className = "select";
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "folder...";
-    select.append(placeholder);
-    for (const name of others) {
-      const option = document.createElement("option");
-      option.value = name;
-      option.textContent = name;
-      select.append(option);
-    }
-    select.addEventListener("change", () => {
-      if (select.value) {
-        runAction("/api/art/move", { id: piece.id, folder: select.value });
-      }
-    });
-    moveLabel.append(select);
-    body.append(moveLabel);
-  }
-
-  body.append(menuButton("Delete", () => moveToTrash(piece.id), "danger"));
-  menu.append(body);
-  return menu;
-}
-
 function renderFolderList(index) {
+  // Rebuild only when something visible changed, so a name being typed into a
+  // rename field survives a refresh that changes nothing.
+  const folders = index.folders.filter((f) => !f.builtin);
+  const sig = JSON.stringify([folders.map((f) => [f.name, f.count]), state.folderConfirm]);
+  if (sig === state.folderSig) {
+    return;
+  }
+  state.folderSig = sig;
   els.artFolderList.replaceChildren();
-  for (const folder of index.folders) {
-    if (folder.builtin) {
-      continue;
-    }
+  for (const folder of folders) {
     const li = document.createElement("li");
     li.className = "folder-row";
+
+    if (state.folderConfirm === folder.name) {
+      const ask = document.createElement("p");
+      ask.className = "folder-ask";
+      const noun = folder.count === 1 ? "picture" : "pictures";
+      ask.textContent = `Remove ${folder.name} and move its ${folder.count} ${noun} to the trash?`;
+      li.append(ask);
+      const yes = document.createElement("button");
+      yes.className = "btn btn-small danger";
+      yes.type = "button";
+      yes.textContent = "Remove folder";
+      yes.addEventListener("click", () => {
+        state.folderConfirm = null;
+        deleteFolderWithPictures(folder);
+      });
+      const no = document.createElement("button");
+      no.className = "btn btn-small";
+      no.type = "button";
+      no.textContent = "Cancel";
+      no.addEventListener("click", () => {
+        state.folderConfirm = null;
+        renderFolderList(state.artIndex);
+      });
+      li.append(yes, no);
+      els.artFolderList.append(li);
+      continue;
+    }
 
     const form = document.createElement("form");
     form.className = "folder-rename";
@@ -2246,16 +2556,40 @@ function renderFolderList(index) {
     const del = document.createElement("button");
     del.className = "btn btn-small danger";
     del.type = "button";
-    del.textContent = "Delete";
-    del.disabled = folder.count > 0;
-    if (folder.count > 0) {
-      del.title = "Only an empty folder can be deleted.";
-    }
-    del.addEventListener("click", () => runAction("/api/art/folder/delete", { name: folder.name }));
+    del.textContent = "Remove";
+    del.setAttribute("aria-label", `Remove ${folder.name}`);
+    del.addEventListener("click", () => {
+      if (folder.count > 0) {
+        // Still holds pictures: ask first (no Undo for this one).
+        state.folderConfirm = folder.name;
+        renderFolderList(state.artIndex);
+        return;
+      }
+      runAction("/api/art/folder/delete", { name: folder.name });
+    });
     li.append(del);
 
     els.artFolderList.append(li);
   }
+}
+
+// The hub only removes an empty folder, so a folder with pictures has them moved
+// to the trash first (each restorable for 30 days, which recreates the folder).
+async function deleteFolderWithPictures(folder) {
+  const pieces = (state.artIndex ? state.artIndex.pieces : []).filter((p) => p.folder === folder.name);
+  for (const piece of pieces) {
+    // Same path as the single-picture trash: move the frame on first if it is
+    // showing this picture.
+    await advanceFrameIfShowing(piece);
+    const result = await postApi("/api/art/delete", { id: piece.id });
+    if (!result.ok) {
+      showToast(result.error);
+      refreshLibrary();
+      return;
+    }
+  }
+  await runAction("/api/art/folder/delete", { name: folder.name });
+  showToast("Folder deleted. Its pictures are in the trash.");
 }
 
 function renderTrash(index) {
@@ -2277,7 +2611,7 @@ function renderTrash(index) {
       const time = document.createElement("time");
       time.className = "row-when";
       time.dateTime = entry.deletedAt;
-      time.textContent = `Deleted ${when}`;
+      time.textContent = `Trashed ${when}`;
       meta.append(time);
     }
     li.append(meta);
@@ -2304,7 +2638,7 @@ async function frameDeleteCurrent() {
   }
   const target = historyDeleteTarget(current);
   if (!target) {
-    showToast("This piece can't be deleted from here.");
+    showToast("This picture can't be moved to the trash from here.");
     return;
   }
   // Advance the chosen frame first so the deleted piece is gone from its panel in
@@ -2318,8 +2652,8 @@ async function frameDeleteCurrent() {
 
 async function moveToTrash(target) {
   if (!target) {
-    showToast("This piece can't be deleted.");
-    return;
+    showToast("This picture can't be deleted.");
+    return false;
   }
   const result = await postApi("/api/art/delete", { id: target });
   refreshArt();
@@ -2327,26 +2661,29 @@ async function moveToTrash(target) {
   await refreshLibrary();
   if (!result.ok) {
     showToast(result.error);
-    return;
+    return false;
   }
   // Undo is keyed on the delete target (the piece id), which is what the hub
   // records as the trash entry's `original`. Keying on the basename instead
   // silently failed to restore any piece that lived in a user folder.
   showToast("Moved to trash.", () => undoTrash(target));
+  return true;
 }
 
 async function undoTrash(target) {
+  state.historyHidden.delete(target);
+  renderArtHistory(state.artHistory);
   await refreshLibrary();
   const index = state.artIndex;
   const restoreId = index ? trashRestoreId(index.trash, target) : null;
   if (!restoreId) {
-    showToast("Couldn't undo. Restore it from the Trash section.");
+    showToast("Couldn't undo. Restore it from the Trash list.");
     return;
   }
   runAction("/api/art/restore", { id: restoreId });
 }
 
-// Open the library, filter to the current piece's folder, page to it, and
+// Open the gallery grid, filter to the current piece's folder, page to it, and
 // scroll there, so "Show in library" lands on the piece.
 function showInLibrary(current) {
   const index = state.artIndex;
@@ -2354,7 +2691,7 @@ function showInLibrary(current) {
     return;
   }
   const piece = index.pieces.find((p) => (current.id && p.id === current.id) || p.file === current.file);
-  els.libraryDetails.open = true;
+  state.viewerPushed = false;
   if (piece) {
     state.artFilter = piece.folder;
     const list = piecesInFolder(index, piece.folder);
@@ -2363,13 +2700,13 @@ function showInLibrary(current) {
     renderLibrary();
   }
 
-  // The library lives on the Art screen. Routing through the hash calls
+  // The library lives on the Gallery screen. Routing through the hash calls
   // showScreen, which scrolls the body to the top, so the scroll to the piece
   // has to run after that lands or it is immediately overridden. When the hash
   // actually changes, scroll on the next hashchange (after showScreen); when we
-  // are already on #art, no hashchange fires, so scroll now.
+  // are already on #gallery, no hashchange fires, so scroll now.
   const target = piece ? piece.id : null;
-  if (window.location.hash === "#art") {
+  if (window.location.hash === "#gallery") {
     scrollToPiece(target);
   } else {
     window.addEventListener(
@@ -2377,7 +2714,7 @@ function showInLibrary(current) {
       () => scrollToPiece(target),
       { once: true },
     );
-    window.location.hash = "#art";
+    window.location.hash = "#gallery";
   }
 }
 
@@ -2453,6 +2790,384 @@ function uploadOne(file, folder) {
   xhr.send(init.body);
 }
 
+// --------------------------------------------------------------------------- //
+// The Gallery viewer: one picture, large, in the Gallery tab. It has its own
+// hash entry (#gallery/<id>), so Back closes it and the grid is where it was.
+// The pure rules (position, edges, swipe) are in gallery-viewer.js.
+// --------------------------------------------------------------------------- //
+
+// The pieces the viewer steps through: the grid's current folder filter, or
+// every piece when the opened one is not in it (a link, or a folder change).
+function viewerList() {
+  if (state.viewerKind === "history") {
+    return historyViewerItems();
+  }
+  const index = state.artIndex;
+  if (!index) {
+    return [];
+  }
+  const filtered = piecesInFolder(index, state.artFilter);
+  if (state.viewerId && !filtered.some((p) => p.id === state.viewerId)) {
+    return index.pieces;
+  }
+  return filtered;
+}
+
+// The frame's history as viewer items: newest first, one per picture, without
+// the ones removed this session. The library's own URL is used when it knows the
+// piece (a folder-deep one is not reachable at the share root).
+function historyViewerItems() {
+  const seen = new Set();
+  const items = [];
+  for (const piece of state.artHistory) {
+    const id = historyPieceId(piece);
+    if (!id || seen.has(id) || state.historyHidden.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    const known = state.artIndex ? state.artIndex.pieces.find((p) => p.id === id) : null;
+    items.push({
+      id,
+      file: piece.file,
+      title: piece.title,
+      artist: piece.artist,
+      source_url: piece.source_url,
+      origId: historyDeleteTarget(piece),
+      folder: known ? known.folder : "",
+      url: known ? known.url : artUrl(piece.file),
+    });
+  }
+  return items;
+}
+
+function viewerIndexNow(list) {
+  return list.findIndex((p) => p.id === state.viewerId);
+}
+
+function openViewer(pieceId, kind = "grid") {
+  state.viewerKind = kind;
+  state.gridScroll = window.scrollY;
+  state.viewerPushed = true;
+  window.location.hash = galleryHash(pieceId);
+}
+
+// Make the view match the hash: show the piece it names, or the grid. Runs after
+// every route change and every library render.
+function syncViewer() {
+  const id = state.screen === "gallery" ? pieceIdFromHash(window.location.hash) : null;
+  const wasOpen = !els.galleryViewer.hidden;
+  if (!id) {
+    closeViewerView(wasOpen);
+    return;
+  }
+  if (state.viewerKind === "grid" && !state.artIndex) {
+    return;
+  }
+  state.viewerId = id;
+  const list = viewerList();
+  const idx = viewerIndexNow(list);
+  if (idx < 0) {
+    history.replaceState(null, "", "#gallery");
+    closeViewerView(wasOpen);
+    return;
+  }
+  els.galleryGridView.hidden = true;
+  els.galleryViewer.hidden = false;
+  if (!wasOpen) {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+  renderViewer(list, idx);
+  if (!wasOpen) {
+    els.viewerClose.focus({ preventScroll: true });
+  }
+}
+
+function closeViewerView(wasOpen) {
+  const lastId = state.viewerId;
+  state.viewerId = null;
+  state.viewerKind = "grid";
+  els.galleryViewer.hidden = true;
+  els.galleryGridView.hidden = false;
+  if (wasOpen) {
+    window.scrollTo({ top: state.gridScroll, behavior: "auto" });
+    const tile = lastId
+      ? document.querySelector(
+          `[data-piece-id="${CSS.escape(lastId)}"] .tile-open, [data-piece-id="${CSS.escape(lastId)}"] .row-tappable`,
+        )
+      : null;
+    if (tile) {
+      tile.focus({ preventScroll: true });
+    }
+  }
+}
+
+function renderViewer(list, idx) {
+  const piece = list[idx];
+  const view = viewerState(list, idx, state.viewerKind);
+  const fromHistory = state.viewerKind === "history";
+  els.viewerClose.textContent = fromHistory ? "Back to frame" : "Back to gallery";
+  els.viewerPosition.textContent = view.position;
+  if (els.viewerImage.getAttribute("src") !== piece.url) {
+    els.viewerImage.src = piece.url;
+  }
+  els.viewerImage.alt = piece.title;
+  renderViewerTitle(piece);
+  els.viewerSub.textContent = [piece.artist, piece.folder].filter(Boolean).join(", ");
+  els.viewerPrev.disabled = !view.canPrev;
+  els.viewerNext.disabled = !view.canNext;
+  els.viewerShow.disabled = view.showBlockedReason !== null;
+  els.viewerPin.disabled = view.showBlockedReason !== null;
+  els.viewerNote.hidden = view.showBlockedReason === null;
+  els.viewerNote.textContent = view.showBlockedReason || "";
+
+  const others = !state.artIndex || !piece.folder ? [] : state.artIndex.folders.map((f) => f.name).filter((n) => n !== piece.folder);
+  const sig = JSON.stringify(others);
+  if (els.viewerMove.dataset.sig !== sig) {
+    els.viewerMove.dataset.sig = sig;
+    els.viewerMove.replaceChildren();
+    const first = document.createElement("option");
+    first.value = "";
+    first.textContent = "Choose a folder";
+    els.viewerMove.append(first);
+    for (const name of others) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      els.viewerMove.append(option);
+    }
+  }
+  els.viewerMove.value = "";
+  els.viewerMove.disabled = others.length === 0;
+
+  // Warm the neighbours so a step does not wait on the network.
+  for (const near of [list[idx - 1], list[idx + 1]]) {
+    if (near) {
+      new Image().src = near.url;
+    }
+  }
+}
+
+// The title, a link to the catalogue page when the piece carries one (same
+// rel and target as every other source link).
+function renderViewerTitle(piece) {
+  els.viewerTitle.replaceChildren();
+  if (piece.source_url) {
+    const link = document.createElement("a");
+    link.textContent = piece.title;
+    link.href = piece.source_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    els.viewerTitle.append(link);
+  } else {
+    els.viewerTitle.textContent = piece.title;
+  }
+}
+
+function stepViewer(dir) {
+  const list = viewerList();
+  const idx = viewerIndexNow(list);
+  const next = stepIndex(idx, list.length, dir);
+  if (idx < 0 || next === idx) {
+    return;
+  }
+  state.viewerId = list[next].id;
+  // Replace, not push: Back still closes the viewer in one step.
+  history.replaceState(null, "", galleryHash(state.viewerId));
+  renderViewer(list, next);
+}
+
+function closeViewer() {
+  if (state.viewerPushed) {
+    state.viewerPushed = false;
+    history.back();
+    return;
+  }
+  history.replaceState(null, "", "#gallery");
+  syncViewer();
+}
+
+// After the shown piece left the list (trashed, or moved out of this folder),
+// land on whatever took its place, or close when nothing is left.
+function viewerAfterRemoval(idx, source) {
+  const index = state.artIndex;
+  // The same source the index was taken from, so the two always agree.
+  const list = !index ? [] : source === "all" ? index.pieces : piecesInFolder(index, state.artFilter);
+  const id = idAfterRemoval(list, idx);
+  if (id === null) {
+    closeViewer();
+    return;
+  }
+  state.viewerId = id;
+  history.replaceState(null, "", galleryHash(state.viewerId));
+  syncViewer();
+}
+
+function currentViewerPiece() {
+  const list = viewerList();
+  const idx = viewerIndexNow(list);
+  if (idx < 0) {
+    return null;
+  }
+  if (state.viewerKind === "history") {
+    return { piece: list[idx], idx, source: "history" };
+  }
+  const filtered = state.artIndex ? piecesInFolder(state.artIndex, state.artFilter) : [];
+  return { piece: list[idx], idx, source: viewerSource(filtered, state.viewerId) };
+}
+
+// If the frame is showing this piece now, move it on first so it is gone from
+// the panel in one redraw (as the frame's own Delete does).
+async function advanceFrameIfShowing(piece) {
+  const current = state.artCurrent;
+  if (!current) {
+    return;
+  }
+  const same = (current.id && current.id === piece.id) || current.file === piece.file;
+  const command = same ? artCommandBody(state.selectedFrame, "next") : null;
+  if (command) {
+    await postApi("/api/art/command", command);
+  }
+}
+
+async function keepOnFrame(piece) {
+  const show = artCommandBody(state.selectedFrame, "show", piece.id);
+  const pin = framePinBody(state.selectedFrame, "art", "forever");
+  if (!show || !pin) {
+    return;
+  }
+  let result = await postApi("/api/art/command", show);
+  if (result.ok) {
+    result = await postApi("/api/frame/pin", pin);
+  }
+  showToast(result.ok ? "On the frame until you unpin it." : result.error);
+  refreshArt();
+  refreshFrame();
+  refreshFrameControl();
+}
+
+async function moveViewerPiece(folder) {
+  const here = currentViewerPiece();
+  if (!here || !folder) {
+    return;
+  }
+  const { piece, idx, source } = here;
+  await advanceFrameIfShowing(piece);
+  const result = await postApi("/api/art/move", { id: piece.id, folder });
+  if (!result.ok) {
+    showToast(result.error);
+    renderViewer(viewerList(), idx);
+    return;
+  }
+  refreshArt();
+  refreshFrame();
+  await refreshLibrary();
+  const movedId = movedPieceId(state.artIndex, folder, piece);
+  showToast(
+    `Moved to ${folder}.`,
+    movedId ? () => runAction("/api/art/move", { id: movedId, folder: piece.folder }) : null,
+  );
+  if (source === "history") {
+    // The piece is still in the history under a new id: follow it.
+    if (!movedId) {
+      closeViewer();
+      return;
+    }
+    state.historyMoved.set(piece.origId, movedId);
+    renderArtHistory(state.artHistory);
+    state.viewerId = movedId;
+    history.replaceState(null, "", galleryHash(movedId));
+    syncViewer();
+    return;
+  }
+  viewerAfterRemoval(idx, source);
+}
+
+async function trashViewerPiece() {
+  const here = currentViewerPiece();
+  if (!here) {
+    return;
+  }
+  const rest = viewerList().filter((p) => p.id !== here.piece.id);
+  await advanceFrameIfShowing(here.piece);
+  if (!(await moveToTrash(here.piece.id))) {
+    return;
+  }
+  if (here.source !== "history") {
+    viewerAfterRemoval(here.idx, here.source);
+    return;
+  }
+  // A history piece: hide it from the log for this session, then land on the
+  // next entry (the hub's log may still list a trashed piece).
+  state.historyHidden.add(here.piece.id);
+  renderArtHistory(state.artHistory);
+  const id = idAfterRemoval(rest, here.idx);
+  if (id === null) {
+    closeViewer();
+    return;
+  }
+  state.viewerId = id;
+  history.replaceState(null, "", galleryHash(id));
+  syncViewer();
+}
+
+function wireViewer() {
+  els.viewerClose.addEventListener("click", closeViewer);
+  els.viewerPrev.addEventListener("click", () => stepViewer(-1));
+  els.viewerNext.addEventListener("click", () => stepViewer(1));
+  els.viewerShow.addEventListener("click", () => {
+    const here = currentViewerPiece();
+    if (here) {
+      runArtCommand("show", here.piece.id);
+      showToast("Showing on the frame.");
+    }
+  });
+  els.viewerPin.addEventListener("click", () => {
+    const here = currentViewerPiece();
+    if (here) {
+      keepOnFrame(here.piece);
+    }
+  });
+  els.viewerMove.addEventListener("change", () => moveViewerPiece(els.viewerMove.value));
+  els.viewerTrash.addEventListener("click", trashViewerPiece);
+
+  // Swipe: the finger moves left to go on. Mostly vertical moves are left to
+  // the page (the stage allows vertical panning only).
+  let start = null;
+  els.viewerStage.addEventListener("pointerdown", (event) => {
+    start = { x: event.clientX, y: event.clientY };
+  });
+  els.viewerStage.addEventListener("pointerup", (event) => {
+    if (!start) {
+      return;
+    }
+    const dir = swipeDirection(start.x - event.clientX, event.clientY - start.y);
+    start = null;
+    if (dir !== 0) {
+      stepViewer(dir);
+    }
+  });
+  els.viewerStage.addEventListener("pointercancel", () => {
+    start = null;
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (els.galleryViewer.hidden || event.defaultPrevented) {
+      return;
+    }
+    const tag = event.target instanceof Element ? event.target.tagName : "";
+    if (tag === "SELECT" || tag === "INPUT" || tag === "TEXTAREA") {
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      stepViewer(-1);
+    } else if (event.key === "ArrowRight") {
+      stepViewer(1);
+    } else if (event.key === "Escape") {
+      closeViewer();
+    }
+  });
+}
+
 // Post one write to the admin service, returning { ok } or { ok:false, error }.
 async function postApi(path, body) {
   const { url, init } = apiRequest(path, body);
@@ -2491,34 +3206,33 @@ async function runAction(path, body) {
   refreshLibrary();
 }
 
-// A short-lived toast at the foot of the page, optionally carrying an Undo
-// action. It clears itself so a stale message does not sit under a later one.
-function showToast(text, onUndo) {
-  clearTimeout(state.toastTimer);
-  els.toast.replaceChildren();
-  const span = document.createElement("span");
-  span.className = "toast-text";
-  span.textContent = text;
-  els.toast.append(span);
-  if (onUndo) {
-    const undo = document.createElement("button");
-    undo.className = "toast-undo";
-    undo.type = "button";
-    undo.textContent = "Undo";
-    undo.addEventListener("click", () => {
-      hideToast();
-      onUndo();
-    });
-    els.toast.append(undo);
-  }
-  els.toast.hidden = false;
-  state.toastTimer = setTimeout(hideToast, TOAST_MS);
-}
+// A short-lived toast above the tab bar, optionally carrying an Undo action.
+// A new toast replaces the previous one. It never takes focus.
+const toaster = createToaster({
+  now: () => Date.now(),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (id) => clearTimeout(id),
+  render: ({ visible, text, undo }) => {
+    els.toast.replaceChildren();
+    els.toast.hidden = !visible;
+    if (!visible) return;
+    const span = document.createElement("span");
+    span.className = "toast-text";
+    span.textContent = text;
+    els.toast.append(span);
+    if (undo) {
+      const button = document.createElement("button");
+      button.className = "toast-undo";
+      button.type = "button";
+      button.textContent = "Undo";
+      button.addEventListener("click", undo);
+      els.toast.append(button);
+    }
+  },
+});
 
-function hideToast() {
-  clearTimeout(state.toastTimer);
-  els.toast.hidden = true;
-  els.toast.replaceChildren();
+function showToast(text, onUndo) {
+  toaster.show(text, onUndo);
 }
 
 function fillSelect(select, options, selected) {
@@ -2557,15 +3271,6 @@ function thumbPlaceholder(className) {
   return ph;
 }
 
-function menuButton(label, onClick, extraClass) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = extraClass ? `menu-item ${extraClass}` : "menu-item";
-  button.textContent = label;
-  button.addEventListener("click", onClick);
-  return button;
-}
-
 // Section visibility: the frame shows with a mirror, a current piece, or the
 // manager; the library, rotation, upload, and trash need the admin service; the
 // art-history section needs at least one shown piece. Now playing and play
@@ -2578,9 +3283,8 @@ function updateSections() {
   els.frameHint.hidden = !managerActive;
   els.frameCaption.hidden = !state.artCurrent;
 
-  // The Pin control shows whenever there is a frame to pin; its own body shows
-  // the pin form or the "unavailable" note from the frame-control document.
-  els.pin.hidden = !frameVisible;
+  // Keep showing needs a frame to pin and the frame-control document.
+  els.pin.hidden = !frameVisible || !frameControlVisible;
 
   els.library.hidden = !managerActive;
   els.rotation.hidden = !managerActive;
@@ -2590,9 +3294,50 @@ function updateSections() {
   els.artHistorySection.hidden = state.artHistory.length === 0;
 }
 
+// The audio server's reachability. While it is down the speaker banner shows and
+// the room controls are disabled; the next good status read clears both.
+function setSpeakers(connection) {
+  if (state.speakers === connection) {
+    return;
+  }
+  state.speakers = connection;
+  const message = speakerBanner(connection);
+  els.speakers.textContent = message || "";
+  els.speakers.hidden = message === null;
+  // One calm banner at a time: the slow-updates line waits while the speaker
+  // banner shows.
+  setConnection(state.connectionMessage);
+  renderListen();
+}
+
+function renderNotSetUp(hosts) {
+  els.notSetUp.hidden = hosts.length === 0;
+  els.notSetUpList.replaceChildren(
+    ...hosts.map((host) => {
+      const li = document.createElement("li");
+      li.className = "row";
+      li.textContent = host;
+      return li;
+    }),
+  );
+}
+
+function renderNeedsAttention(troubled) {
+  els.needsAttention.hidden = troubled.length === 0;
+  els.needsAttentionList.replaceChildren(
+    ...troubled.map(({ host, reason }) => {
+      const li = document.createElement("li");
+      li.className = "row";
+      li.textContent = `${host}: ${reasonLabel(reason)}`;
+      return li;
+    }),
+  );
+}
+
 function setConnection(message) {
+  state.connectionMessage = message;
   els.connection.textContent = message;
-  els.connection.hidden = message === "";
+  els.connection.hidden = message === "" || state.speakers === "down";
 }
 
 

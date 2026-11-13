@@ -13,7 +13,7 @@ import path from "node:path";
 const SITE = fileURLToPath(new URL("../../roles/room_picker/files/site/", import.meta.url));
 const IMPORT_RE = /import\s*\{([^}]*)\}\s*from\s*"(\.\/[^"]+)";/g;
 
-for (const file of ["rooms.js", "pair-controller.js", "devices-controller.js", "volume-slider.js"]) {
+for (const file of ["rooms.js", "pair-controller.js", "devices-controller.js", "volume-slider.js", "nav-model.js"]) {
   test(`${file} imports only names the modules it imports actually export`, async () => {
     const source = readFileSync(path.join(SITE, file), "utf8");
     let checked = 0;

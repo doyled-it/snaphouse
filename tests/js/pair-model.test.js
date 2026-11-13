@@ -141,12 +141,12 @@ test("interpretPairResponse flags a 409 on start as the window already being ope
   const got = interpretPairResponse(409, JSON.stringify({ error: "already open" }), "start");
   assert.equal(got.ok, false);
   assert.equal(got.conflict, true);
-  assert.equal(got.error, "The pairing window is already open.");
+  assert.equal(got.error, "Pairing is already open.");
 
   // No endpoint given defaults to the start copy.
   const bare = interpretPairResponse(409, "");
   assert.equal(bare.conflict, true);
-  assert.equal(bare.error, "The pairing window is already open.");
+  assert.equal(bare.error, "Pairing is already open.");
 });
 
 test("interpretPairResponse flags a 403 from the guard", () => {

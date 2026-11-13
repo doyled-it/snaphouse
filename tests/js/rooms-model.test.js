@@ -13,7 +13,6 @@ import {
   toggleRequest,
   volumeRequest,
   groupUnmuteRequest,
-  healthBanner,
   artFromHistory,
   safeJsonParse,
   interpretRpcResponse,
@@ -150,59 +149,6 @@ test("volumeRequest rounds a fractional percent and keeps the method and id", ()
   assert.equal(req.method, "Client.SetVolume");
   assert.equal(req.params.id, "bedroom");
   assert.equal(req.params.volume.percent, 34);
-});
-
-// healthBanner takes one entry per host: { host, status } where status is the
-// parsed status.json object, or null when the host could not be reached. A bare
-// null cannot name its own host, so the host name travels alongside it.
-function healthy(host, commit = "abc123") {
-  return { host, status: { verify: "pass", commit, main_commit: commit } };
-}
-
-test("healthBanner returns null when every host passes and is up to date", () => {
-  const banner = healthBanner([
-    healthy("house"),
-    healthy("office"),
-    healthy("nightstand"),
-    healthy("nightstand-frame"),
-  ]);
-  assert.equal(banner, null);
-});
-
-test("healthBanner names a host whose verify failed", () => {
-  const banner = healthBanner([
-    healthy("house"),
-    { host: "office", status: { verify: "fail", commit: "abc", main_commit: "abc" } },
-    healthy("nightstand"),
-  ]);
-  assert.notEqual(banner, null);
-  assert.match(banner, /office/);
-  assert.doesNotMatch(banner, /house/);
-});
-
-test("healthBanner names a host that is behind main", () => {
-  const banner = healthBanner([
-    healthy("house"),
-    { host: "nightstand", status: { verify: "pass", commit: "old", main_commit: "new" } },
-  ]);
-  assert.match(banner, /nightstand/);
-});
-
-test("healthBanner names an unreachable host", () => {
-  const banner = healthBanner([
-    healthy("house"),
-    { host: "nightstand-frame", status: null },
-  ]);
-  assert.match(banner, /nightstand-frame/);
-});
-
-test("healthBanner names several troubled hosts together", () => {
-  const banner = healthBanner([
-    { host: "office", status: { verify: "fail", commit: "a", main_commit: "a" } },
-    { host: "nightstand-frame", status: null },
-  ]);
-  assert.match(banner, /office/);
-  assert.match(banner, /nightstand-frame/);
 });
 
 // artFromHistory takes the parsed art-history.json the hub republishes (shape in

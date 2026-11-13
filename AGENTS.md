@@ -176,6 +176,108 @@ fails authentication (the phone forgot the speaker, the hub kept the key) has it
 stale pairing removed once so its next try in the same window succeeds
 (`_make_line_handler` in `pairing.py`).
 
+## Health banner, speaker banner and "Not set up yet"
+
+Two banners sit above every tab. The speaker banner ("Can't reach the speakers
+right now. Retrying.") shows while the audio server cannot be read and disables
+every room control, "Everything off" included, until the next good status read.
+The health banner ("A part of the house isn't responding...") never names a
+machine. `health-model.js` (`classifyMachines`, `healthMessage`, `speakerBanner`,
+tests in `tests/js/health-model.test.js`) holds the rules: a machine whose status
+is unreadable is troubled, and so is one whose `verify` is not `pass` or whose
+commit is not `main_commit`. The one exception is a machine the inventory marks
+`installed: false` in `vars/hosts.yml` that has no status: it is listed in
+Settings under "Not set up yet" and raises nothing.
+
+"Never reported" comes from the inventory, not from the page's memory. The
+house-status targets file carries each host's `installed` flag and
+`snaphouse.housestatus` copies it onto its `machines[]` entry in
+`house-status.json`, so a machine that dies stays flagged after every reload.
+Flip `installed` to true (or delete it) in a one-line PR when the host is built,
+like `frame_hardware`. Settings holds Phones only (pair, paired phones) plus that
+list. UI copy never says snapserver, pairing service, hub or a host name outside
+Settings.
+
+## Page navigation
+
+The room-picker page has no drawer. A `<nav aria-label="Pages">` of tabs
+(Listen, Frame, Gallery, Climate, Settings) is fixed to the bottom on a phone
+and becomes a vertical left rail in the 800x480 kiosk media query. The URL hash
+is the screen: `#listen` (home), `#frame` and `#frame/<id>`, `#gallery`,
+`#climate`, `#settings`. `#art` and `#art/...` are aliases of `#gallery`. The
+rules are pure in `nav-model.js` (`resolveScreen`, `visibleTabs`,
+`frameTabVisible`, tests in `tests/js/nav-model.test.js`); `rooms.js` applies
+them on load and on `hashchange`, and rewrites the hash with `replaceState`
+when it was an alias or a hidden screen, so Back never lands on it. The current
+tab carries `aria-current="page"`.
+
+Frame content is, top to bottom: the frame switcher (two or more frames), the
+mirror, Back / Next, **Keep showing this** (one tap pins the current image until
+unpinned via `keepShowingBody`, then the button reads Unpin and an unpin gives an
+Undo toast through `repinBody`; "For how long..." opens the full what and how-long
+choice; the whole control is gone without `frame-control.json`), the art history,
+then the autosaving frame settings. A history row opens the Gallery viewer at
+`#gallery/<id>` with `viewerState(..., "history")` (state `viewerKind`): the same
+Show on the frame, Keep it there, Move to folder (the viewer follows the new id)
+and Move to trash (with an Undo toast; there is no history-only removal), and the
+title links to the catalogue page when the piece has one; Back returns to the Frame
+tab. While the frame shows now playing the pin button reads "Keep showing art",
+since the pin always holds art.
+
+Frame is hidden until the frame-control document lists frames or a frame mirror
+(`frame.json`) answers. Climate is hidden until the homebody page exists: to
+unhide it, flip `CLIMATE_ENABLED` in `nav-model.js` and add a `screen-climate`
+section to `index.html` and `els.screens`.
+
+## The Bluetooth name is published as a static file
+
+The `room_picker` role templates `/var/lib/snaphouse/room-picker/bluetooth.json`
+(`{"name": ...}`) from `bt_receive_alias`, falling back to `house_stream_name`,
+the same expression the `bluetooth` role uses for the adapter alias. The alias
+lives only in `/etc/snaphouse/local.yml`; the repo carries a commented
+placeholder. The page treats a missing or malformed file as "no name".
+
+## Listen: Only here, Everything off, and Undo
+
+Each room row on Listen shows its name, a state label (`54%`, `Off`, or `Not
+responding`, from `roomState` in `listen-model.js`), an "Only here" chip, the
+switch, and the slider always visible beneath. An unreachable room has its
+controls disabled and says so in words. Dragging an off room's slider sends the
+unmute first and the volume second, and the row flips to on.
+
+"Only here" turns the chosen room on and every other reachable room off;
+"Everything off" (in the header, disabled when nothing is on) turns every
+reachable room off. Both send only rooms that are not already right, through the
+same `setRoomPower` path as the switch (group unmute first when the room's group
+is muted, then `toggleRequest`). Volumes are never touched.
+
+Undo versus confirm: a reversible action (Only here, Everything off, move to
+trash, move to folder, unpin) acts at once and shows an 8 s Undo toast; a
+destructive one (empty the trash, forget a phone, delete a folder that still has
+images) asks first and has no Undo. Undo for the two bulk actions replays the
+per-room on/off snapshot taken before the action (`snapshotRooms`, `undoPlan` in
+`undo.js`), so volumes you changed in between stay as they are. With nothing
+playing, the now-playing strip shows how to start something, naming the
+Bluetooth speaker from `bluetooth.json` when the hub published one.
+
+## Gallery grid and viewer
+
+The Gallery tab shows the library grid open by default (folder filter and pager),
+then upload with its target-folder select, a "Manage folders" disclosure, and the
+trash. A tile is one button that opens the viewer, an in-tab view addressed by
+`#gallery/<encoded id>` (`#art/<id>` aliases to it; `resolveScreen` keeps the
+piece). Opening pushes a hash entry, so Back closes the viewer and the grid comes
+back at the scroll position taken at the tap; stepping (buttons, arrow keys, a
+swipe) uses `replaceState`, so Back is still one step. The pure rules are in
+`gallery-viewer.js` (`viewerState`, `stepIndex`, `swipeDirection`, hash helpers,
+tests in `tests/js/gallery-viewer.test.js`); the frame history reuses `viewerState` with
+source `"history"`. Actions: Show on the frame (landscape only), Keep it there
+(show, then pin art until unpinned), Move to folder and Move to trash (both
+advance the frame first when it is showing the piece, and give an Undo toast).
+There is no hub API to empty the trash, so there is no "Empty trash" button; the
+hub purges after 30 days. Deleting a folder that still has pictures asks inline,
+then moves each picture to the trash before removing the (now empty) folder.
+
 ## Polling sleeps while hidden, lists patch in place
 
 Every polling interval in `rooms.js` registers with `page-timers.js`; the
@@ -188,6 +290,34 @@ progress fill is a full-width element moved by `scaleX` in one `requestAnimation
 loop that runs only while a track is playing and the tab is visible; the time text is
 written only when the whole second changes. Tests: `tests/js/page-timers.test.js`,
 `tests/js/keyed-list.test.js`.
+
+## Settings save themselves
+
+There are no Save buttons. Each settings object gets one autosave queue
+(`autosave-queue.js`, tests in `tests/js/autosave-queue.test.js`): the shared
+frame settings (now-playing kinds, morning weather, weather city), each frame's
+quiet hours (one queue per frame), and the art rotation. Rules: a field change
+merges into the latest known object, so two quick edits make one write; at most
+one write is in flight per object and an edit made meanwhile waits, then the next
+write carries the latest merged object (latest wins); switches and chips write at
+once (`{ delayMs: 0 }`), text and time fields after 600 ms or on blur; a failed
+write keeps its patch and Retry re-sends it merged with newer edits; `seed` takes
+the hub's document without writing and never drops an unsent patch. The page
+shows "Saved" next to the setting for 1.5 s and "Couldn't save. Retry" on failure,
+and writes only the keys that differ from what the hub holds (so an unchanged
+weather city is not geocoded again). A bad 24-hour time is explained inline and
+never written. Rendering from the hub's document skips a queue that is pending,
+saving or failed, and never overwrites the field being typed in.
+
+All frame settings live on the Frame tab (below the mirror, pin and history), not
+in Settings. Quiet hours is one control per frame: a switch and two times; the
+frame follows the shared window until it has an override, and the override is
+written through the per-frame path (the shared window alone on the old
+single-frame contract). The shared window is a hub default that
+the page does not edit; a frame with its own hours shows a "Use the default hours"
+link that writes `quiet_hours: null` through the same queue. "Saved" and Retry
+attach to the groups a write actually carried, and pending edits flush when the
+tab is hidden or the page is left.
 
 ## Volume slider
 
