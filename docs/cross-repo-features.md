@@ -430,6 +430,69 @@ Snapweb. The nightstand frame no longer calls snapserver directly for playback d
 now-playing work it reads the hub's `/now-playing.json` (and covers via each track's `art_url`),
 the "Now-playing file" contract above.
 
+**homebody status file and settings API.** `homebody` (a separate repo, run on the hub as
+`homebody.service` by the `homebody_bootstrap` role) tracks who is home and sets the thermostat.
+`homebody run` is one process: the daemon loop and the settings API. snaphouse owns the unit, the
+nginx routes and the port pin (`homebody_api_port: 8783` in `vars/all.yml`); homebody owns the
+document and the API behaviour.
+
+*Status file.* The daemon writes `/var/lib/snaphouse/public/homebody/homebody.json` atomically
+(temp file in the same dir, fsync, rename), mode 0644, after every tick and right after a settings
+change. The directory is owned by the `homebody` user (0755); the shared public root is never
+chowned. nginx serves it at `location = /homebody.json` (`default_type application/json`, same
+headers as `/now-playing.json`). All keys are always present, null when unknown:
+
+```json
+{
+  "version": 1,
+  "updated": "2026-11-13T15:04:05Z",
+  "enabled": true,
+  "occupied": true,
+  "people": [
+    {"name": "Display Name", "state": "home", "last_seen": "2026-11-13T15:03:58Z", "via": "wifi"}
+  ],
+  "thermostat": {"reachable": true, "mode": "cool", "setpoint_f": 72.0, "temperature_f": 74.3},
+  "override": false,
+  "last_change": {"at": "2026-11-13T14:40:00Z", "setpoint_f": 72.0, "reason": "home"},
+  "settings": {"comfort_f": 72, "away_f": 82, "away_minutes": 20}
+}
+```
+
+- `occupied`: true, false, or null (unknown, for example right after boot or with no enabled people).
+- `people`: enabled people only, display names from local config. `state` is `home`, `away` or
+  `unknown`; `via` is `wifi`, `bluetooth` or null.
+- `thermostat.mode`: lower-case Matter system mode name (`off`, `cool`, `heat`, `auto`, ...) or null.
+  `thermostat.reachable` is null until homebody's first thermostat read after start, then true or
+  false; readers treat null as "not known yet". False means the controller or thermostat could not be
+  read, and the other thermostat fields are then the last known values or null.
+- `last_change`: the last command homebody applied (not hand changes), or null; `reason` is `home`
+  or `away`.
+- `enabled`: automation on or off. Off still tracks and publishes presence but sends no thermostat
+  commands. Turning it on acts on the current occupancy at the next tick (subject to pacing and the
+  override rule).
+- Timestamps are UTC ISO 8601 with a Z, whole seconds.
+
+*Settings API.* homebody listens on `127.0.0.1:8783` (its `[api] port`). nginx proxies
+`location /api/homebody/` to it (`client_max_body_size 64k`). `POST /api/homebody/settings` takes a
+JSON body with any subset of `enabled` (bool), `comfort_f` (int 60 to 85), `away_f` (int 65 to 90),
+`away_minutes` (int 5 to 120); the merged result must keep `comfort_f` < `away_f`.
+
+- The header `X-Snaphouse: 1` is required, else 403 `{"error": "..."}`. Non-JSON, unknown keys, wrong
+  types or out-of-range values give 400 `{"error": "<plain sentence>"}`. Other paths 404, other
+  methods 405.
+- 200 returns the full status document (the same shape as `homebody.json`) after the change.
+- Settings changed through the API persist in the daemon's state across restarts and override
+  `local.toml`, which stays read-only to homebody.
+- A changed `away_minutes` applies to the presence window from the next tick. A changed
+  `comfort_f` or `away_f` with occupancy unchanged updates the target: homebody sends the new setpoint
+  (paced, no override flagged for its own change), unless a hand-change override is active, which
+  holds until the next transition.
+
+With no enabled people in `local.toml`, occupancy stays unknown and nothing is ever commanded. The
+hub's `homebody-update` path restarts `homebody-matter homebody`, the same unit names the role
+installs. The on-device check `homebody_status.sh` needs the unit active and `/homebody.json` served
+as a JSON object (it retries 45 s for the first write, then fails naming the missing part).
+
 ## Feature type to surface
 
 | Change | snaphouse | nightstand |
