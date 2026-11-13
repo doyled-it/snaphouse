@@ -183,8 +183,9 @@ Each room's volume is a custom `div role="slider"` (`volume-slider.js`), not an
 live in `volume-controller.js`, the pure part (no DOM, clock and transport
 injected), pinned by `tests/js/volume-controller.test.js`: at most one write per
 100 ms with a trailing send of the final value, at most one request in flight per
-room (`sendControl` returns the HTTP promise so the slot is held until it
-settles), status for a room is ignored while it is dragged, and after release the
+room (the WebSocket path is fire-and-forget, so it holds the slot for the
+100 ms gap only; the HTTP fallback returns its promise from `sendControl`, so it
+holds the slot until the promise settles), status for a room is ignored while it is dragged, and after release the
 user's value is held until the hub reports within 1 of it or 2 s pass. Fill and
 thumb move by `transform` once per animation frame from a cached track width.
 Haptics (`haptics.js`, Android `navigator.vibrate`, feature-detected) fire only

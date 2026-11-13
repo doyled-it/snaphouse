@@ -100,6 +100,11 @@ export function createVolumeSlider({
     } catch (_) {
       // A synthetic or already-ended pointer cannot be captured; the drag still works.
     }
+    try {
+      el.focus();
+    } catch (_) {
+      // Focus is a convenience so arrow keys work right after a tap.
+    }
     el.classList.add("drag");
     const v = pointerValue(e);
     change(v);
@@ -147,6 +152,7 @@ export function createVolumeSlider({
     },
     setEnabled(on) {
       enabled = Boolean(on);
+      if (!enabled) release();
       if (enabled) el.removeAttribute("aria-disabled");
       else el.setAttribute("aria-disabled", "true");
       el.setAttribute("tabindex", enabled ? "0" : "-1");

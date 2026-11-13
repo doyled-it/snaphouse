@@ -30,6 +30,8 @@ function fakeEl() {
       return e;
     },
     setPointerCapture(id) { el.captured = id; },
+    focused: 0,
+    focus() { el.focused += 1; },
     getBoundingClientRect: () => ({ left: 100, width: 226 }),
     offsetWidth: 226,
   };
@@ -174,4 +176,21 @@ test("a disabled slider ignores all input and sets aria-disabled", () => {
   assert.equal(slider.el.getAttribute("aria-disabled"), null);
   slider.el.fire("keydown", { key: "ArrowUp" });
   assert.deepEqual(sent, [2]);
+});
+
+test("pointerdown focuses the slider so keys work after a tap", () => {
+  const { slider } = setup();
+  slider.el.fire("pointerdown", { pointerId: 1, clientX: 150 });
+  assert.equal(slider.el.focused, 1);
+});
+
+test("disabling mid-drag ends the drag and stops sending", () => {
+  const { slider, sent, advance } = setup();
+  slider.el.fire("pointerdown", { pointerId: 1, clientX: 100 + 50 });
+  assert.deepEqual(sent, [22]);
+  slider.setEnabled(false);
+  assert.ok(!slider.el.classList.contains("drag"));
+  slider.el.fire("pointermove", { pointerId: 1, clientX: 100 + 200 });
+  advance(200);
+  assert.deepEqual(sent, [22]);
 });
