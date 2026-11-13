@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveScreen, visibleTabs, TAB_LABELS, CLIMATE_ENABLED } from "../../roles/room_picker/files/site/nav-model.js";
+import { resolveScreen, visibleTabs, TAB_LABELS } from "../../roles/room_picker/files/site/nav-model.js";
 
 const none = { frame: false, climate: false };
 const withFrame = { frame: true, climate: false };
@@ -33,8 +33,8 @@ test("visible tabs in bar order", () => {
 test("every tab has a label", () => {
   assert.deepEqual(TAB_LABELS, { listen: "Listen", frame: "Frame", gallery: "Gallery", climate: "Climate", settings: "Settings" });
 });
-test("climate stays hidden until the homebody page exists", () => {
-  assert.equal(CLIMATE_ENABLED, false);
+test("climate resolves to itself once it is visible", () => {
+  assert.deepEqual(resolveScreen("#climate", { frame: false, climate: true }), { screen: "climate", hash: "#climate" });
 });
 
 import { frameTabVisible } from "../../roles/room_picker/files/site/nav-model.js";
@@ -59,4 +59,17 @@ test("#gallery/<id> keeps the piece, and #art/<id> aliases to it", () => {
   assert.deepEqual(resolveScreen("#gallery/Trip%2Fa.jpg", none), { screen: "gallery", hash: "#gallery/Trip%2Fa.jpg" });
   assert.deepEqual(resolveScreen("#art/a.jpg", none), { screen: "gallery", hash: "#gallery/a.jpg" });
   assert.deepEqual(resolveScreen("#gallery/", none), { screen: "gallery", hash: "#gallery" });
+});
+
+import { climateTabVisible } from "../../roles/room_picker/files/site/nav-model.js";
+
+test("climate tab shows until the first read finishes", () => {
+  assert.equal(climateTabVisible(null, false), true);
+});
+test("climate tab shows when homebody.json parsed", () => {
+  assert.equal(climateTabVisible({ enabled: true }, true), true);
+});
+test("climate tab hides when homebody.json is missing or malformed", () => {
+  assert.equal(climateTabVisible(null, true), false);
+  assert.equal(climateTabVisible(undefined, true), false);
 });

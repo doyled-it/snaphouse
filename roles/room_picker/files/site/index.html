@@ -324,6 +324,74 @@
       </section>
 
       <!-- Settings: Phones only, plus machines that are not set up yet. -->
+      <!-- Climate: who is home, the thermostat now, and the automatic-change
+           settings. Hidden with its tab when the hub has no climate document. -->
+      <section class="screen" id="screen-climate" aria-label="Climate" hidden>
+        <div class="climate-cols">
+          <div class="climate-col">
+            <section id="cl-people-panel" class="section panel" aria-labelledby="cl-people-h">
+              <h2 id="cl-people-h" class="section-h">Who is home</h2>
+              <ul id="cl-people" class="cl-people"></ul>
+              <p id="cl-people-empty" class="settings-note" hidden></p>
+            </section>
+
+            <section id="cl-thermostat-panel" class="section panel" aria-labelledby="cl-thermo-h">
+              <h2 id="cl-thermo-h" class="section-h">Thermostat</h2>
+              <div class="cl-reading">
+                <p id="cl-temp" class="cl-temp" aria-label="Temperature now">--</p>
+                <p class="cl-set"><span id="cl-mode" class="cl-mode"></span> <span id="cl-setpoint-wrap">set to <b id="cl-setpoint">--</b></span></p>
+              </div>
+              <p id="cl-thermo-msg" class="cl-msg" role="status" hidden></p>
+              <p id="cl-last" class="settings-note"></p>
+              <p id="cl-override" class="cl-override" hidden></p>
+            </section>
+          </div>
+
+          <section id="cl-settings-panel" class="section panel" aria-labelledby="cl-auto-h">
+            <div class="group-head">
+              <h2 id="cl-auto-h" class="section-h cl-auto-h">Automatic changes</h2>
+              <span class="save-status" data-status="climate" role="status"></span>
+            </div>
+            <label class="switch-field">
+              <input id="cl-enabled" type="checkbox" class="switch-input" />
+              <span class="field-label">Change the thermostat for me</span>
+            </label>
+            <p class="settings-note">Cools less when everyone has left, and returns to your comfort temperature when someone comes home.</p>
+
+            <div class="cl-steppers">
+              <div class="cl-stepper" data-setting="comfort_f">
+                <span id="cl-comfort-l" class="field-label">Comfort, when home</span>
+                <div class="cl-step-row">
+                  <button type="button" class="btn cl-step" data-dir="-1" aria-label="Lower comfort temperature">&minus;</button>
+                  <input id="cl-comfort" class="text cl-input" type="text" inputmode="numeric" autocomplete="off" aria-labelledby="cl-comfort-l" />
+                  <span class="cl-unit">&deg;F</span>
+                  <button type="button" class="btn cl-step" data-dir="1" aria-label="Raise comfort temperature">+</button>
+                </div>
+              </div>
+              <div class="cl-stepper" data-setting="away_f">
+                <span id="cl-away-l" class="field-label">Away</span>
+                <div class="cl-step-row">
+                  <button type="button" class="btn cl-step" data-dir="-1" aria-label="Lower away temperature">&minus;</button>
+                  <input id="cl-away" class="text cl-input" type="text" inputmode="numeric" autocomplete="off" aria-labelledby="cl-away-l" />
+                  <span class="cl-unit">&deg;F</span>
+                  <button type="button" class="btn cl-step" data-dir="1" aria-label="Raise away temperature">+</button>
+                </div>
+              </div>
+              <div class="cl-stepper" data-setting="away_minutes">
+                <span id="cl-delay-l" class="field-label">Wait before switching to away</span>
+                <div class="cl-step-row">
+                  <button type="button" class="btn cl-step" data-dir="-1" aria-label="Shorter wait">&minus;</button>
+                  <input id="cl-delay" class="text cl-input" type="text" inputmode="numeric" autocomplete="off" aria-labelledby="cl-delay-l" />
+                  <span class="cl-unit">min</span>
+                  <button type="button" class="btn cl-step" data-dir="1" aria-label="Longer wait">+</button>
+                </div>
+              </div>
+            </div>
+            <p id="cl-error" class="fs-error" role="alert" hidden></p>
+          </section>
+        </div>
+      </section>
+
       <section class="screen" id="screen-settings" aria-label="Settings" hidden>
         <!-- Pair a phone: make the hub discoverable for a short window. The hub
              accepts the first phone that asks, so there is no code to read here:

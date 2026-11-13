@@ -2,10 +2,6 @@
 // resolves to. Pure; rooms.js owns the DOM.
 import { screenFromHash } from "./rooms-model.js";
 
-// Climate stays hidden until the homebody page exists. Flip this one flag to
-// show the tab and make #climate reachable.
-export const CLIMATE_ENABLED = false;
-
 export const TAB_LABELS = {
   listen: "Listen",
   frame: "Frame",
@@ -64,4 +60,15 @@ export function frameTabVisible(control, mirrors, probed) {
     return true;
   }
   return Object.values(mirrors || {}).some((mirror) => mirror);
+}
+
+// Whether the Climate tab shows: the hub's homebody.json answered with a
+// document the page can read. Until the first read finishes the answer is yes,
+// so a deep link to #climate is not rewritten while it loads; a missing or
+// malformed file hides the tab.
+export function climateTabVisible(doc, probed) {
+  if (!probed) {
+    return true;
+  }
+  return Boolean(doc);
 }

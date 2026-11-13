@@ -81,7 +81,19 @@ import {
   forgetReminder,
 } from "./rooms-model.js";
 import { createAutosave, changedKeys, saveStatus } from "./autosave-queue.js";
-import { CLIMATE_ENABLED, frameTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
+import { climateTabVisible, frameTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
+import {
+  EMPTY_PEOPLE_TEXT,
+  SETTING_LIMITS,
+  checkSettings,
+  lastChangeText,
+  overrideText,
+  parseClimateText,
+  parseWhole,
+  peopleLines,
+  settingsBody,
+  thermostatView,
+} from "./climate-model.js";
 import { createPairController } from "./pair-controller.js";
 import { createDevicesController } from "./devices-controller.js";
 import { createVolumeSlider } from "./volume-slider.js";
@@ -131,6 +143,10 @@ const PAIR_MS = 1000;
 // The Bluetooth devices list changes at a human pace (a phone connects or
 // leaves), so it is polled every few seconds under the same visibility rule.
 const DEVICES_MS = 5000;
+// The climate document: read every 15 s while the Climate tab shows, and once a
+// minute from the other tabs, so the tab appears and disappears with the file.
+const CLIMATE_MS = 15000;
+const CLIMATE_IDLE_EVERY = 4;
 
 // Shown on the connection line when a status reply will not parse. The page
 // keeps its last good render and says so quietly rather than breaking.
@@ -145,6 +161,7 @@ const els = {
     listen: document.getElementById("screen-listen"),
     frame: document.getElementById("screen-frame"),
     gallery: document.getElementById("screen-gallery"),
+    climate: document.getElementById("screen-climate"),
     settings: document.getElementById("screen-settings"),
   },
 
@@ -303,6 +320,10 @@ const els = {
 };
 
 const state = {
+  // The parsed climate document (null: none or unreadable) and whether the
+  // first read has finished, which the Climate tab's visibility waits on.
+  climate: null,
+  climateProbed: false,
   config: { rooms: [] },
   cards: new Map(), // room id -> { card, toggle, slider }
   rooms: new Map(), // room id -> latest row from roomsFromStatus
@@ -414,11 +435,13 @@ async function start() {
   wireFrameControl();
   wirePairing();
   wireDevices();
+  wireClimate();
   renderDevices();
   resolveSelectedFrame();
   applyHash();
   renderPairing();
   refreshHealth();
+  refreshClimate();
   // Read the frame-control document first (it sets the legacy flag and the frame
   // list), then fetch the mirror and history with the right per-frame URLs. The
   // control load kicks its own frame/art refresh when the context first resolves,
@@ -448,6 +471,7 @@ async function start() {
   // polls only when shouldPollPair allows it, so a hidden tab never polls.
   timers.add(pairTick, PAIR_MS);
   timers.add(devicesTick, DEVICES_MS);
+  timers.add(climateTick, CLIMATE_MS);
   timers.start();
 
   // The URL hash is the screen and the chosen frame: Back, forward, and a shared
@@ -522,12 +546,12 @@ function wireChrome() {
 }
 
 // Which optional tabs show. Frame needs at least one frame in the hub's list
-// (the same signals the Frame screen already uses); Climate waits on the flag in
-// nav-model.js.
+// (the same signals the Frame screen already uses); Climate shows while the hub's
+// climate document answers.
 function navVisible() {
   return {
     frame: frameTabVisible(state.frameControl, state.mirrors, state.framesProbed),
-    climate: CLIMATE_ENABLED,
+    climate: climateTabVisible(state.climate, state.climateProbed),
   };
 }
 
@@ -550,6 +574,9 @@ function showScreen(name) {
   // waiting up to a second for the next tick. The devices list too.
   maybePollPairing();
   maybePollDevices();
+  if (screen === "climate" && changed) {
+    refreshClimate();
+  }
 }
 
 // Show the tabs that are visible, in bar order, and mark the current one.
@@ -1262,6 +1289,7 @@ const rotationQueue = createAutosave({
 function flushSettings() {
   sharedQueue.flush();
   rotationQueue.flush();
+  climateQueue.flush();
   for (const queue of frameQuietQueues.values()) {
     queue.flush();
   }
@@ -3585,4 +3613,226 @@ function renderDevices() {
   if (target) {
     target.focus();
   }
+}
+
+// --------------------------------------------------------------------------- //
+// Climate: who is home, the thermostat, and the automatic-change settings. The
+// rules are in climate-model.js; this part reads the hub's homebody.json, draws
+// it, and saves the settings through one autosave queue.
+// --------------------------------------------------------------------------- //
+
+const climateEls = {
+  people: document.getElementById("cl-people"),
+  peopleEmpty: document.getElementById("cl-people-empty"),
+  panel: document.getElementById("cl-thermostat-panel"),
+  temp: document.getElementById("cl-temp"),
+  mode: document.getElementById("cl-mode"),
+  setpointWrap: document.getElementById("cl-setpoint-wrap"),
+  setpoint: document.getElementById("cl-setpoint"),
+  message: document.getElementById("cl-thermo-msg"),
+  last: document.getElementById("cl-last"),
+  override: document.getElementById("cl-override"),
+  enabled: document.getElementById("cl-enabled"),
+  error: document.getElementById("cl-error"),
+  inputs: {
+    comfort_f: document.getElementById("cl-comfort"),
+    away_f: document.getElementById("cl-away"),
+    away_minutes: document.getElementById("cl-delay"),
+  },
+};
+
+// What the hub last stored (the flat object the queue writes against), the
+// values the owner intends (so the comfort-below-away rule sees edits not yet
+// saved), the fields refused inline, and a tick counter for the idle poll.
+let climateWritten = {};
+let climateDraft = {};
+let climateInvalid = new Set();
+let climateState = "idle";
+let climateTicks = 0;
+let climatePeopleKey = "";
+
+const climateQueue = createAutosave({
+  write: writeClimate,
+  onState: (next) => {
+    climateState = next;
+    showSaveStatus("climate", next, () => climateQueue.retry());
+    if (settled(next)) {
+      renderClimate();
+    }
+  },
+});
+
+function climateFlat(doc) {
+  return { enabled: doc.enabled, ...doc.settings };
+}
+
+async function refreshClimate() {
+  let doc = null;
+  try {
+    const response = await fetch("homebody.json", { cache: "no-store" });
+    if (response.ok) {
+      doc = parseClimateText(await response.text());
+    }
+  } catch (_) {
+    doc = null;
+  }
+  applyClimate(doc);
+}
+
+// Take a new document (a poll, or the reply to a write) and draw it. A missing
+// or unreadable one hides the tab, and leaves the screen if it was showing.
+function applyClimate(doc) {
+  state.climate = doc;
+  state.climateProbed = true;
+  if (doc) {
+    climateWritten = climateFlat(doc);
+    climateQueue.seed(climateWritten);
+    if (settled(climateState) && climateInvalid.size === 0) {
+      climateDraft = { ...doc.settings };
+    }
+    renderClimate();
+  }
+  if (state.screen === "climate" && !navVisible().climate) {
+    applyHash();
+  } else {
+    syncTabs();
+  }
+}
+
+function climateTick() {
+  climateTicks += 1;
+  if (state.screen === "climate" || climateTicks % CLIMATE_IDLE_EVERY === 0) {
+    refreshClimate();
+  }
+}
+
+function renderClimate() {
+  const doc = state.climate;
+  if (!doc) {
+    return;
+  }
+  const now = Date.now();
+
+  const lines = peopleLines(doc, now);
+  const key = JSON.stringify(lines);
+  if (key !== climatePeopleKey) {
+    climatePeopleKey = key;
+    climateEls.people.replaceChildren(
+      ...lines.map((line) => {
+        const li = document.createElement("li");
+        li.className = "cl-person";
+        li.dataset.state = line.state;
+        const dot = document.createElement("span");
+        dot.className = "cl-dot";
+        dot.setAttribute("aria-hidden", "true");
+        const name = document.createElement("span");
+        name.className = "cl-person-name";
+        name.textContent = line.name;
+        const label = document.createElement("span");
+        label.className = "cl-person-state";
+        label.textContent = line.label;
+        li.append(dot, name, label);
+        if (line.seen) {
+          const seen = document.createElement("p");
+          seen.className = "cl-person-seen";
+          seen.textContent = line.seen;
+          li.append(seen);
+        }
+        return li;
+      })
+    );
+  }
+  climateEls.people.hidden = lines.length === 0;
+  climateEls.peopleEmpty.hidden = lines.length > 0;
+  climateEls.peopleEmpty.textContent = lines.length > 0 ? "" : EMPTY_PEOPLE_TEXT;
+
+  const thermo = thermostatView(doc);
+  climateEls.panel.dataset.status = thermo.status;
+  climateEls.temp.textContent = thermo.temperature;
+  climateEls.mode.textContent = thermo.mode;
+  climateEls.setpoint.textContent = thermo.setpoint;
+  climateEls.setpointWrap.hidden = thermo.setpoint === "--";
+  climateEls.message.hidden = thermo.message === "";
+  climateEls.message.textContent = thermo.message;
+  climateEls.message.classList.toggle("checking", thermo.status === "checking");
+  climateEls.last.textContent = lastChangeText(doc, now);
+  const override = overrideText(doc);
+  climateEls.override.hidden = override === "";
+  climateEls.override.textContent = override;
+
+  // The owner's pending, failed or refused edits are never overwritten.
+  if (settled(climateState)) {
+    if (document.activeElement !== climateEls.enabled) {
+      climateEls.enabled.checked = doc.enabled;
+    }
+    for (const [name, input] of Object.entries(climateEls.inputs)) {
+      if (!climateInvalid.has(name)) {
+        setFieldValue(input, String(doc.settings[name]));
+      }
+    }
+  }
+}
+
+function wireClimate() {
+  climateEls.enabled.addEventListener("change", () => {
+    const on = climateEls.enabled.checked;
+    if (on) haptics.roomOn();
+    else haptics.roomOff();
+    climateQueue.edit({ enabled: on }, { delayMs: 0 });
+  });
+  for (const [name, input] of Object.entries(climateEls.inputs)) {
+    input.addEventListener("input", () => editClimateNumber(name, parseWhole(input.value)));
+    input.addEventListener("blur", () => climateQueue.flush());
+    const row = input.closest(".cl-stepper");
+    for (const button of row.querySelectorAll(".cl-step")) {
+      button.addEventListener("click", () => {
+        const current = parseWhole(input.value) ?? climateDraft[name];
+        const { min, max } = SETTING_LIMITS[name];
+        const next = Math.min(max, Math.max(min, current + Number(button.dataset.dir)));
+        haptics.step();
+        input.value = String(next);
+        editClimateNumber(name, next);
+      });
+    }
+  }
+}
+
+// One number changed. Refuse a bad value or a comfort at or above away inline,
+// without writing; otherwise queue it (saved 600 ms after the last change, or on
+// blur).
+function editClimateNumber(name, value) {
+  const candidate = { ...climateDraft, [name]: value };
+  const message = checkSettings(candidate);
+  if (message) {
+    climateInvalid.add(name);
+    climateEls.inputs[name].setAttribute("aria-invalid", "true");
+    showFieldError(climateEls.error, message);
+    return;
+  }
+  climateInvalid = new Set();
+  for (const input of Object.values(climateEls.inputs)) {
+    input.removeAttribute("aria-invalid");
+  }
+  clearFieldError(climateEls.error);
+  climateDraft = candidate;
+  climateQueue.edit({ [name]: value });
+}
+
+async function writeClimate(obj) {
+  const body = settingsBody(climateWritten, obj);
+  if (Object.keys(body).length === 0) {
+    return;
+  }
+  const { url, init } = apiRequest("/api/homebody/settings", body);
+  const response = await fetch(url, init);
+  const text = await response.text();
+  if (!response.ok) {
+    const data = safeJsonParse(text);
+    throw new Error((data && data.error) || `Request failed (${response.status}).`);
+  }
+  const doc = parseClimateText(text);
+  if (!doc) {
+    throw new Error("The thermostat settings did not come back.");
+  }
+  applyClimate(doc);
 }
