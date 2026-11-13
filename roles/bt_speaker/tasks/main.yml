@@ -81,3 +81,41 @@
   when: common_systemd_init
   tags:
     - service
+
+# Speaker buttons: the speaker's play, pause, next and previous (AVRCP key presses)
+# control the phone through the Bluetooth stream. Same gate as the keepalive.
+- name: Create the speaker buttons group
+  ansible.builtin.group:
+    name: snaphouse-avrcp
+    system: true
+
+- name: Create the speaker buttons user
+  # Unprivileged, no login. The unit adds the input group (SupplementaryGroups) so
+  # the user can read /dev/input; it needs nothing else.
+  ansible.builtin.user:
+    name: snaphouse-avrcp
+    group: snaphouse-avrcp
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Install the speaker buttons service unit
+  ansible.builtin.template:
+    src: snaphouse-avrcp-keys.service.j2
+    dest: /etc/systemd/system/snaphouse-avrcp-keys.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for bt_speaker
+
+- name: Reload systemd now if the speaker buttons unit changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the speaker buttons service
+  ansible.builtin.systemd_service:
+    name: snaphouse-avrcp-keys.service
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service

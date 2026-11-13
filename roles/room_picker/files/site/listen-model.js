@@ -72,3 +72,29 @@ export function applyPlan(rooms, plan) {
   const want = new Map(plan.map((s) => [s.id, s.on]));
   return rooms.map((r) => (want.has(r.id) ? { ...r, on: want.get(r.id) } : r));
 }
+
+const PLAYBACK_COMMANDS = ["play", "pause", "playPause", "next", "previous"];
+
+// The now-playing card's buttons: shown only while the phone's Bluetooth stream
+// is the source (AirPlay and the rest cannot be controlled from here).
+export function playbackControls(track) {
+  if (!track || track.source !== "bluetooth") return { visible: false };
+  return { visible: true, playing: track.status !== "paused" };
+}
+
+// A play/pause tap shows its new state at once, but the phone's status takes a
+// moment to reach the hub. While a hold runs (until untilMs), a now-playing read
+// keeps the tapped state instead of flipping the icon back. Once it runs out, the
+// observed status is trusted again.
+export function heldStatus(observed, held, nowMs) {
+  if (!held || nowMs >= held.untilMs) return observed;
+  return held.status;
+}
+
+// The Snapserver request for one playback command on the Bluetooth stream.
+export function playbackRequest(command) {
+  if (!PLAYBACK_COMMANDS.includes(command)) {
+    throw new Error(`unknown playback command: ${command}`);
+  }
+  return { method: "Stream.Control", params: { id: "Bluetooth", command } };
+}

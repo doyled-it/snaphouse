@@ -444,7 +444,7 @@ def _speaker_connected(name: str, settings: Path) -> bool:
     Unpaired, or the send adapter not present, counts as not connected (absent),
     so a verify check reads the speaker's resting state without raising.
     """
-    mac = _speaker_mac(name, settings)
+    mac = speaker_mac(name, settings)
     if mac is None:
         return False
     try:
@@ -489,7 +489,7 @@ def _load_local(settings: Path) -> dict:
     return data if data is not None else {}
 
 
-def _speaker_mac(name: str, settings: Path) -> Optional[str]:
+def speaker_mac(name: str, settings: Path) -> Optional[str]:
     """The paired address for speaker `name`, or None when it is not set yet."""
     speakers = _load_local(settings).get("speakers") or {}
     mac = speakers.get(name)
@@ -517,7 +517,7 @@ def _cmd_verify_streams(args: argparse.Namespace) -> int:
 
 def _cmd_keepalive(args: argparse.Namespace) -> int:
     settings = Path(args.settings)
-    mac = _speaker_mac(args.name, settings)
+    mac = speaker_mac(args.name, settings)
     if mac is None:
         # Nothing paired yet (for example the hub before the Vizio is paired in
         # build step 6). There is no speaker to reach, so snapclient must stay
@@ -580,7 +580,7 @@ def _cmd_speaker_state(args: argparse.Namespace) -> int:
     and fails the check. The state is probed through the send adapter.
     """
     settings = Path(args.settings)
-    if _speaker_mac(args.name, settings) is None:
+    if speaker_mac(args.name, settings) is None:
         print(f"{args.name} not paired yet")
         return 0
     state = CONNECTED if _speaker_connected(args.name, settings) else ABSENT

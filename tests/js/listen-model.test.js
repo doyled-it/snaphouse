@@ -6,6 +6,7 @@ import {
   roomState,
   howToText,
   loadBluetoothName,
+  heldStatus,
 } from "../../roles/room_picker/files/site/listen-model.js";
 
 const room = (id, on, reachable = true, volume = 54) => ({ id, on, reachable, volume });
@@ -124,4 +125,39 @@ test("Undo pressed before any status echo still reverts what was sent", async ()
   // No echo: the status still says the old state, so overlay the plan.
   const undo = undoPlan(snapshot, applyPlan(rooms, plan));
   assert.deepEqual(undo, [{ id: "a", on: true }, { id: "b", on: true }, { id: "c", on: false }]);
+});
+
+test("playbackControls shows only for a bluetooth source", async () => {
+  const { playbackControls } = await import("../../roles/room_picker/files/site/listen-model.js");
+  assert.deepEqual(playbackControls(null), { visible: false });
+  assert.deepEqual(playbackControls({ source: null, status: "playing" }), { visible: false });
+  assert.deepEqual(playbackControls({ source: "airplay", status: "playing" }), { visible: false });
+  assert.deepEqual(playbackControls({ source: "bluetooth", status: "playing" }), { visible: true, playing: true });
+  assert.deepEqual(playbackControls({ source: "bluetooth", status: "paused" }), { visible: true, playing: false });
+});
+
+test("playbackRequest builds the Stream.Control body and rejects unknown commands", async () => {
+  const { playbackRequest } = await import("../../roles/room_picker/files/site/listen-model.js");
+  for (const command of ["play", "pause", "playPause", "next", "previous"]) {
+    assert.deepEqual(playbackRequest(command), {
+      method: "Stream.Control",
+      params: { id: "Bluetooth", command },
+    });
+  }
+  assert.throws(() => playbackRequest("seek"));
+});
+
+test("heldStatus keeps the tapped play/pause state until the hold runs out", () => {
+  const held = { status: "paused", untilMs: 3000 };
+  // The hub has not caught up yet: the observed "playing" must not win.
+  assert.equal(heldStatus("playing", held, 0), "paused");
+  assert.equal(heldStatus("playing", held, 2999), "paused");
+  // At and after the deadline the observed status is trusted again.
+  assert.equal(heldStatus("playing", held, 3000), "playing");
+  assert.equal(heldStatus("paused", held, 3001), "paused");
+});
+
+test("heldStatus passes the observed status through when nothing is held", () => {
+  assert.equal(heldStatus("playing", null, 0), "playing");
+  assert.equal(heldStatus("paused", undefined, 0), "paused");
 });

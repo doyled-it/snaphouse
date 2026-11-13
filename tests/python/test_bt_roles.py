@@ -323,3 +323,66 @@ def test_non_free_firmware_is_added_to_one_line_and_deb822_sources_idempotently(
     assert _apply(tasks["deb822"], once) == once
     already = "Components: main non-free-firmware\n"
     assert _apply(tasks["deb822"], already) == already
+
+
+# --- Speaker buttons (issue #162) ---------------------------------------------
+
+AVRCP_KEYS_UNIT = "roles/bt_speaker/templates/snaphouse-avrcp-keys.service.j2"
+BT_SPEAKER_TASKS = REPO / "roles/bt_speaker/tasks/main.yml"
+
+
+def _render_avrcp_unit(host: str) -> str:
+    hosts = yaml.safe_load((REPO / "vars/hosts.yml").read_text())["snaphouse_hosts"]
+    env = Environment(loader=FileSystemLoader(str(REPO)), undefined=StrictUndefined)
+    env.filters["dict2items"] = lambda d: [
+        {"key": k, "value": v} for k, v in d.items()
+    ]
+    env.tests["contains"] = lambda seq, item: item in seq
+    return env.get_template(AVRCP_KEYS_UNIT).render(
+        snaphouse_hosts=hosts, snaphouse_host=host
+    )
+
+
+def test_avrcp_keys_unit_names_speaker_hub_and_host_without_an_address():
+    for host, speaker in (("house", "vizio"), ("nightstand", "jbl")):
+        text = _render_avrcp_unit(host)
+        exec_start = _exec_start(text)
+        assert f"snaphouse.avrcp_keys {speaker} --hub house --host {host}" in exec_start
+        assert "Restart=always" in text
+        assert "ProtectSystem=strict" in text
+        assert "NoNewPrivileges=yes" in text
+
+
+def test_avrcp_keys_service_is_gated_like_the_keepalive():
+    tasks = yaml.safe_load(BT_SPEAKER_TASKS.read_text())
+    by_name = {t["name"]: t for t in tasks}
+    unit = by_name["Install the speaker buttons service unit"]
+    assert unit["notify"] == "Reload systemd for bt_speaker"
+    start = by_name["Enable and start the speaker buttons service"]
+    assert start["when"] == "common_systemd_init"
+    assert "service" in start["tags"]
+
+
+def test_avrcp_keys_listener_is_unprivileged_and_root_only_writes_the_address():
+    text = _render_avrcp_unit("house")
+    assert "User=snaphouse-avrcp" in text
+    assert "SupplementaryGroups=input" in text
+    assert "CapabilityBoundingSet" not in text
+    assert "RuntimeDirectory=snaphouse-avrcp-keys" in text
+    pre = [l for l in text.splitlines() if l.startswith("ExecStartPre=")]
+    assert len(pre) == 1
+    assert pre[0].startswith("ExecStartPre=+")
+    assert "--write-address /run/snaphouse-avrcp-keys/address" in pre[0]
+    assert "--write-address" not in _exec_start(text)
+
+
+def test_avrcp_keys_user_is_a_system_account_created_before_the_unit():
+    tasks = yaml.safe_load(BT_SPEAKER_TASKS.read_text())
+    names = [t["name"] for t in tasks]
+    user = next(t for t in tasks if t["name"] == "Create the speaker buttons user")
+    args = user["ansible.builtin.user"]
+    assert args["name"] == "snaphouse-avrcp" and args["system"] is True
+    assert args["shell"] == "/usr/sbin/nologin"
+    assert names.index("Create the speaker buttons user") < names.index(
+        "Install the speaker buttons service unit"
+    )

@@ -88,7 +88,7 @@ import { createPageTimers } from "./page-timers.js";
 import { galleryHash, idAfterRemoval, pieceIdFromHash, stepIndex, swipeDirection, viewerSource, viewerState } from "./gallery-viewer.js";
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
 import { classifyMachines, healthMessage, reasonLabel, speakerBanner } from "./health-model.js";
-import { applyPlan, everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, roomState } from "./listen-model.js";
+import { applyPlan, everythingOffPlan, heldStatus, howToText, loadBluetoothName, onlyHerePlan, playbackControls, playbackRequest, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -102,6 +102,8 @@ const haptics = createHaptics();
 // play lands, so the card polls quickly and the history slowly. The card's
 // progress bar ticks client-side every second from the position anchor.
 const NOW_PLAYING_MS = 5000;
+// How long a play/pause tap holds its state against now-playing reads.
+const PLAY_PAUSE_HOLD_MS = 3000;
 const HISTORY_MS = 30000;
 const TICK_MS = 1000;
 
@@ -234,6 +236,10 @@ const els = {
   npElapsed: document.getElementById("np-elapsed"),
   npEnds: document.getElementById("np-ends"),
   npStatus: document.getElementById("np-status"),
+  npControls: document.getElementById("np-controls"),
+  npPrev: document.getElementById("np-prev"),
+  npPlayPause: document.getElementById("np-playpause"),
+  npNext: document.getElementById("np-next"),
 
   rooms: document.getElementById("rooms"),
 
@@ -305,6 +311,7 @@ const state = {
   // The last parsed now-playing track (or null); the progress bar ticks from it.
   // npArtSrc is the cover src last set, so the image is swapped only on change.
   nowTrack: null,
+  playHold: null, // { status, untilMs } set by a play/pause tap
   npArtSrc: null,
   btName: null,
   speakers: "up",
@@ -397,6 +404,9 @@ async function start() {
   connect();
   wireChrome();
   els.everythingOff.addEventListener("click", onEverythingOff);
+  els.npPrev.addEventListener("click", () => onPlayback("previous"));
+  els.npPlayPause.addEventListener("click", () => onPlayback("playPause"));
+  els.npNext.addEventListener("click", () => onPlayback("next"));
   wireArtManager();
   wireFrameControl();
   wirePairing();
@@ -1947,7 +1957,15 @@ async function refreshNowPlaying() {
   } catch (err) {
     return;
   }
-  updateNowPlayingCard(nowPlayingFromBody(body));
+  updateNowPlayingCard(withPlayHold(nowPlayingFromBody(body)));
+}
+
+// Keep the status a play/pause tap set while its hold runs, so a read that has
+// not caught up yet does not flip the icon back.
+function withPlayHold(track) {
+  if (!track || !state.playHold) return track;
+  track.status = heldStatus(track.status, state.playHold, Date.now());
+  return track;
 }
 
 // The page color follows the now-playing cover. A token drops a slow older
@@ -1999,8 +2017,41 @@ function updateNowPlayingCard(track) {
   }
 
   els.npTitle.textContent = track.title;
+  renderPlaybackControls();
   setOptionalLine(els.npSource, [track.artist, track.album].filter(Boolean).join(" \u00b7 "));
   tickNowPlaying();
+}
+
+// Back, play/pause and forward for the phone's Bluetooth playback. Hidden for
+// any other source. The play/pause icon follows the track's status.
+function renderPlaybackControls() {
+  const controls = playbackControls(state.nowTrack);
+  els.npControls.hidden = !controls.visible;
+  if (!controls.visible) return;
+  els.npPlayPause.dataset.state = controls.playing ? "playing" : "paused";
+  els.npPlayPause.setAttribute("aria-label", controls.playing ? "Pause" : "Play");
+}
+
+// Send one command. The request goes over HTTP so a refusal (the phone is gone)
+// comes back as an error to show. Play/pause flips its icon at once; the next
+// now-playing refresh settles the truth.
+function onPlayback(command) {
+  const track = state.nowTrack;
+  if (!track || track.source !== "bluetooth") return;
+  haptics.playPause();
+  if (command === "playPause") {
+    track.status = track.status === "paused" ? "playing" : "paused";
+    state.playHold = { status: track.status, untilMs: Date.now() + PLAY_PAUSE_HOLD_MS };
+    renderPlaybackControls();
+    tickNowPlaying();
+  } else {
+    // Next and previous change the track, so an earlier play/pause hold no longer applies.
+    state.playHold = null;
+  }
+  const request = playbackRequest(command);
+  postRpc(request.method, request.params)
+    .catch(() => showToast("Couldn't reach your phone"))
+    .then(() => setTimeout(refreshNowPlaying, 800));
 }
 
 function setProgressFill(fraction) {
