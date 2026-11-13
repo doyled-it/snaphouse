@@ -110,7 +110,7 @@
 # shared public root belongs to the web role and is never chowned from here.
 - name: Create the homebody status directory owned by homebody
   ansible.builtin.file:
-    path: "{{ homebody_status_dir }}"
+    path: "{{ homebody_bootstrap_status_dir }}"
     state: directory
     owner: homebody
     group: homebody

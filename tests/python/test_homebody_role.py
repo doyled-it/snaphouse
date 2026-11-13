@@ -412,10 +412,10 @@ def test_status_dir_is_owned_by_homebody_and_the_public_root_is_not_touched():
         (i, args)
         for i, task in enumerate(tasks)
         for module, args in [_module(task)]
-        if module.endswith(".file") and args.get("path") == "{{ homebody_status_dir }}"
+        if module.endswith(".file") and args.get("path") == "{{ homebody_bootstrap_status_dir }}"
     ]
     assert dirs, "no task creates the homebody status dir"
-    assert yaml.safe_load(ROLE_DEFAULTS.read_text())["homebody_status_dir"] == STATUS_DIR
+    assert yaml.safe_load(ROLE_DEFAULTS.read_text())["homebody_bootstrap_status_dir"] == STATUS_DIR
     idx, args = dirs[0]
     assert args["state"] == "directory"
     assert args["owner"] == "homebody"

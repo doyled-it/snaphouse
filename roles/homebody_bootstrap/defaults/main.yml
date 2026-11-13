@@ -6,4 +6,4 @@ homebody_bootstrap_repo_url: "https://github.com/doyled-it/homebody"
 
 # Where the daemon writes its status file; the directory is owned by the homebody
 # user. nginx serves it as /homebody.json. Never chown the public root above it.
-homebody_status_dir: /var/lib/snaphouse/public/homebody
+homebody_bootstrap_status_dir: /var/lib/snaphouse/public/homebody

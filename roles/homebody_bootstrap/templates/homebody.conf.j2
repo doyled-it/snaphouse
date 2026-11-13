@@ -12,7 +12,7 @@
 #                     are tiny JSON, so a small upload cap is plenty. The port is
 #                     the one pinned in vars/all.yml (homebody_api_port).
 location = /homebody.json {
-    root {{ homebody_status_dir }};
+    root {{ homebody_bootstrap_status_dir }};
     default_type application/json;
 }
 
