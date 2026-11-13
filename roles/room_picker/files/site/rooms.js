@@ -80,6 +80,7 @@ import { createVolumeSlider } from "./volume-slider.js";
 import { createHaptics } from "./haptics.js";
 import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
+import { createToaster } from "./undo.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -117,8 +118,6 @@ const PAIR_MS = 1000;
 // The Bluetooth devices list changes at a human pace (a phone connects or
 // leaves), so it is polled every few seconds under the same visibility rule.
 const DEVICES_MS = 5000;
-// How long a toast lingers before it clears itself.
-const TOAST_MS = 7000;
 
 // Shown on the connection line when a status reply will not parse. The page
 // keeps its last good render and says so quietly rather than breaking.
@@ -319,7 +318,6 @@ const state = {
   libPage: 0,
   artIntervalBuilt: false,
   artRefreshPending: false,
-  toastTimer: null,
 
   // The current screen (hash-routed), and the hub's parsed /frame-control.json
   // (shared settings plus each frame's quiet hours and pin), null until read
@@ -2503,34 +2501,33 @@ async function runAction(path, body) {
   refreshLibrary();
 }
 
-// A short-lived toast at the foot of the page, optionally carrying an Undo
-// action. It clears itself so a stale message does not sit under a later one.
-function showToast(text, onUndo) {
-  clearTimeout(state.toastTimer);
-  els.toast.replaceChildren();
-  const span = document.createElement("span");
-  span.className = "toast-text";
-  span.textContent = text;
-  els.toast.append(span);
-  if (onUndo) {
-    const undo = document.createElement("button");
-    undo.className = "toast-undo";
-    undo.type = "button";
-    undo.textContent = "Undo";
-    undo.addEventListener("click", () => {
-      hideToast();
-      onUndo();
-    });
-    els.toast.append(undo);
-  }
-  els.toast.hidden = false;
-  state.toastTimer = setTimeout(hideToast, TOAST_MS);
-}
+// A short-lived toast above the tab bar, optionally carrying an Undo action.
+// A new toast replaces the previous one. It never takes focus.
+const toaster = createToaster({
+  now: () => Date.now(),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (id) => clearTimeout(id),
+  render: ({ visible, text, undo }) => {
+    els.toast.replaceChildren();
+    els.toast.hidden = !visible;
+    if (!visible) return;
+    const span = document.createElement("span");
+    span.className = "toast-text";
+    span.textContent = text;
+    els.toast.append(span);
+    if (undo) {
+      const button = document.createElement("button");
+      button.className = "toast-undo";
+      button.type = "button";
+      button.textContent = "Undo";
+      button.addEventListener("click", undo);
+      els.toast.append(button);
+    }
+  },
+});
 
-function hideToast() {
-  clearTimeout(state.toastTimer);
-  els.toast.hidden = true;
-  els.toast.replaceChildren();
+function showToast(text, onUndo) {
+  toaster.show(text, onUndo);
 }
 
 function fillSelect(select, options, selected) {

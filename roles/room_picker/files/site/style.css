@@ -1341,8 +1341,9 @@ a.row-title {
 
 .toast-undo {
   flex: 0 0 auto;
-  min-height: 36px;
-  padding: 0 6px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 10px;
   border: none;
   background: none;
   color: var(--accent);
