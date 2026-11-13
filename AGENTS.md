@@ -196,9 +196,11 @@ Undo toast through `repinBody`; "For how long..." opens the full what and how-lo
 choice; the whole control is gone without `frame-control.json`), the art history,
 then the autosaving frame settings. A history row opens the Gallery viewer at
 `#gallery/<id>` with `viewerState(..., "history")` (state `viewerKind`): the same
-Show on the frame and Keep it there actions, plus Remove from history, which sends
-today's delete (the picture goes to the trash) with an Undo toast; Back returns to
-the Frame tab.
+Show on the frame, Keep it there, Move to folder (the viewer follows the new id)
+and Move to trash (with an Undo toast; there is no history-only removal), and the
+title links to the catalogue page when the piece has one; Back returns to the Frame
+tab. While the frame shows now playing the pin button reads "Keep showing art",
+since the pin always holds art.
 
 Frame is hidden until the frame-control document lists frames or a frame mirror
 (`frame.json`) answers. Climate is hidden until the homebody page exists: to

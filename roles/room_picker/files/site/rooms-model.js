@@ -1643,14 +1643,17 @@ export function repinBody(frame, pin, nowMs) {
 // What the Frame tab's Keep showing control looks like: hidden without the
 // frame-control document, "Keep showing this" with no pin, "Unpin" while one is
 // held. `pin` is the chosen frame's pin (already cleared once it has expired).
-export function pinControlState(frameControl, pin) {
+export function pinControlState(frameControl, pin, showingArt = true) {
+  // The pin always holds art, so while another screen (now playing) is on the
+  // glass the label says "art" rather than promise to keep that screen.
+  const keep = showingArt ? "Keep showing this" : "Keep showing art";
   if (!frameControl || !frameControl.available) {
-    return { visible: false, pinned: false, label: "Keep showing this" };
+    return { visible: false, pinned: false, label: keep };
   }
   if (pin) {
     return { visible: true, pinned: true, label: "Unpin" };
   }
-  return { visible: true, pinned: false, label: "Keep showing this" };
+  return { visible: true, pinned: false, label: keep };
 }
 
 // A 24-hour HH:MM clock string (00:00 to 23:59), the format the hub stores and

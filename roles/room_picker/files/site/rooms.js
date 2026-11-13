@@ -247,8 +247,6 @@ const els = {
   viewerPin: document.getElementById("viewer-pin"),
   viewerMove: document.getElementById("viewer-move"),
   viewerTrash: document.getElementById("viewer-trash"),
-  viewerRemove: document.getElementById("viewer-remove"),
-  viewerMoveWrap: document.querySelector(".viewer-move"),
   viewerNote: document.getElementById("viewer-note"),
   libraryCount: document.getElementById("library-count"),
   artFolderFilter: document.getElementById("art-folder-filter"),
@@ -343,6 +341,9 @@ const state = {
   // History entries removed this page session, so a log that still lists a
   // trashed piece does not bring it back until Undo.
   historyHidden: new Set(),
+  // History ids that moved to another folder this session (old id to new id),
+  // so the viewer and the rows follow the piece.
+  historyMoved: new Map(),
   viewerPushed: false,
   gridScroll: 0,
   folderConfirm: null,
@@ -1168,7 +1169,7 @@ function renderFrameControl() {
   // Keep showing (Frame screen): the chosen frame's own pin. One button that
   // becomes Unpin; gone when the hub has no frame-control document.
   const pin = selectedFramePin();
-  const control = pinControlState(fc, pinSummary(pin, Date.now()) ? pin : null);
+  const control = pinControlState(fc, pinSummary(pin, Date.now()) ? pin : null, state.frameShowing.isArt);
   frameControlVisible = control.visible;
   els.keepToggle.textContent = control.label;
   els.keepToggle.classList.toggle("danger", control.pinned);
@@ -1798,7 +1799,7 @@ function renderFrameCaption(current) {
 function renderArtHistory(history) {
   els.artHistory.replaceChildren();
   for (const piece of history) {
-    const id = historyDeleteTarget(piece);
+    const id = historyPieceId(piece);
     if (id && state.historyHidden.has(id)) {
       continue;
     }
@@ -1809,9 +1810,14 @@ function renderArtHistory(history) {
 // A history row is one button that opens the picture in the viewer. The title
 // is plain text here (a link inside a button is not valid); the viewer is where
 // the actions live.
+function historyPieceId(piece) {
+  const id = historyDeleteTarget(piece);
+  return id ? (state.historyMoved.get(id) ?? id) : null;
+}
+
 function artHistoryRow(piece) {
   const li = document.createElement("li");
-  const id = historyDeleteTarget(piece);
+  const id = historyPieceId(piece);
 
   const button = document.createElement("button");
   button.className = "row row-tappable";
@@ -2800,7 +2806,7 @@ function historyViewerItems() {
   const seen = new Set();
   const items = [];
   for (const piece of state.artHistory) {
-    const id = historyDeleteTarget(piece);
+    const id = historyPieceId(piece);
     if (!id || seen.has(id) || state.historyHidden.has(id)) {
       continue;
     }
@@ -2811,6 +2817,8 @@ function historyViewerItems() {
       file: piece.file,
       title: piece.title,
       artist: piece.artist,
+      source_url: piece.source_url,
+      origId: historyDeleteTarget(piece),
       folder: known ? known.folder : "",
       url: known ? known.url : artUrl(piece.file),
     });
@@ -2883,16 +2891,13 @@ function renderViewer(list, idx) {
   const piece = list[idx];
   const view = viewerState(list, idx, state.viewerKind);
   const fromHistory = state.viewerKind === "history";
-  els.viewerTrash.hidden = fromHistory;
-  els.viewerMoveWrap.hidden = fromHistory;
-  els.viewerRemove.hidden = !fromHistory;
   els.viewerClose.textContent = fromHistory ? "Back to frame" : "Back to gallery";
   els.viewerPosition.textContent = view.position;
   if (els.viewerImage.getAttribute("src") !== piece.url) {
     els.viewerImage.src = piece.url;
   }
   els.viewerImage.alt = piece.title;
-  els.viewerTitle.textContent = piece.title;
+  renderViewerTitle(piece);
   els.viewerSub.textContent = [piece.artist, piece.folder].filter(Boolean).join(", ");
   els.viewerPrev.disabled = !view.canPrev;
   els.viewerNext.disabled = !view.canNext;
@@ -2901,7 +2906,7 @@ function renderViewer(list, idx) {
   els.viewerNote.hidden = view.showBlockedReason === null;
   els.viewerNote.textContent = view.showBlockedReason || "";
 
-  const others = fromHistory || !state.artIndex ? [] : state.artIndex.folders.map((f) => f.name).filter((n) => n !== piece.folder);
+  const others = !state.artIndex || !piece.folder ? [] : state.artIndex.folders.map((f) => f.name).filter((n) => n !== piece.folder);
   const sig = JSON.stringify(others);
   if (els.viewerMove.dataset.sig !== sig) {
     els.viewerMove.dataset.sig = sig;
@@ -2925,6 +2930,22 @@ function renderViewer(list, idx) {
     if (near) {
       new Image().src = near.url;
     }
+  }
+}
+
+// The title, a link to the catalogue page when the piece carries one (same
+// rel and target as every other source link).
+function renderViewerTitle(piece) {
+  els.viewerTitle.replaceChildren();
+  if (piece.source_url) {
+    const link = document.createElement("a");
+    link.textContent = piece.title;
+    link.href = piece.source_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    els.viewerTitle.append(link);
+  } else {
+    els.viewerTitle.textContent = piece.title;
   }
 }
 
@@ -3031,23 +3052,23 @@ async function moveViewerPiece(folder) {
     `Moved to ${folder}.`,
     movedId ? () => runAction("/api/art/move", { id: movedId, folder: piece.folder }) : null,
   );
+  if (source === "history") {
+    // The piece is still in the history under a new id: follow it.
+    if (!movedId) {
+      closeViewer();
+      return;
+    }
+    state.historyMoved.set(piece.origId, movedId);
+    renderArtHistory(state.artHistory);
+    state.viewerId = movedId;
+    history.replaceState(null, "", galleryHash(movedId));
+    syncViewer();
+    return;
+  }
   viewerAfterRemoval(idx, source);
 }
 
 async function trashViewerPiece() {
-  const here = currentViewerPiece();
-  if (!here) {
-    return;
-  }
-  await advanceFrameIfShowing(here.piece);
-  if (await moveToTrash(here.piece.id)) {
-    viewerAfterRemoval(here.idx, here.source);
-  }
-}
-
-// Remove from history: today's history delete (the picture goes to the trash and
-// can be restored), with the same Undo toast, then land on the next entry.
-async function removeViewerFromHistory() {
   const here = currentViewerPiece();
   if (!here) {
     return;
@@ -3057,6 +3078,12 @@ async function removeViewerFromHistory() {
   if (!(await moveToTrash(here.piece.id))) {
     return;
   }
+  if (here.source !== "history") {
+    viewerAfterRemoval(here.idx, here.source);
+    return;
+  }
+  // A history piece: hide it from the log for this session, then land on the
+  // next entry (the hub's log may still list a trashed piece).
   state.historyHidden.add(here.piece.id);
   renderArtHistory(state.artHistory);
   const id = idAfterRemoval(rest, here.idx);
@@ -3070,7 +3097,6 @@ async function removeViewerFromHistory() {
 }
 
 function wireViewer() {
-  els.viewerRemove.addEventListener("click", removeViewerFromHistory);
   els.viewerClose.addEventListener("click", closeViewer);
   els.viewerPrev.addEventListener("click", () => stepViewer(-1));
   els.viewerNext.addEventListener("click", () => stepViewer(1));

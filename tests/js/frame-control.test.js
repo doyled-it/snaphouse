@@ -479,3 +479,11 @@ test("repinBody is null without a pin or with a bad frame", () => {
   assert.equal(repinBody("office", null, 0), null);
   assert.equal(repinBody("../x", { what: "art", until: null }, 0), null);
 });
+
+test("pinControlState says Keep showing art while the frame shows now playing", () => {
+  const fc = { available: true };
+  assert.equal(pinControlState(fc, null, false).label, "Keep showing art");
+  assert.equal(pinControlState(fc, null, true).label, "Keep showing this");
+  assert.equal(pinControlState(fc, null).label, "Keep showing this");
+  assert.equal(pinControlState(fc, { what: "art", until: null }, false).label, "Unpin");
+});
