@@ -21,10 +21,14 @@ Design notes:
   loop) needs real hardware and is confirmed on site, so the heavy import of the
   D-Bus library is deferred into `main`, keeping the testable core importable
   anywhere.
-- The house controls playback from the sending phone, not the other way round, so
-  the stream reports `canControl: false`: snapserver will not forward control or
-  volume commands to this script. The phone's AVRCP volume is applied to the
-  audio itself by bluealsa, which does this by default in 4.0 (see `roles/hub_input`).
+- While a phone's media player is present the stream is controllable: it reports
+  `canControl`, `canPlay`, `canPause`, `canGoNext` and `canGoPrevious`, and a
+  `Plugin.Stream.Player.Control` request becomes a `MediaPlayer1` method call
+  (Play, Pause, Next, Previous) on that player. With no player (the phone
+  disconnected) every flag is false and a control request gets a JSON-RPC error.
+  Seek and volume set requests are still declined. The phone's AVRCP volume is
+  applied to the audio itself by bluealsa, which does this by default in 4.0 (see
+  `roles/hub_input`).
 - A sender that publishes no metadata still plays; its properties carry only a
   playback status and no title (Review Focus 5).
 """
@@ -130,23 +134,47 @@ def status_to_playback_status(status: Any) -> str:
     return _PLAYBACK_STATUS.get(status, "stopped")
 
 
-def build_properties(track: dict, status: Any, *, position: float | None = None) -> dict:
+# Snapcast control command to BlueZ MediaPlayer1 method. playPause is resolved
+# against the current status in `control_method`; seek is not supported.
+_CONTROL_METHODS = {
+    "play": "Play",
+    "pause": "Pause",
+    "next": "Next",
+    "previous": "Previous",
+}
+
+
+def control_method(command: str, status: Any) -> str | None:
+    """Map a Snapcast control command to a `MediaPlayer1` method name, or None
+    when the command is not supported (seek, or anything unknown)."""
+    if command == "playPause":
+        return "Pause" if status_to_playback_status(status) == "playing" else "Play"
+    return _CONTROL_METHODS.get(command)
+
+
+def build_properties(
+    track: dict,
+    status: Any,
+    *,
+    position: float | None = None,
+    controllable: bool = True,
+) -> dict:
     """Assemble a Snapcast stream properties object from AVRCP state.
 
     The metadata block is left out entirely when there is no metadata, so the
     notification says "playing, no title" rather than carrying an empty block
     (Review Focus 5). When known, the extrapolated `position` (seconds) rides at
-    the top level. The capability flags report that the house does not control
-    this stream: playback is driven from the phone.
+    the top level. The capability flags are true while a phone's media player is
+    present (`controllable`) and all false otherwise; seeking is never offered.
     """
     properties: dict[str, Any] = {
         "playbackStatus": status_to_playback_status(status),
-        "canGoNext": False,
-        "canGoPrevious": False,
-        "canPlay": False,
-        "canPause": False,
+        "canGoNext": controllable,
+        "canGoPrevious": controllable,
+        "canPlay": controllable,
+        "canPause": controllable,
         "canSeek": False,
-        "canControl": False,
+        "canControl": controllable,
     }
     if position is not None:
         properties["position"] = position
@@ -176,6 +204,9 @@ class Player:
         # The monotonic time a MediaPlayer1.Position last set the anchor, so a
         # very recent Position is recognised as belonging to a just-changed track.
         self._position_at: float | None = None
+        # The D-Bus object path of the phone's MediaPlayer1, or None when no phone
+        # player is present. The stream is controllable exactly when this is set.
+        self.path: str | None = None
 
     def current_position(self) -> float | None:
         """The track position in seconds now, or None when no anchor is known.
@@ -237,7 +268,12 @@ class Player:
         self.status = status
 
     def properties(self) -> dict:
-        return build_properties(self.track, self.status, position=self.current_position())
+        return build_properties(
+            self.track,
+            self.status,
+            position=self.current_position(),
+            controllable=self.path is not None,
+        )
 
 
 def ready_notification() -> dict:
@@ -252,29 +288,46 @@ def properties_notification(properties: dict) -> dict:
     }
 
 
-def handle_request(request: dict, player: Player) -> dict | None:
+def _error(request_id: Any, code: int, message: str) -> dict:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+
+
+def handle_request(
+    request: dict, player: Player, control: Callable[[str], None]
+) -> dict | None:
     """Answer a JSON-RPC request from snapserver.
 
-    Only `GetProperties` is acted on; the stream is not controllable, so any
-    control or set request is declined with a JSON-RPC "method not found" error.
-    A request with no id (a notification) gets no reply.
+    `GetProperties` answers with the current properties. `Control` maps the
+    command to a `MediaPlayer1` method and calls `control(method_name)`: an
+    unknown command (seek, or a typo) is -32602, and no player path or a failing
+    `control` is -32603. Anything else is declined with "method not found". A
+    request with no id (a notification) gets no reply.
     """
     request_id = request.get("id")
     method = request.get("method", "")
     short = method.rsplit(".", 1)[-1]
 
-    if short == "GetProperties":
-        if request_id is None:
-            return None
-        return {"jsonrpc": "2.0", "id": request_id, "result": player.properties()}
-
     if request_id is None:
         return None
-    return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "error": {"code": -32601, "message": f"Method not found: {method}"},
-    }
+
+    if short == "GetProperties":
+        return {"jsonrpc": "2.0", "id": request_id, "result": player.properties()}
+
+    if short == "Control":
+        params = request.get("params")
+        command = params.get("command") if isinstance(params, dict) else None
+        name = control_method(command, player.status) if isinstance(command, str) else None
+        if name is None:
+            return _error(request_id, -32602, f"Unsupported command: {command}")
+        if player.path is None:
+            return _error(request_id, -32603, "No phone is connected")
+        try:
+            control(name)
+        except Exception as exc:  # noqa: BLE001 - any failure is reported, never raised
+            return _error(request_id, -32603, f"Control failed: {exc}")
+        return {"jsonrpc": "2.0", "id": request_id, "result": "ok"}
+
+    return _error(request_id, -32601, f"Method not found: {method}")
 
 
 # stdout is written from two threads at runtime (the main event loop and the
@@ -291,16 +344,26 @@ def write_message(out: Any, message: dict) -> None:
         out.flush()
 
 
-def process_event(player: Player, event: tuple, out: Any) -> None:
+def _no_control(_method: str) -> None:
+    raise RuntimeError("control is not available")
+
+
+def process_event(
+    player: Player,
+    event: tuple,
+    out: Any,
+    control: Callable[[str], None] = _no_control,
+) -> None:
     """Apply one event and emit the JSON-RPC it produces.
 
     Events are `("request", dict)` for a server request, `("track", dict)` for a
     new AVRCP track, `("status", value)` for a new playback status, and
-    `("position", ms)` for a new `MediaPlayer1.Position` value.
+    `("position", ms)` for a new `MediaPlayer1.Position` value, and
+    `("player", path | None)` when the phone's media player appears or goes away.
     """
     kind = event[0]
     if kind == "request":
-        response = handle_request(event[1], player)
+        response = handle_request(event[1], player, control)
         if response is not None:
             write_message(out, response)
     elif kind == "track":
@@ -312,9 +375,17 @@ def process_event(player: Player, event: tuple, out: Any) -> None:
     elif kind == "position":
         player.anchor_position(event[1])
         write_message(out, properties_notification(player.properties()))
+    elif kind == "player":
+        player.path = event[1]
+        write_message(out, properties_notification(player.properties()))
 
 
-def serve(player: Player, events: Iterable[tuple], out: Any) -> None:
+def serve(
+    player: Player,
+    events: Iterable[tuple],
+    out: Any,
+    control: Callable[[str], None] = _no_control,
+) -> None:
     """Announce readiness, then process a stream of events in order.
 
     This is the control-script loop with its inputs already merged into one
@@ -323,7 +394,7 @@ def serve(player: Player, events: Iterable[tuple], out: Any) -> None:
     """
     write_message(out, ready_notification())
     for event in events:
-        process_event(player, event, out)
+        process_event(player, event, out, control)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -339,13 +410,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
-    """Yield ("track", dict) and ("status", value) as BlueZ MediaPlayer1 changes.
+    """Yield ("track", dict), ("status", value) and ("player", path | None) as
+    BlueZ MediaPlayer1 changes.
 
     This is the hardware-facing half: it watches `PropertiesChanged` on the AVRCP
     interface over the system bus. It is confirmed on the real hub (build step 6),
     not in CI, so the D-Bus library is imported here rather than at module load.
     """
-    from jeepney import DBusAddress, MatchRule, message_bus, new_method_call
+    from jeepney import DBusAddress, HeaderFields, MatchRule, message_bus, new_method_call
     from jeepney.io.blocking import open_dbus_connection
 
     def unwrap(value: Any) -> Any:
@@ -366,6 +438,16 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
     rule.add_arg_condition(0, MEDIA_PLAYER_INTERFACE)
     connection.send_and_get_reply(message_bus.AddMatch(rule.serialise()))
 
+    # The player object appears and disappears with the phone's connection.
+    removed = MatchRule(
+        type="signal",
+        interface="org.freedesktop.DBus.ObjectManager",
+        member="InterfacesRemoved",
+    )
+    connection.send_and_get_reply(message_bus.AddMatch(removed.serialise()))
+
+    current_path: str | None = None
+
     # Emit the current state once, so a track already playing at startup shows up
     # without waiting for the next change.
     object_manager = DBusAddress(
@@ -378,6 +460,8 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
         player = interfaces.get(MEDIA_PLAYER_INTERFACE)
         if not player:
             continue
+        current_path = _path
+        yield ("player", _path)
         if "Track" in player:
             yield ("track", {k: unwrap(v) for k, v in unwrap(player["Track"]).items()})
         if "Status" in player:
@@ -388,17 +472,69 @@ def _dbus_events(log: Any = None) -> Iterable[tuple]:  # pragma: no cover
     while True:
         message = connection.receive()
         body = message.body
+        member = message.header.fields.get(HeaderFields.member)
+        if member == "InterfacesRemoved":
+            removed_path, interfaces = body[0], body[1]
+            if MEDIA_PLAYER_INTERFACE in interfaces and removed_path == current_path:
+                current_path = None
+                yield ("player", None)
+            continue
         if len(body) < 2:
             continue
         interface, changed = body[0], body[1]
         if interface != MEDIA_PLAYER_INTERFACE:
             continue
+        signal_path = message.header.fields.get(HeaderFields.path)
+        if signal_path and signal_path != current_path:
+            current_path = signal_path
+            yield ("player", signal_path)
         if "Track" in changed:
             yield ("track", {k: unwrap(v) for k, v in unwrap(changed["Track"]).items()})
         if "Status" in changed:
             yield ("status", unwrap(changed["Status"]))
         if "Position" in changed:
             yield ("position", unwrap(changed["Position"]))
+
+
+class _BluezControl:  # pragma: no cover
+    """Calls a method on the phone's `MediaPlayer1` over its own D-Bus connection.
+
+    The signal reader owns a blocking connection that sits in `receive()`, so
+    control calls get a separate one, opened on first use and dropped on any
+    failure so the next call starts clean. The call waits at most 2 seconds.
+    """
+
+    TIMEOUT_SECONDS = 2.0
+
+    def __init__(self, player: Player) -> None:
+        self._player = player
+        self._connection: Any = None
+
+    def __call__(self, method: str) -> None:
+        from jeepney import DBusAddress, HeaderFields, MessageType, new_method_call
+        from jeepney.io.blocking import open_dbus_connection
+
+        path = self._player.path
+        if path is None:
+            raise RuntimeError("no player")
+        try:
+            if self._connection is None:
+                self._connection = open_dbus_connection(bus="SYSTEM")
+            address = DBusAddress(path, bus_name="org.bluez", interface=MEDIA_PLAYER_INTERFACE)
+            reply = self._connection.send_and_get_reply(
+                new_method_call(address, method), timeout=self.TIMEOUT_SECONDS
+            )
+            if reply.header.message_type == MessageType.error:
+                name = reply.header.fields.get(HeaderFields.error_name, "error")
+                raise RuntimeError(str(name))
+        except Exception:
+            connection, self._connection = self._connection, None
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover
@@ -409,6 +545,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
     out = sys.stdout
     player = Player()
     events: "queue.Queue[tuple | None]" = queue.Queue()
+    control = _BluezControl(player)
 
     def read_requests() -> None:
         for line in sys.stdin:
@@ -443,7 +580,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
         event = events.get()
         if event is None:
             return 0
-        process_event(player, event, out)
+        process_event(player, event, out, control)
 
 
 if __name__ == "__main__":  # pragma: no cover

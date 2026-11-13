@@ -152,7 +152,7 @@ def test_build_properties_for_an_empty_track_has_only_playback_status():
     assert props["playbackStatus"] == "playing"
     assert "metadata" not in props
     # The capability flags must still be present and well-formed.
-    assert props["canControl"] is False
+    assert props["canControl"] is True
 
 
 def _read_messages(out: io.StringIO) -> list[dict]:
@@ -260,3 +260,163 @@ def test_concurrent_writes_never_interleave_json_lines():
     expected = {f"{i}-{n}" for i in range(threads_count) for n in range(per_thread)}
     assert {message["id"] for message in parsed} == expected
     assert len(parsed) == threads_count * per_thread
+
+
+# --- control (Plugin.Stream.Player.Control) ---
+
+_CAN_FLAGS = ("canControl", "canPlay", "canPause", "canGoNext", "canGoPrevious")
+
+
+def test_build_properties_is_controllable_by_default_but_never_seekable():
+    props = avrcp_meta.build_properties({}, "playing")
+    assert all(props[flag] is True for flag in _CAN_FLAGS)
+    assert props["canSeek"] is False
+
+
+def test_build_properties_reports_nothing_controllable_without_a_player():
+    props = avrcp_meta.build_properties({}, "stopped", controllable=False)
+    assert all(props[flag] is False for flag in _CAN_FLAGS)
+    assert props["canSeek"] is False
+
+
+def test_player_is_controllable_exactly_when_it_has_a_path():
+    player = avrcp_meta.Player()
+    assert player.path is None
+    assert player.properties()["canControl"] is False
+    player.path = "/org/bluez/hci0/dev_X/player0"
+    assert player.properties()["canControl"] is True
+    player.path = None
+    assert player.properties()["canControl"] is False
+
+
+@pytest.mark.parametrize(
+    "command,status,expected",
+    [
+        ("playPause", "playing", "Pause"),
+        ("playPause", "paused", "Play"),
+        ("playPause", "stopped", "Play"),
+        ("play", "playing", "Play"),
+        ("pause", "paused", "Pause"),
+        ("next", "playing", "Next"),
+        ("previous", "paused", "Previous"),
+        ("seek", "playing", None),
+        ("bogus", "playing", None),
+    ],
+)
+def test_control_method_maps_snapcast_commands_to_mediaplayer1(command, status, expected):
+    assert avrcp_meta.control_method(command, status) == expected
+
+
+def _control_request(command, request_id=7):
+    return {
+        "id": request_id,
+        "jsonrpc": "2.0",
+        "method": "Plugin.Stream.Player.Control",
+        "params": {"command": command, "params": {}},
+    }
+
+
+def _player_with_path(status="playing"):
+    player = avrcp_meta.Player(status=status)
+    player.path = "/org/bluez/hci0/dev_X/player0"
+    return player
+
+
+def test_control_request_calls_the_method_and_answers_ok():
+    calls = []
+    response = avrcp_meta.handle_request(
+        _control_request("playPause"), _player_with_path("playing"), calls.append
+    )
+    assert calls == ["Pause"]
+    assert response == {"jsonrpc": "2.0", "id": 7, "result": "ok"}
+
+
+def test_control_request_with_an_unknown_command_is_invalid_params():
+    calls = []
+    response = avrcp_meta.handle_request(
+        _control_request("seek"), _player_with_path(), calls.append
+    )
+    assert calls == []
+    assert response["error"]["code"] == -32602
+    assert response["id"] == 7
+
+
+def test_control_request_without_a_player_is_an_internal_error():
+    # Review Focus 1: the phone is gone, so there is nothing to control.
+    calls = []
+    response = avrcp_meta.handle_request(
+        _control_request("next"), avrcp_meta.Player(), calls.append
+    )
+    assert calls == []
+    assert response["error"]["code"] == -32603
+
+
+def test_control_request_whose_call_raises_is_an_internal_error():
+    def boom(_name):
+        raise RuntimeError("org.bluez.Error.NotAvailable")
+
+    response = avrcp_meta.handle_request(_control_request("next"), _player_with_path(), boom)
+    assert response["error"]["code"] == -32603
+    assert "NotAvailable" in response["error"]["message"]
+
+
+def test_control_request_without_an_id_gets_no_reply():
+    request = _control_request("next")
+    del request["id"]
+    calls = []
+    assert avrcp_meta.handle_request(request, _player_with_path(), calls.append) is None
+
+
+def test_other_requests_are_still_declined_and_get_properties_still_answers():
+    player = _player_with_path()
+    declined = avrcp_meta.handle_request(
+        {"id": 2, "method": "Plugin.Stream.Player.SetVolume", "params": {"volume": 5}},
+        player,
+        lambda _n: None,
+    )
+    assert declined["error"]["code"] == -32601
+    got = avrcp_meta.handle_request(
+        {"id": 3, "method": "Plugin.Stream.Player.GetProperties"}, player, lambda _n: None
+    )
+    assert got["result"]["canControl"] is True
+
+
+def test_player_events_set_and_clear_the_path_and_notify():
+    out = io.StringIO()
+    player = avrcp_meta.Player()
+    path = "/org/bluez/hci0/dev_X/player0"
+
+    avrcp_meta.process_event(player, ("player", path), out)
+    avrcp_meta.process_event(player, ("player", None), out)
+
+    assert player.path is None
+    notices = [
+        m
+        for m in _read_messages(out)
+        if m.get("method") == "Plugin.Stream.Player.Properties"
+    ]
+    assert [n["params"]["canControl"] for n in notices] == [True, False]
+
+
+def test_a_control_request_event_reaches_the_injected_control():
+    out = io.StringIO()
+    player = _player_with_path("paused")
+    calls = []
+
+    avrcp_meta.process_event(player, ("request", _control_request("playPause")), out, calls.append)
+
+    assert calls == ["Play"]
+    assert _read_messages(out) == [{"jsonrpc": "2.0", "id": 7, "result": "ok"}]
+
+
+def test_disconnect_then_control_returns_an_error_and_does_not_crash():
+    out = io.StringIO()
+    player = avrcp_meta.Player()
+    events = [
+        ("player", "/org/bluez/hci0/dev_X/player0"),
+        ("player", None),
+        ("request", _control_request("next")),
+    ]
+    avrcp_meta.serve(player, events, out, lambda _n: None)
+    last = _read_messages(out)[-1]
+    assert last["error"]["code"] == -32603
