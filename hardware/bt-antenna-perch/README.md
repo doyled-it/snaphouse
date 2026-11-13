@@ -23,6 +23,77 @@ the number, and rebuild.
 - `perch.stl`, `perch.3mf` - the default (wall-screw) mount, rendered from the
   defaults below. The 3MF is the better choice for Bambu Studio or Bambu
   Connect; the STL works anywhere.
+- `perch-coupon.stl`, `perch-coupon.3mf` - the test-fit coupon (see the print
+  sheet below). Same parameters as the perch, built by `perch_coupon_body`.
+- `perch.intent.json`, `perch-coupon.intent.json` - the measurable intents, the
+  prior-art record and the reference-hardware tier for each mesh, written for the
+  printable-parts checks.
+- `sliced/perch-coupon.gcode.3mf`, `sliced/perch.gcode.3mf` - ready to open in
+  Bambu Studio (File, Open). Sliced with OrcaSlicer 2.5.0 for the Bambu Lab X2D.
+  Bambu Studio re-slices for your X2D itself, so check the settings it shows.
+
+## Print sheet (Bambu Lab X2D, first print)
+
+Print the coupon first, then the perch. Never skip the coupon: the adapter
+numbers are an estimate, not a measurement (see the next section).
+
+| | Coupon | Perch |
+|---|---|---|
+| File | `perch-coupon.3mf` (or `sliced/perch-coupon.gcode.3mf`) | `perch.3mf` (or `sliced/perch.gcode.3mf`) |
+| Size | 12 x 43.7 x 16 mm | 68.9 x 56.2 x 16 mm |
+| Time (sliced estimate) | about 9 minutes | about 20 minutes |
+
+- Printer: Bambu Lab X2D, 0.4 mm nozzle.
+- Filament: PLA (Bambu PLA Basic profile). Any colour.
+- Layer height: 0.20 mm (the 0.20mm Standard profile), 3 wall loops, 15 percent
+  infill.
+- Orientation: as modeled, flat floor on the plate. The adapter pocket opens
+  upward and the countersinks face up, so the head seat prints on 45 degree
+  slopes with no bridging. Do not rotate it.
+- Supports: none. Brim: automatic is fine.
+
+Slicing note: OrcaSlicer 2.5.0 was used with the Bambu Lab X2D 0.4 nozzle machine
+profile, the 0.20mm Standard @BBL X2D process and Bambu PLA Basic @BBL X2D 0.4
+nozzle, all taken from the v2.5.0 source tree (the installed app packs its
+profiles in a form the headless helper cannot read). Nothing was sent to a
+printer.
+
+### What to check on the coupon
+
+1. Lay the UB500 Plus on its side so the body (not the antenna) is square to the
+   pocket, then slide it through the pocket. It should go in with light friction:
+   moves with a gentle push, does not rock or fall through. It must not need force.
+2. Put an M4 countersunk (flat head) screw in the ear hole. The head should sit
+   flush with the top face, not proud and not sunk below it. The shank should turn
+   freely in the hole.
+3. Measure the pocket with calipers: it should read 25.2 mm between the walls.
+   The adapter body width is 24 mm (an estimate), so the real gap per side is
+   about 0.6 mm.
+
+If it is wrong, change one parameter at the top of `perch.py` and reprint the
+coupon (the perch follows from the same numbers):
+
+| Symptom | Parameter | Change |
+|---|---|---|
+| Adapter will not go in, or needs force | `clearance` | add 0.1 (try 0.7, then 0.8) |
+| Adapter rocks or slides freely | `clearance` | subtract 0.1 (try 0.5) |
+| Adapter is the wrong width even at the extremes | `adapter_body_width` | set to your caliper reading |
+| Screw shank is tight in the hole | `screw_hole_diameter` | add 0.2 |
+| Screw head sits proud | `screw_head_diameter` | add 0.2 |
+| Screw head sinks below the face | `screw_head_diameter` | subtract 0.2 |
+
+The coupon cannot test the body length or the plug end of the trough. Check
+those on the first perch print and set `adapter_body_length` and the plug
+numbers from there.
+
+## Reference hardware: unverified estimate
+
+The UB500 Plus is a tier 5 reference: a padded estimate from TP-Link's published
+81 x 42 x 16.8 mm envelope, which includes the fold-out antenna. Only the height
+is published. The coupon is therefore mandatory before the perch. This design is
+kept over the existing Printables "USB Extension Cord WiFi Dongle Stand" (265738)
+and its M4 remix (1191970), searched on 2026-11-12, because it is sized to the
+UB500 Plus. Nothing was copied from either.
 
 ## Print settings (Bambu Lab X2D)
 

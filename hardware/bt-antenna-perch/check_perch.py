@@ -128,6 +128,20 @@ def check_shelf_clip_slot_gap():
     )
 
 
+def check_coupon_single_solid_with_one_hole():
+    part = perch.perch_coupon_body()
+    _single_solid(part, "coupon")
+    size = part.bounding_box().size
+    assert size.X == perch.coupon_length, f"coupon length {size.X}"
+    floor = perch.base_thickness
+    outer_w = perch.adapter_body_width + 2 * perch.clearance + 2 * perch.wall_thickness
+    hole_y = outer_w / 2 + perch.mount_ear_width * 0.55
+    r_bottom = _hole_radius(part, 0.0, hole_y, 0.3)
+    r_top = _hole_radius(part, 0.0, hole_y, floor - 0.3)
+    assert r_top > r_bottom + 1.0, "coupon countersink is inverted"
+    print(f"coupon: 1 solid, {size.X} x {size.Y:.1f} x {size.Z} mm, hole {r_bottom} to {r_top} mm")
+
+
 def check_invalid_mount_rejected():
     try:
         perch.perch_body(mount="glue")
@@ -141,5 +155,6 @@ if __name__ == "__main__":
     check_wall_screw_single_solid()
     check_countersink_opens_upward()
     check_shelf_clip_slot_gap()
+    check_coupon_single_solid_with_one_hole()
     check_invalid_mount_rejected()
     print("ALL CHECKS PASSED")

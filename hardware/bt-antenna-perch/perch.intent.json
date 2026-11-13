@@ -1,0 +1,135 @@
+{
+  "part": "perch",
+  "mesh": "perch.stl",
+  "units": "mm",
+  "prior_art": {
+    "decision": "design_new",
+    "reason": "Prior art searched on 2026-11-12. Printables 'USB Extension Cord WiFi Dongle Stand' (265738) and its M4 remix (1191970) exist. This design is kept because it is sized to the TP-Link UB500 Plus (adapter pocket, plug relief, antenna end left open) and carries a countersunk M4 mount and a test-fit coupon. Nothing was copied from either listing.",
+    "found": [
+      {
+        "url": "https://www.printables.com/model/265738",
+        "license": "not used; see the listing"
+      },
+      {
+        "url": "https://www.printables.com/model/1191970",
+        "license": "not used; see the listing"
+      }
+    ]
+  },
+  "devices": [
+    {
+      "name": "tp-link-ub500-plus",
+      "reference_tier": 5,
+      "source": "padded estimate from TP-Link's published 81 x 42 x 16.8 mm envelope (whole product with fold-out antenna); body length 45 and width 24 are generous guesses, height 16.8 is published, plus 0.6 mm clearance per side. The test-fit coupon is mandatory before the full perch.",
+      "unverified": true
+    }
+  ],
+  "params": {
+    "adapter_body_width": 24.0,
+    "clearance": 0.6,
+    "wall_thickness": 3.0,
+    "base_thickness": 5.0,
+    "cradle_wall_height": 11.0,
+    "screw_hole_diameter": 4.5,
+    "screw_head_diameter": 8.0,
+    "mount_ear_width": 11.0,
+    "hole_y": 21.65,
+    "adapter_pocket_width_mm": 25.2,
+    "notes": "pocket width (adapter_body_width + 2*clearance) is open-top, so stl_measure sees it as a gap between wall loops, not a hole; tests/python/test_bt_antenna_perch_coupon.py pins it from the mesh"
+  },
+  "intents": [
+    {
+      "id": "envelope",
+      "claim": "68.9 x 56.2 x 16 mm: trough, plug relief and both screw ears from the parameters",
+      "check": {
+        "type": "bbox",
+        "expected_mm": [
+          68.9,
+          56.2,
+          16.0
+        ],
+        "tolerance_mm": 0.3
+      }
+    },
+    {
+      "id": "countersink",
+      "claim": "the M4 screw head seats flush, so the countersink is wider at the top face (z=5) than at the bottom face (z=0), widening upward by at least 1 mm",
+      "check": {
+        "type": "countersink_orientation",
+        "axis": "z",
+        "near": [
+          0,
+          21.65
+        ],
+        "top_at": 4.7,
+        "bottom_at": 0.3,
+        "top_wider": true,
+        "min_delta_mm": 1.0
+      }
+    },
+    {
+      "id": "clearance-hole",
+      "claim": "an M4 screw shank clears the hole: clearance hole radius 2.25 mm (4.5 mm diameter) at the bottom face",
+      "check": {
+        "type": "hole_radius",
+        "axis": "z",
+        "at": 0.3,
+        "near": [
+          0,
+          21.65
+        ],
+        "measure": "equiv_radius",
+        "expected_mm": 2.3,
+        "tolerance_mm": 0.15
+      }
+    },
+    {
+      "id": "head-seat",
+      "claim": "the head seat is 8 mm across at the top face, so an M4 flat head (about 8 mm) sits flush: radius about 3.98 mm at z=4.7",
+      "check": {
+        "type": "hole_radius",
+        "axis": "z",
+        "at": 4.7,
+        "near": [
+          0,
+          21.65
+        ],
+        "measure": "equiv_radius",
+        "expected_mm": 3.98,
+        "tolerance_mm": 0.15
+      }
+    },
+    {
+      "id": "countersink-other-ear",
+      "claim": "the M4 screw head seats flush, so the countersink is wider at the top face (z=5) than at the bottom face (z=0), widening upward by at least 1 mm",
+      "check": {
+        "type": "countersink_orientation",
+        "axis": "z",
+        "near": [
+          0,
+          -21.65
+        ],
+        "top_at": 4.7,
+        "bottom_at": 0.3,
+        "top_wider": true,
+        "min_delta_mm": 1.0
+      }
+    },
+    {
+      "id": "clearance-hole-other-ear",
+      "claim": "an M4 screw shank clears the hole: clearance hole radius 2.25 mm (4.5 mm diameter) at the bottom face",
+      "check": {
+        "type": "hole_radius",
+        "axis": "z",
+        "at": 0.3,
+        "near": [
+          0,
+          -21.65
+        ],
+        "measure": "equiv_radius",
+        "expected_mm": 2.3,
+        "tolerance_mm": 0.15
+      }
+    }
+  ]
+}
