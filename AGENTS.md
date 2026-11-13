@@ -176,6 +176,19 @@ fails authentication (the phone forgot the speaker, the hub kept the key) has it
 stale pairing removed once so its next try in the same window succeeds
 (`_make_line_handler` in `pairing.py`).
 
+## Polling sleeps while hidden, lists patch in place
+
+Every polling interval in `rooms.js` registers with `page-timers.js`; the
+`visibilitychange` handler pauses them all while the tab is hidden and resumes them
+(then refreshes once) on return. The socket and its reconnect are separate. The
+devices list and the art grid patch by key (`keyed-list.js`): each row carries a
+signature of everything that affects its DOM, so only a changed row is replaced and
+a poll that changes nothing leaves focus, hover and thumbnails alone. The now-playing
+progress fill is a full-width element moved by `scaleX` in one `requestAnimationFrame`
+loop that runs only while a track is playing and the tab is visible; the time text is
+written only when the whole second changes. Tests: `tests/js/page-timers.test.js`,
+`tests/js/keyed-list.test.js`.
+
 ## Volume slider
 
 Each room's volume is a custom `div role="slider"` (`volume-slider.js`), not an

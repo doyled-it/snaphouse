@@ -634,10 +634,12 @@ a.frame-title {
 
 .np-fill {
   height: 100%;
-  width: 0;
+  width: 100%;
   border-radius: 999px;
   background: var(--ink);
-  transition: width 0.25s linear;
+  transform-origin: left;
+  transform: scaleX(0);
+  will-change: transform;
 }
 
 .np-times {
