@@ -96,8 +96,8 @@ export function createPairController({
         ok: false,
         error:
           err && err.message === "timeout"
-            ? "The pairing service did not answer. Try again."
-            : "Could not reach the pairing service.",
+            ? "That took too long. Try again."
+            : "Couldn't connect. Try again.",
       };
     } finally {
       state.pending = false;

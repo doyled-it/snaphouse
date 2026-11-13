@@ -205,7 +205,7 @@ test("pinSummary names what is pinned and its end time", () => {
   );
   assert.equal(
     pinSummary({ what: "art", until: "2026-11-10T16:12:00-08:00" }, NOW),
-    "Pinned: this art piece until 4:12"
+    "Pinned: this picture until 4:12"
   );
   assert.equal(
     pinSummary({ what: "now_playing", until: "2026-11-10T16:12:00-08:00" }, NOW),

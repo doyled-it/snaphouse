@@ -176,6 +176,28 @@ fails authentication (the phone forgot the speaker, the hub kept the key) has it
 stale pairing removed once so its next try in the same window succeeds
 (`_make_line_handler` in `pairing.py`).
 
+## Health banner, speaker banner and "Not set up yet"
+
+Two banners sit above every tab. The speaker banner ("Can't reach the speakers
+right now. Retrying.") shows while the audio server cannot be read and disables
+every room control, "Everything off" included, until the next good status read.
+The health banner ("A part of the house isn't responding...") never names a
+machine. `health-model.js` (`classifyMachines`, `healthMessage`, `speakerBanner`,
+tests in `tests/js/health-model.test.js`) holds the rules: a machine whose status
+is unreadable is troubled, and so is one whose `verify` is not `pass` or whose
+commit is not `main_commit`. The one exception is a machine the inventory marks
+`installed: false` in `vars/hosts.yml` that has no status: it is listed in
+Settings under "Not set up yet" and raises nothing.
+
+"Never reported" comes from the inventory, not from the page's memory. The
+house-status targets file carries each host's `installed` flag and
+`snaphouse.housestatus` copies it onto its `machines[]` entry in
+`house-status.json`, so a machine that dies stays flagged after every reload.
+Flip `installed` to true (or delete it) in a one-line PR when the host is built,
+like `frame_hardware`. Settings holds Phones only (pair, paired phones) plus that
+list. UI copy never says snapserver, pairing service, hub or a host name outside
+Settings.
+
 ## Page navigation
 
 The room-picker page has no drawer. A `<nav aria-label="Pages">` of tabs

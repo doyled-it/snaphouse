@@ -290,7 +290,7 @@ test("rotationSummary counts landscape pieces in enabled folders", () => {
   // Collection has a landscape wave and a portrait tower; only the wave rotates.
   assert.equal(summary.count, 1);
   assert.equal(summary.empty, false);
-  assert.match(summary.text, /1 piece/);
+  assert.match(summary.text, /1 picture will/);
 });
 
 test("rotationSummary counts across every enabled folder", () => {
@@ -299,7 +299,7 @@ test("rotationSummary counts across every enabled folder", () => {
   const summary = rotationSummary(index, control);
   // wave (Collection) and beach (Photos) are landscape; tower is portrait.
   assert.equal(summary.count, 2);
-  assert.match(summary.text, /2 pieces/);
+  assert.match(summary.text, /2 pictures will/);
 });
 
 test("rotationSummary says nothing is in rotation when enabled folders are empty or all portrait", () => {
@@ -308,7 +308,7 @@ test("rotationSummary says nothing is in rotation when enabled folders are empty
   const none = rotationSummary(index, parseArtControl(controlDoc({ settings: { rotate_minutes: 60, folders_enabled: [] } })));
   assert.equal(none.count, 0);
   assert.equal(none.empty, true);
-  assert.match(none.text, /[Nn]othing/);
+  assert.match(none.text, /No pictures will be shown/);
 
   // A folder with only a portrait piece enabled: the tower is portrait, so the
   // folder contributes nothing. Build an index whose only enabled folder is all

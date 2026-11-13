@@ -16,17 +16,21 @@
   base under /frames/<id>/. base is the "/nightstand/" alias the frame serves its
   own files at.
 
+  Each target carries "installed" (the inventory flag, true unless a host sets
+  installed: false). The page uses it to tell a machine that was never built
+  from one that stopped answering.
+
   snaphouse.housestatus reads this file and writes house-status.json plus the
   per-frame mirrors. It still accepts the old bare-list shape, so a hub updated
   before this template is re-rendered keeps working. Hostnames are mDNS .local
   names from the cross-repo status contract; nothing identifying.
 #}
 {% set targets = [] %}
-{% for name in snaphouse_hosts.keys() %}
-{% set _ = targets.append({'name': name, 'url': 'http://' ~ name ~ '.local/status.json'}) %}
+{% for name, spec in snaphouse_hosts.items() %}
+{% set _ = targets.append({'name': name, 'url': 'http://' ~ name ~ '.local/status.json', 'installed': (spec.installed | default(true))}) %}
 {% endfor %}
 {% set bedroom_host = (snaphouse_hosts | dict2items | selectattr('value.host_id', 'equalto', 'bedroom') | map(attribute='key') | first) %}
-{% set _ = targets.append({'name': 'nightstand-frame', 'url': 'http://' ~ bedroom_host ~ '.local/nightstand/status.json'}) %}
+{% set _ = targets.append({'name': 'nightstand-frame', 'url': 'http://' ~ bedroom_host ~ '.local/nightstand/status.json', 'installed': true}) %}
 {% set frames = [] %}
 {% for name, spec in snaphouse_hosts.items() %}
 {% if 'nightstand_bootstrap' in spec.roles %}

@@ -194,3 +194,12 @@ def test_bluetooth_template_has_no_literal_name_and_example_is_a_placeholder():
     assert re.findall(r'"name"\s*:\s*"[^"{]', text) == []
     example = (REPO / "local.example.yml").read_text(encoding="utf-8")
     assert "# bt_receive_alias:" in example
+
+
+def test_targets_mark_a_host_not_installed_from_the_inventory_flag():
+    config = _render_targets()
+    flags = {t["name"]: t.get("installed") for t in config["targets"]}
+    for name, spec in _load_hosts().items():
+        assert flags[name] is spec.get("installed", True)
+    assert flags["nightstand-frame"] is True
+    assert flags["panel"] is False

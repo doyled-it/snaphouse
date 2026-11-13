@@ -20,6 +20,7 @@
       <button id="everything-off" class="btn btn-small everything-off" type="button" disabled>Everything off</button>
     </header>
 
+    <p id="speakers" class="banner connection" role="status" hidden></p>
     <p id="health" class="banner health" role="status" hidden></p>
     <p id="connection" class="banner connection" role="status" hidden></p>
 
@@ -82,12 +83,12 @@
 
           <div id="frame-controls" class="frame-controls" hidden>
             <button id="frame-back" class="btn" type="button">Back</button>
-            <button id="frame-next" class="btn" type="button">Next piece</button>
+            <button id="frame-next" class="btn" type="button">Next picture</button>
             <details id="frame-menu" class="menu">
               <summary class="btn menu-summary">More</summary>
               <div class="menu-body">
-                <button id="frame-show" class="menu-item" type="button">Show in library</button>
-                <button id="frame-delete" class="menu-item danger" type="button">Delete this piece</button>
+                <button id="frame-show" class="menu-item" type="button">Show in Gallery</button>
+                <button id="frame-delete" class="menu-item danger" type="button">Move to trash</button>
               </div>
             </details>
           </div>
@@ -198,7 +199,7 @@
                 <span class="save-status" data-status="city" role="status"></span>
               </div>
               <p class="settings-note">
-                The city the frame shows the morning forecast for. The hub looks it
+                The city the frame shows the morning forecast for. The house looks it
                 up; only the city name leaves your network. Leave it empty to use
                 the frame's own setting.
               </p>
@@ -212,7 +213,7 @@
           <!-- Rotation: how often the frame changes art, and which folders rotate. -->
           <div id="rotation" class="settings-group" hidden>
             <div class="group-head">
-              <span class="field-label">Rotation</span>
+              <span class="field-label">How often the art changes</span>
               <span class="save-status" data-status="rotation" role="status"></span>
             </div>
             <p id="art-rotation-summary" class="rotation-summary"></p>
@@ -220,8 +221,8 @@
               <select id="art-interval" class="select"></select>
             </label>
             <div class="chips-field">
-              <span class="field-label">In rotation</span>
-              <div id="art-folder-chips" class="chips" role="group" aria-label="Folders in rotation"></div>
+              <span class="field-label">Folders to show</span>
+              <div id="art-folder-chips" class="chips" role="group" aria-label="Folders to show"></div>
             </div>
           </div>
         </section>
@@ -310,7 +311,7 @@
         </section>
       </section>
 
-      <!-- Settings: the phones paired to the hub. -->
+      <!-- Settings: Phones only, plus machines that are not set up yet. -->
       <section class="screen" id="screen-settings" aria-label="Settings" hidden>
         <!-- Pair a phone: make the hub discoverable for a short window. The hub
              accepts the first phone that asks, so there is no code to read here:
@@ -343,8 +344,8 @@
           <!-- Contact with the pairing service is lost (it restarted or crashed):
                a plain message and a way to retry or close, never a dead window. -->
           <div id="pair-lost" class="pair-view" hidden>
-            <p class="pair-lost-text">Lost contact with the pairing service.</p>
-            <p class="settings-note">The window may still be open on the hub. It closes on its own.</p>
+            <p class="pair-lost-text">Lost contact while pairing.</p>
+            <p class="settings-note">Pairing may still be open on the speaker. It closes on its own.</p>
             <div class="pair-actions">
               <button id="pair-retry" class="btn" type="button">Try again</button>
               <button id="pair-close" class="btn btn-ghost" type="button">Close</button>
@@ -374,10 +375,17 @@
             <button id="dev-reminder-dismiss" class="btn btn-small dev-btn" type="button">Got it</button>
           </p>
           <ul id="dev-list" class="rows dev-rows" aria-label="Paired phones"></ul>
-          <p id="dev-loading" class="empty">Checking the hub.</p>
+          <p id="dev-loading" class="empty">Looking for paired phones.</p>
           <p id="dev-empty" class="empty" hidden>No phones are paired yet. Use Pair a phone above.</p>
-          <p id="dev-stale" class="settings-note" hidden>Cannot reach the hub. Showing the last list.</p>
+          <p id="dev-stale" class="settings-note" hidden>Can't refresh the list right now. Showing the last one.</p>
           <p id="dev-error" class="fs-error" role="alert" hidden></p>
+        </section>
+
+        <!-- Parts of the house the inventory lists but that are not built yet. They
+             never raise the health banner. -->
+        <section id="not-set-up" class="section panel" aria-labelledby="nsu-h" hidden>
+          <h2 id="nsu-h" class="section-h">Not set up yet</h2>
+          <ul id="not-set-up-list" class="rows" aria-label="Not set up yet"></ul>
         </section>
       </section>
     </main>

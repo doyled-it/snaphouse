@@ -35,7 +35,7 @@ export function safeJsonParse(text) {
 //   - a JSON-RPC error field throws its message.
 export function interpretRpcResponse(ok, text) {
   if (!ok) {
-    throw new Error("snapserver is not reachable");
+    throw new Error("The speakers are not reachable");
   }
   const body = safeJsonParse(text);
   if (body === null) {
@@ -125,37 +125,6 @@ export function volumeRequest(id, percent) {
     method: "Client.SetVolume",
     params: { id, volume: { percent: clamped } },
   };
-}
-
-// The health line, or null when the whole house is well.
-//
-// One entry per host: { host, status } where status is the parsed status.json
-// object, or null when the fetch failed. The host name travels with the status
-// because an unreachable host has no body to read its own name from. A host is
-// troubled when it is unreachable, its last verify did not pass, or the commit
-// it is running is not the main commit it last saw (an apply in flight or stuck).
-export function healthBanner(statuses) {
-  const troubled = statuses.filter(isTroubled).map((entry) => entry.host);
-  if (troubled.length === 0) {
-    return null;
-  }
-  const names = troubled.join(", ");
-  const verb = troubled.length === 1 ? "needs" : "need";
-  return `${names} ${verb} attention`;
-}
-
-function isTroubled(entry) {
-  const status = entry.status;
-  if (!status) {
-    return true;
-  }
-  if (status.verify !== "pass") {
-    return true;
-  }
-  if (status.commit !== status.main_commit) {
-    return true;
-  }
-  return false;
 }
 
 // The art shown on the nightstand frame, for the "On the frame" section.
@@ -676,10 +645,10 @@ export function rotationSummary(index, control) {
   const pieces = index?.pieces ?? [];
   const count = pieces.filter((piece) => enabled.has(piece.folder) && piece.landscape).length;
   if (count === 0) {
-    return { count: 0, empty: true, text: "Nothing is in rotation." };
+    return { count: 0, empty: true, text: "No pictures will be shown. Turn on a folder." };
   }
-  const noun = count === 1 ? "piece" : "pieces";
-  return { count, empty: false, text: `${count} ${noun} in rotation.` };
+  const noun = count === 1 ? "picture" : "pictures";
+  return { count, empty: false, text: `${count} ${noun} will be shown.` };
 }
 
 // Decide whether a library refresh may rebuild the grid right now. Rebuilding
@@ -1529,7 +1498,7 @@ export function pinSummary(pin, nowMs) {
 }
 
 const PIN_WHAT_LABELS = {
-  art: "this art piece",
+  art: "this picture",
   weather: "weather",
   now_playing: "now playing",
 };
@@ -1702,10 +1671,8 @@ function clock12FromIso(iso) {
 const PAIR_STATES = ["idle", "open", "paired", "failed"];
 
 // The sentence shown while a window is open, built so the speaker name is a
-// single point of change. The page cannot learn the hub's Bluetooth name today
-// (it is in the untracked local config, never published to the page), so the
-// fallback "the house speaker" is what shows; pass a real name here the day the
-// page can read one.
+// single point of change. The page reads the name from bluetooth.json
+// (loadBluetoothName); without it the generic "the house speaker" shows.
 export function pairInstruction(speakerName) {
   const speaker =
     typeof speakerName === "string" && speakerName.trim().length > 0
@@ -1796,12 +1763,12 @@ export function interpretPairResponse(status, text, endpoint = "start") {
   const body = safeJsonParse(text);
   const reason = body && typeof body.error === "string" && body.error.length > 0 ? body.error : null;
   if (status === 403) {
-    return { ok: false, forbidden: true, error: reason || "The pairing service refused the request." };
+    return { ok: false, forbidden: true, error: reason || "That was not allowed. Try again." };
   }
   if (status === 409) {
-    return { ok: false, conflict: true, error: "The pairing window is already open." };
+    return { ok: false, conflict: true, error: "Pairing is already open." };
   }
-  return { ok: false, error: reason || `The pairing service could not be reached (${status}).` };
+  return { ok: false, error: reason || `Couldn't connect (${status}). Try again.` };
 }
 
 // After this many polls in a row with no good answer, the pairing service is
@@ -1993,7 +1960,7 @@ export function interpretDeviceResponse(status, text, kind = "disconnect") {
   const body = safeJsonParse(text);
   const reason = body && typeof body.error === "string" && body.error.length > 0 ? body.error : null;
   if (status === 403) {
-    return { ok: false, forbidden: true, error: reason || "The hub refused the request." };
+    return { ok: false, forbidden: true, error: reason || "That was not allowed. Try again." };
   }
   if (status === 404) {
     return { ok: false, gone: true, error: "That phone is no longer paired." };
@@ -2001,7 +1968,7 @@ export function interpretDeviceResponse(status, text, kind = "disconnect") {
   if (status === 409) {
     return { ok: false, stale: true, error: "That phone is not connected any more." };
   }
-  return { ok: false, error: reason || `The hub could not be reached (${status}).` };
+  return { ok: false, error: reason || `Couldn't connect (${status}). Try again.` };
 }
 
 // Which buttons a row shows. Disconnect only while connected; Forget always. While

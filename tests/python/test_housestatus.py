@@ -86,6 +86,17 @@ def test_aggregate_treats_a_fetch_error_as_unreachable():
     assert all(m["status"] is None for m in doc["machines"])
 
 
+def test_aggregate_carries_the_installed_flag_and_defaults_to_installed():
+    targets = [
+        {"name": "house", "url": "http://house.local/status.json"},
+        {"name": "panel", "url": "http://panel.local/status.json", "installed": False},
+    ]
+    doc = aggregate(targets, lambda url: None, lambda: NOW)
+    by_name = {m["name"]: m for m in doc["machines"]}
+    assert by_name["house"]["installed"] is True
+    assert by_name["panel"]["installed"] is False
+
+
 def test_aggregate_stamps_checked_at_from_now():
     doc = aggregate(TARGETS, lambda url: None, lambda: NOW)
     assert doc["checked_at"] == NOW.isoformat()

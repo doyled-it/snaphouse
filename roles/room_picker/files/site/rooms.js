@@ -21,7 +21,6 @@ import {
   toggleRequest,
   volumeRequest,
   groupUnmuteRequest,
-  healthBanner,
   artFromHistory,
   nowPlayingFromBody,
   progressAt,
@@ -88,6 +87,7 @@ import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
 import { galleryHash, idAfterRemoval, pieceIdFromHash, stepIndex, swipeDirection, viewerSource, viewerState } from "./gallery-viewer.js";
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
+import { classifyMachines, healthMessage, speakerBanner } from "./health-model.js";
 import { applyPlan, everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
@@ -129,9 +129,9 @@ const DEVICES_MS = 5000;
 
 // Shown on the connection line when a status reply will not parse. The page
 // keeps its last good render and says so quietly rather than breaking.
-const STATUS_UNAVAILABLE_MSG = "Status unavailable; showing the last update.";
+const STATUS_UNAVAILABLE_MSG = "Can't read the latest. Showing the last update.";
 // Shown while the live WebSocket is down and the page is polling instead.
-const OFFLINE_MSG = `Live updates are offline; refreshing every ${POLL_MS / 1000} seconds.`;
+const OFFLINE_MSG = `Updates are slower than usual. Refreshing every ${POLL_MS / 1000} seconds.`;
 
 const els = {
   tabs: document.getElementById("tabs"),
@@ -145,6 +145,9 @@ const els = {
 
   health: document.getElementById("health"),
   connection: document.getElementById("connection"),
+  speakers: document.getElementById("speakers"),
+  notSetUp: document.getElementById("not-set-up"),
+  notSetUpList: document.getElementById("not-set-up-list"),
 
   frame: document.getElementById("frame"),
   frameSwitcher: document.getElementById("frame-switcher"),
@@ -302,6 +305,8 @@ const state = {
   nowTrack: null,
   npArtSrc: null,
   btName: null,
+  speakers: "up",
+  connectionMessage: "",
 
   // The frame mirror state (mirrorState result) for the chosen frame and the
   // cover-busting src set.
@@ -470,7 +475,7 @@ async function loadConfig() {
     const response = await fetch("rooms.json", { cache: "no-store" });
     state.config = await response.json();
   } catch (err) {
-    setConnection("Could not load the room list.");
+    setConnection("Couldn't load the rooms. Reload the page.");
   }
 }
 
@@ -756,7 +761,7 @@ function requestStatus() {
       if (err && err.parseFailed) {
         setConnection(STATUS_UNAVAILABLE_MSG);
       } else {
-        setConnection("snapserver is not reachable.");
+        setSpeakers("down");
       }
     });
 }
@@ -781,7 +786,7 @@ function sendControl(request) {
   }
   return postRpc(request.method, request.params)
     .then(() => requestStatus())
-    .catch(() => setConnection("Could not reach snapserver."));
+    .catch(() => setSpeakers("down"));
 }
 
 function startPolling() {
@@ -810,6 +815,7 @@ function listenRooms() {
 }
 
 function render(status) {
+  setSpeakers("up");
   const rooms = roomsFromStatus(status, state.config.rooms);
   for (const room of rooms) {
     state.rooms.set(room.id, room);
@@ -820,6 +826,7 @@ function render(status) {
 // Paint every row and the header button from the latest rooms.
 function renderListen() {
   const all = listenRooms();
+  const speakersDown = state.speakers === "down";
   for (const room of all) {
     const entry = state.cards.get(room.id);
     if (!entry) {
@@ -829,15 +836,16 @@ function renderListen() {
     entry.card.classList.toggle("disconnected", !room.reachable);
     entry.toggle.setAttribute("aria-checked", room.on ? "true" : "false");
     entry.toggle.textContent = room.on ? "On" : "Off";
-    entry.toggle.disabled = st.disabled;
+    const off = st.disabled || speakersDown;
+    entry.toggle.disabled = off;
     entry.only.hidden = !st.showOnlyHere;
-    entry.only.disabled = st.disabled;
+    entry.only.disabled = off;
     entry.stateEl.dataset.mode = room.reachable && room.on ? "volume" : "text";
     entry.stateEl.textContent = st.label;
     entry.slider.applyStatus(room.volume);
-    entry.slider.setEnabled(!st.disabled);
+    entry.slider.setEnabled(!off);
   }
-  els.everythingOff.disabled = everythingOffPlan(all).length === 0;
+  els.everythingOff.disabled = speakersDown || everythingOffPlan(all).length === 0;
 }
 
 // Turn one room on or off: the row flips at once, a muted group is unmuted
@@ -911,11 +919,14 @@ async function refreshHealth() {
     entries = (doc.machines || []).map((machine) => ({
       host: machine.name,
       status: machine.status,
+      installed: machine.installed !== false,
     }));
   } catch (err) {
     return;
   }
-  const message = healthBanner(entries);
+  const { troubled, notSetUp } = classifyMachines(entries);
+  renderNotSetUp(notSetUp);
+  const message = healthMessage(troubled);
   if (message) {
     els.health.textContent = message;
     els.health.hidden = false;
@@ -1003,7 +1014,7 @@ function renderFrameSwitcher() {
       button.classList.add("offline");
       const flag = document.createElement("span");
       flag.className = "frame-tab-flag";
-      flag.textContent = "Offline";
+      flag.textContent = "Not responding";
       button.append(flag);
     }
     button.addEventListener("click", () => {
@@ -1684,7 +1695,7 @@ function renderPairing() {
   // A coarse, once-only spoken cue for the active countdown; null elsewhere.
   let cue = null;
   if (phase === "open") {
-    els.pairInstruction.textContent = pairInstruction();
+    els.pairInstruction.textContent = pairInstruction(state.btName);
     const progress = pairProgress(parsed);
     els.pairProgress.hidden = progress === null;
     els.pairProgress.textContent = progress || "";
@@ -2491,12 +2502,12 @@ function renderFolderList(index) {
       const ask = document.createElement("p");
       ask.className = "folder-ask";
       const noun = folder.count === 1 ? "picture" : "pictures";
-      ask.textContent = `Delete ${folder.name} and move its ${folder.count} ${noun} to the trash?`;
+      ask.textContent = `Remove ${folder.name} and move its ${folder.count} ${noun} to the trash?`;
       li.append(ask);
       const yes = document.createElement("button");
       yes.className = "btn btn-small danger";
       yes.type = "button";
-      yes.textContent = "Delete folder";
+      yes.textContent = "Remove folder";
       yes.addEventListener("click", () => {
         state.folderConfirm = null;
         deleteFolderWithPictures(folder);
@@ -2542,8 +2553,8 @@ function renderFolderList(index) {
     const del = document.createElement("button");
     del.className = "btn btn-small danger";
     del.type = "button";
-    del.textContent = "Delete";
-    del.setAttribute("aria-label", `Delete ${folder.name}`);
+    del.textContent = "Remove";
+    del.setAttribute("aria-label", `Remove ${folder.name}`);
     del.addEventListener("click", () => {
       if (folder.count > 0) {
         // Still holds pictures: ask first (no Undo for this one).
@@ -2597,7 +2608,7 @@ function renderTrash(index) {
       const time = document.createElement("time");
       time.className = "row-when";
       time.dateTime = entry.deletedAt;
-      time.textContent = `Deleted ${when}`;
+      time.textContent = `Trashed ${when}`;
       meta.append(time);
     }
     li.append(meta);
@@ -2624,7 +2635,7 @@ async function frameDeleteCurrent() {
   }
   const target = historyDeleteTarget(current);
   if (!target) {
-    showToast("This piece can't be deleted from here.");
+    showToast("This picture can't be moved to the trash from here.");
     return;
   }
   // Advance the chosen frame first so the deleted piece is gone from its panel in
@@ -3280,9 +3291,38 @@ function updateSections() {
   els.artHistorySection.hidden = state.artHistory.length === 0;
 }
 
+// The audio server's reachability. While it is down the speaker banner shows and
+// the room controls are disabled; the next good status read clears both.
+function setSpeakers(connection) {
+  if (state.speakers === connection) {
+    return;
+  }
+  state.speakers = connection;
+  const message = speakerBanner(connection);
+  els.speakers.textContent = message || "";
+  els.speakers.hidden = message === null;
+  // One calm banner at a time: the slow-updates line waits while the speaker
+  // banner shows.
+  setConnection(state.connectionMessage);
+  renderListen();
+}
+
+function renderNotSetUp(hosts) {
+  els.notSetUp.hidden = hosts.length === 0;
+  els.notSetUpList.replaceChildren(
+    ...hosts.map((host) => {
+      const li = document.createElement("li");
+      li.className = "row";
+      li.textContent = host;
+      return li;
+    }),
+  );
+}
+
 function setConnection(message) {
+  state.connectionMessage = message;
   els.connection.textContent = message;
-  els.connection.hidden = message === "";
+  els.connection.hidden = message === "" || state.speakers === "down";
 }
 
 
