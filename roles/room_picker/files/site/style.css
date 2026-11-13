@@ -512,21 +512,25 @@ a.frame-title {
   color: var(--red-text);
 }
 
-/* --- Now playing --------------------------------------------------------- */
+/* --- Now playing: a compact strip ---------------------------------------- */
+
+#now-playing {
+  padding: 12px 16px;
+}
 
 .np {
   display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 16px;
+  grid-template-columns: 48px 1fr;
+  gap: 12px;
   align-items: center;
 }
 
 .np-art-img,
 .np-art-ph {
   display: block;
-  width: 72px;
-  height: 72px;
-  border-radius: 12px;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
   object-fit: cover;
   background: var(--fill);
 }
@@ -550,44 +554,48 @@ a.frame-title {
 }
 
 .np-art-ph::before {
-  font-size: 1.9rem;
+  font-size: 1.4rem;
 }
 
 .np-info {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .np-title,
-.np-artist,
-.np-album,
-.np-rooms {
+.np-source,
+.np-howto {
   margin: 0;
   overflow-wrap: anywhere;
 }
 
 .np-title {
   font-weight: 600;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1.2;
 }
 
-.np-artist,
-.np-album {
+.np-source {
   color: var(--ink-2);
   font-size: 12.5px;
 }
 
+.np-howto {
+  color: var(--ink-2);
+  font-size: 0.95rem;
+}
+
 .np-progress {
-  margin-top: 10px;
+  margin-top: 6px;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 10px;
 }
 
 .np-track {
+  flex: 1;
   height: 4px;
   border-radius: 999px;
   background: oklch(1 0 0 / 0.12);
@@ -606,24 +614,22 @@ a.frame-title {
 
 .np-times {
   display: flex;
-  justify-content: space-between;
   gap: 10px;
   color: var(--ink-2);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
 
 .np-status {
-  margin-top: 4px;
+  margin: 2px 0 0;
   color: var(--ink-2);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
 }
 
-.np-rooms {
-  margin-top: 4px;
-  color: var(--accent);
-  font-size: 0.9rem;
+.everything-off {
+  margin-left: auto;
+  min-height: 44px;
 }
 
 /* --- Rooms, as rows ------------------------------------------------------ */
@@ -633,14 +639,14 @@ a.frame-title {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 16px;
+  gap: 4px;
 }
 
 .room {
   display: grid;
   grid-template-columns: 1fr auto auto;
   grid-template-areas:
-    "label pct toggle"
+    "name only toggle"
     "volume volume volume";
   align-items: center;
   column-gap: 14px;
@@ -651,18 +657,54 @@ a.frame-title {
   opacity: 0.5;
 }
 
+.room-name {
+  grid-area: name;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .room-label {
-  grid-area: label;
   font-size: 1.05rem;
   font-weight: 600;
 }
 
-/* The volume figure, driven by the slider's render callback. */
-.pct {
-  grid-area: pct;
+/* "54%", "Off" or "Not responding". */
+.room-state {
   color: var(--ink-2);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+.only-here {
+  grid-area: only;
+  min-height: 44px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--dur-press) var(--ease-out),
+    background-color 0.2s var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.only-here:active {
+  transform: scale(0.96);
+}
+
+.only-here[hidden] {
+  display: none;
+}
+
+.only-here:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* The switch: a 50x30 track with a 24px thumb that springs. The "On"/"Off" text
@@ -733,7 +775,7 @@ a.frame-title {
   position: relative;
   width: 100%;
   height: 44px;
-  margin-top: 10px;
+  margin-top: 0;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -1324,6 +1366,7 @@ a.row-title {
   display: flex;
   align-items: center;
   gap: 16px;
+  width: max-content;
   max-width: calc(100vw - 32px);
   padding: 12px 16px;
   border-radius: 999px;
@@ -1336,7 +1379,7 @@ a.row-title {
 }
 
 .toast-text {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .toast-undo {
@@ -1600,7 +1643,7 @@ a.row-title {
     --rail: 88px;
     --gutter-l: calc(var(--rail) + 20px);
     --gutter-r: max(24px, env(safe-area-inset-right));
-    padding-bottom: 32px;
+    padding-bottom: 8px;
   }
 
   /* The tabs become a vertical rail down the left edge. */
@@ -1650,6 +1693,16 @@ a.row-title {
 
   #rooms-section {
     grid-area: rooms;
+  }
+
+  /* Four rooms with their sliders fit 480px: the chip stays at 44px and the
+     rooms panel is tighter than the other panels. */
+  #rooms-section {
+    padding-block: 8px;
+  }
+
+  .rooms {
+    gap: 0;
   }
 
   /* Each column's first section sits at the top of its column, so the shared

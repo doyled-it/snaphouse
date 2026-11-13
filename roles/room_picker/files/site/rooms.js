@@ -80,7 +80,8 @@ import { createVolumeSlider } from "./volume-slider.js";
 import { createHaptics } from "./haptics.js";
 import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
-import { createToaster } from "./undo.js";
+import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
+import { everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -220,18 +221,18 @@ const els = {
   fqSave: document.getElementById("fq-save"),
   fqError: document.getElementById("fq-error"),
 
-  npSection: document.getElementById("now-playing"),
   npArtImg: document.getElementById("np-art-img"),
   npArtPh: document.getElementById("np-art-ph"),
   npTitle: document.getElementById("np-title"),
-  npArtist: document.getElementById("np-artist"),
-  npAlbum: document.getElementById("np-album"),
+  np: document.getElementById("np"),
+  npSource: document.getElementById("np-source"),
+  npHowto: document.getElementById("np-howto"),
+  everythingOff: document.getElementById("everything-off"),
   npProgress: document.getElementById("np-progress"),
   npFill: document.getElementById("np-fill"),
   npElapsed: document.getElementById("np-elapsed"),
   npEnds: document.getElementById("np-ends"),
   npStatus: document.getElementById("np-status"),
-  npRooms: document.getElementById("np-rooms"),
 
   rooms: document.getElementById("rooms"),
 
@@ -290,6 +291,7 @@ const state = {
   // npArtSrc is the cover src last set, so the image is swapped only on change.
   nowTrack: null,
   npArtSrc: null,
+  btName: null,
 
   // The frame mirror state (mirrorState result) for the chosen frame and the
   // cover-busting src set.
@@ -356,8 +358,10 @@ start();
 async function start() {
   await loadConfig();
   buildCards();
+  els.npHowto.textContent = howToText(null);
   connect();
   wireChrome();
+  els.everythingOff.addEventListener("click", onEverythingOff);
   wireArtManager();
   wireFrameControl();
   wirePairing();
@@ -374,6 +378,15 @@ async function start() {
   await refreshFrameControl();
   refreshLibrary();
   refreshNowPlaying();
+  loadBluetoothName((url) =>
+    fetch(url, { cache: "no-store" }).then((r) => {
+      if (!r.ok) throw new Error("no name");
+      return r.json();
+    }),
+  ).then((name) => {
+    state.btName = name;
+    if (!state.nowTrack) els.npHowto.textContent = howToText(name);
+  });
   refreshHistory();
   timers.add(refreshHealth, HEALTH_MS);
   timers.add(refreshFrame, FRAME_MS);
@@ -587,9 +600,21 @@ function buildCards() {
     const card = document.createElement("li");
     card.className = "room";
 
-    const label = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "room-name";
+    const label = document.createElement("span");
     label.className = "room-label";
     label.textContent = room.label;
+    const stateEl = document.createElement("span");
+    stateEl.className = "room-state";
+    name.append(label, stateEl);
+
+    const only = document.createElement("button");
+    only.className = "only-here";
+    only.type = "button";
+    only.textContent = "Only here";
+    only.setAttribute("aria-label", `Play only in ${room.label}`);
+    only.addEventListener("click", () => onOnlyHere(room.id));
 
     const toggle = document.createElement("button");
     toggle.className = "toggle";
@@ -598,22 +623,25 @@ function buildCards() {
     toggle.setAttribute("aria-label", `${room.label} on or off`);
     toggle.addEventListener("click", () => onToggle(room.id));
 
-    const pct = document.createElement("div");
-    pct.className = "pct";
-    pct.setAttribute("aria-hidden", "true");
-
-    const slider = createVolumeSlider({
+    const entry = { card, toggle, only, stateEl, slider: null };
+    entry.slider = createVolumeSlider({
       label: `${room.label} volume`,
-      onSend: (p) => sendControl(volumeRequest(room.id, p)),
+      onSend: (p) => {
+        // Dragging an off room wakes it: unmute first, then the volume.
+        if (entry.toggle.getAttribute("aria-checked") !== "true") {
+          setRoomPower(room.id, true);
+        }
+        sendControl(volumeRequest(room.id, p));
+      },
       onRender: (p) => {
-        pct.textContent = `${p}%`;
+        if (stateEl.dataset.mode === "volume") {
+          stateEl.textContent = `${p}%`;
+        }
       },
       haptics,
     });
 
-    const entry = { card, toggle, slider };
-
-    card.append(label, pct, toggle, slider.el);
+    card.append(name, only, toggle, entry.slider.el);
     els.rooms.append(card);
     state.cards.set(room.id, entry);
   }
@@ -737,21 +765,67 @@ function stopPolling() {
   }
 }
 
+// The rows in the shape listen-model.js reads: `reachable` is snapserver's
+// `connected`.
+function listenRooms() {
+  return state.config.rooms
+    .map((r) => state.rooms.get(r.id))
+    .filter(Boolean)
+    .map((r) => ({ id: r.id, on: r.on, reachable: r.connected, volume: r.volume }));
+}
+
 function render(status) {
   const rooms = roomsFromStatus(status, state.config.rooms);
   for (const room of rooms) {
     state.rooms.set(room.id, room);
+  }
+  renderListen();
+}
+
+// Paint every row and the header button from the latest rooms.
+function renderListen() {
+  const all = listenRooms();
+  for (const room of all) {
     const entry = state.cards.get(room.id);
     if (!entry) {
       continue;
     }
-    entry.card.classList.toggle("disconnected", !room.connected);
+    const st = roomState(room, all);
+    entry.card.classList.toggle("disconnected", !room.reachable);
     entry.toggle.setAttribute("aria-checked", room.on ? "true" : "false");
     entry.toggle.textContent = room.on ? "On" : "Off";
-    entry.toggle.disabled = !room.connected;
+    entry.toggle.disabled = st.disabled;
+    entry.only.hidden = !st.showOnlyHere;
+    entry.only.disabled = st.disabled;
+    entry.stateEl.dataset.mode = room.reachable && room.on ? "volume" : "text";
+    entry.stateEl.textContent = st.label;
     entry.slider.applyStatus(room.volume);
-    entry.slider.setEnabled(room.connected);
+    entry.slider.setEnabled(!st.disabled);
   }
+  els.everythingOff.disabled = everythingOffPlan(all).length === 0;
+}
+
+// Turn one room on or off: the row flips at once, a muted group is unmuted
+// first, then the client is switched.
+function setRoomPower(id, next) {
+  const entry = state.cards.get(id);
+  if (entry) {
+    entry.toggle.setAttribute("aria-checked", next ? "true" : "false");
+    entry.toggle.textContent = next ? "On" : "Off";
+    const vol = entry.stateEl.dataset.mode;
+    if (next && vol !== "volume") {
+      entry.stateEl.dataset.mode = "volume";
+    }
+    if (!next) {
+      entry.stateEl.dataset.mode = "text";
+      entry.stateEl.textContent = "Off";
+    }
+  }
+  const room = state.rooms.get(id);
+  if (next && room && room.groupMuted && room.groupId) {
+    sendControl(groupUnmuteRequest(room.groupId));
+  }
+  sendControl(toggleRequest(id, next));
 }
 
 function onToggle(id) {
@@ -759,18 +833,38 @@ function onToggle(id) {
   if (!entry) {
     return;
   }
-  const nowOn = entry.toggle.getAttribute("aria-checked") === "true";
-  const next = !nowOn;
-  entry.toggle.setAttribute("aria-checked", next ? "true" : "false");
-  entry.toggle.textContent = next ? "On" : "Off";
+  const next = entry.toggle.getAttribute("aria-checked") !== "true";
   if (next) haptics.roomOn();
   else haptics.roomOff();
+  setRoomPower(id, next);
+}
 
-  const room = state.rooms.get(id);
-  if (next && room && room.groupMuted && room.groupId) {
-    sendControl(groupUnmuteRequest(room.groupId));
+// Send a plan, then offer Undo. The snapshot is taken before any write, and Undo
+// replays on/off only, so volumes are never touched.
+function runPlan(plan, message) {
+  if (plan.length === 0) {
+    return;
   }
-  sendControl(toggleRequest(id, next));
+  const snapshot = snapshotRooms(listenRooms());
+  for (const step of plan) {
+    setRoomPower(step.id, step.on);
+  }
+  showToast(message, () => {
+    for (const step of undoPlan(snapshot, listenRooms())) {
+      setRoomPower(step.id, step.on);
+    }
+  });
+}
+
+function onOnlyHere(id) {
+  const room = state.config.rooms.find((r) => r.id === id);
+  haptics.roomOn();
+  runPlan(onlyHerePlan(listenRooms(), id), `Playing only in the ${room ? room.label : "room"}.`);
+}
+
+function onEverythingOff() {
+  haptics.roomOff();
+  runPlan(everythingOffPlan(listenRooms()), "Everything is off.");
 }
 
 async function refreshHealth() {
@@ -1657,15 +1751,17 @@ function followCover(url) {
 
 function updateNowPlayingCard(track) {
   state.nowTrack = track;
+  els.np.hidden = !track;
+  els.npHowto.hidden = Boolean(track);
   if (!track) {
-    els.npSection.hidden = true;
+    els.npHowto.textContent = howToText(state.btName);
     if (state.npArtSrc !== null) {
       state.npArtSrc = null;
       followCover(null);
     }
+    stopProgressLoop();
     return;
   }
-  els.npSection.hidden = false;
 
   if (track.artUrl) {
     if (state.npArtSrc !== track.artUrl) {
@@ -1685,26 +1781,8 @@ function updateNowPlayingCard(track) {
   }
 
   els.npTitle.textContent = track.title;
-  setOptionalLine(els.npArtist, track.artist);
-  setOptionalLine(els.npAlbum, track.album);
-  if (track.rooms && track.rooms.length > 0) {
-    els.npRooms.textContent = `Playing in ${joinNames(track.rooms)}`;
-    els.npRooms.hidden = false;
-  } else {
-    els.npRooms.hidden = true;
-    els.npRooms.textContent = "";
-  }
+  setOptionalLine(els.npSource, [track.artist, track.album].filter(Boolean).join(" \u00b7 "));
   tickNowPlaying();
-}
-
-function joinNames(names) {
-  if (names.length === 1) {
-    return names[0];
-  }
-  if (names.length === 2) {
-    return `${names[0]} and ${names[1]}`;
-  }
-  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
 function setProgressFill(fraction) {
@@ -1723,7 +1801,7 @@ function writeProgressText(progress, paused) {
 
 function tickNowPlaying() {
   const track = state.nowTrack;
-  if (!track || els.npSection.hidden) {
+  if (!track) {
     stopProgressLoop();
     return;
   }
@@ -1754,7 +1832,7 @@ let progressSecond = -1;
 function progressLoopWanted() {
   const track = state.nowTrack;
   return Boolean(
-    track && track.status !== "paused" && !els.npSection.hidden && !els.npProgress.hidden && !document.hidden,
+    track && track.status !== "paused" && !els.npProgress.hidden && !document.hidden,
   );
 }
 

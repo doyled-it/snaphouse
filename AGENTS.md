@@ -202,6 +202,29 @@ the same expression the `bluetooth` role uses for the adapter alias. The alias
 lives only in `/etc/snaphouse/local.yml`; the repo carries a commented
 placeholder. The page treats a missing or malformed file as "no name".
 
+## Listen: Only here, Everything off, and Undo
+
+Each room row on Listen shows its name, a state label (`54%`, `Off`, or `Not
+responding`, from `roomState` in `listen-model.js`), an "Only here" chip, the
+switch, and the slider always visible beneath. An unreachable room has its
+controls disabled and says so in words. Dragging an off room's slider sends the
+unmute first and the volume second, and the row flips to on.
+
+"Only here" turns the chosen room on and every other reachable room off;
+"Everything off" (in the header, disabled when nothing is on) turns every
+reachable room off. Both send only rooms that are not already right, through the
+same `setRoomPower` path as the switch (group unmute first when the room's group
+is muted, then `toggleRequest`). Volumes are never touched.
+
+Undo versus confirm: a reversible action (Only here, Everything off, move to
+trash, move to folder, unpin) acts at once and shows an 8 s Undo toast; a
+destructive one (empty the trash, forget a phone, delete a folder that still has
+images) asks first and has no Undo. Undo for the two bulk actions replays the
+per-room on/off snapshot taken before the action (`snapshotRooms`, `undoPlan` in
+`undo.js`), so volumes you changed in between stay as they are. With nothing
+playing, the now-playing strip shows how to start something, naming the
+Bluetooth speaker from `bluetooth.json` when the hub published one.
+
 ## Polling sleeps while hidden, lists patch in place
 
 Every polling interval in `rooms.js` registers with `page-timers.js`; the
