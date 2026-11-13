@@ -25,6 +25,8 @@ import {
   nowPlayingFromBody,
   progressAt,
   formatDuration,
+  historyWhenText,
+  progressLabel,
   historyFromBody,
   interpretRpcResponse,
   safeJsonParse,
@@ -2059,7 +2061,10 @@ function setProgressFill(fraction) {
 }
 
 function writeProgressText(progress, paused) {
-  els.npElapsed.textContent = `${formatDuration(progress.elapsed)} / ${formatDuration(progress.total)}`;
+  els.npElapsed.textContent = progressLabel(
+    state.nowTrack,
+    `${formatDuration(progress.elapsed)} / ${formatDuration(progress.total)}`,
+  );
   if (paused) {
     els.npEnds.hidden = true;
   } else {
@@ -2217,12 +2222,12 @@ function playRow(play) {
     meta.append(artist);
   }
 
-  const when = formatStartTime(play.startedAt);
+  const when = formatStartTime(play.lastPlayedAt);
   if (when) {
     const time = document.createElement("time");
     time.className = "row-when";
-    time.dateTime = play.startedAt;
-    time.textContent = play.duration !== null ? `${when}, ${formatDuration(play.duration)}` : when;
+    time.dateTime = play.lastPlayedAt;
+    time.textContent = historyWhenText(play, when);
     meta.append(time);
   }
 

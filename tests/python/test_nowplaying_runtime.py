@@ -435,3 +435,24 @@ def test_load_history_reads_valid_plays(tmp_path):
     plays = [{"title": "A", "artist": "B", "album": "C"}]
     path.write_text(json.dumps({"plays": plays}))
     assert load_history(path, LOG) == plays
+
+
+def test_load_history_collapses_long_form_duplicates(tmp_path):
+    base = {
+        "title": "Book One",
+        "artist": "Author",
+        "album": "Book One",
+        "genre": None,
+        "source": "bluetooth",
+        "art_url": None,
+        "podcast_id": None,
+    }
+    plays = [
+        dict(base, kind="long_form", duration=1528.0, started_at="2026-11-08T20:00:00-08:00"),
+        dict(base, kind="music", duration=1044.0, started_at="2026-11-08T19:00:00-08:00"),
+    ]
+    path = tmp_path / "play-history.json"
+    path.write_text(json.dumps({"plays": plays}))
+    loaded = load_history(path, LOG)
+    assert len(loaded) == 1
+    assert loaded[0]["kind"] == "long_form"

@@ -271,6 +271,7 @@ it at `http://house.local/play-history.json`. Shape:
       "title": "...", "artist": "...", "album": "...",
       "kind": "music", "genre": ["Rock"], "source": "airplay",
       "duration": 322.0, "started_at": "2026-11-08T21:01:10-08:00",
+      "last_played_at": "2026-11-08T21:01:10-08:00",
       "art_url": "/cover/history/....jpg", "podcast_id": null
     }
   ]
@@ -290,6 +291,18 @@ once the podcast art lookup lands, or `null` for anything that is not a matched 
 is additive too (entries written before this field have no `podcast_id` key and stay valid)
 and routes the room-picker page's "Open in" sheet to Pocket Casts and the Apple Podcasts
 show page. `artist`, `album`, `duration`, `genre`, `art_url`, and `podcast_id` may be `null`.
+
+`last_played_at` is additive (ISO-8601, when the newest session of the row began; equal to
+`started_at` for a first play; older entries lack it and a consumer falls back to
+`started_at`). Long-form items merge by identity: when a play is counted and an existing row
+has the same `(title, artist, album)` and either the row or the new play has kind
+`long_form`, the old row is removed and one merged row is inserted at the top. The merged
+row keeps the first `started_at`, sets `last_played_at` to the newest session's start,
+takes kind `long_form` (a short chapter is no longer filed as `music`), and takes the
+newest non-null `art_url`, `genre`, `podcast_id` and `duration`. Music repeats stay separate
+plays. On load the service collapses existing duplicates the same way and orders rows by
+`last_played_at` (or `started_at`). The page treats a row as a book when `kind` is
+`long_form`, `genre` names no podcast, and `podcast_id` is `null`.
 
 **Art index file.** snaphouse produces, the room-picker page and nightstand consume. The
 `snaphouse-artadmin` service writes `/var/lib/snaphouse/public/art/art-index.json` atomically
