@@ -361,3 +361,28 @@ def test_avrcp_keys_service_is_gated_like_the_keepalive():
     start = by_name["Enable and start the speaker buttons service"]
     assert start["when"] == "common_systemd_init"
     assert "service" in start["tags"]
+
+
+def test_avrcp_keys_listener_is_unprivileged_and_root_only_writes_the_address():
+    text = _render_avrcp_unit("house")
+    assert "User=snaphouse-avrcp" in text
+    assert "SupplementaryGroups=input" in text
+    assert "CapabilityBoundingSet" not in text
+    assert "RuntimeDirectory=snaphouse-avrcp-keys" in text
+    pre = [l for l in text.splitlines() if l.startswith("ExecStartPre=")]
+    assert len(pre) == 1
+    assert pre[0].startswith("ExecStartPre=+")
+    assert "--write-address /run/snaphouse-avrcp-keys/address" in pre[0]
+    assert "--write-address" not in _exec_start(text)
+
+
+def test_avrcp_keys_user_is_a_system_account_created_before_the_unit():
+    tasks = yaml.safe_load(BT_SPEAKER_TASKS.read_text())
+    names = [t["name"] for t in tasks]
+    user = next(t for t in tasks if t["name"] == "Create the speaker buttons user")
+    args = user["ansible.builtin.user"]
+    assert args["name"] == "snaphouse-avrcp" and args["system"] is True
+    assert args["shell"] == "/usr/sbin/nologin"
+    assert names.index("Create the speaker buttons user") < names.index(
+        "Install the speaker buttons service unit"
+    )

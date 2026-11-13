@@ -157,3 +157,106 @@ def test_run_rescans_until_the_device_appears_and_again_after_it_goes():
 def test_hub_posts_to_loopback_and_others_to_the_hub_name():
     assert ak.rpc_url("house", "house") == "http://127.0.0.1:1780/jsonrpc"
     assert ak.rpc_url("house", "nightstand") == "http://house.local/jsonrpc"
+
+
+# --- Privilege split: root writes the address, the listener only reads it ------
+
+
+def test_write_address_dumps_the_speaker_address_for_the_listener(tmp_path):
+    settings = tmp_path / "local.yml"
+    settings.write_text(f"speakers:\n  vizio: \"{SPEAKER}\"\n")
+    out = tmp_path / "address"
+    rc = ak.main(["vizio", "--hub", "house", "--host", "house",
+                  "--settings", str(settings), "--write-address", str(out)])
+    assert rc == 0
+    assert out.read_text().strip() == SPEAKER
+    assert (out.stat().st_mode & 0o777) == 0o600
+
+
+def test_write_address_writes_an_empty_file_when_unpaired_or_unreadable(tmp_path):
+    out = tmp_path / "address"
+    rc = ak.main(["vizio", "--hub", "house", "--host", "house",
+                  "--settings", str(tmp_path / "missing.yml"),
+                  "--write-address", str(out)])
+    assert rc == 0
+    assert out.read_text() == ""
+
+
+def test_main_wires_the_listener_to_the_address_file(tmp_path, monkeypatch):
+    address_file = tmp_path / "address"
+    address_file.write_text(SPEAKER + "\n")
+    captured = {}
+    monkeypatch.setattr(ak, "run", lambda **kw: captured.update(kw))
+    posts = []
+
+    class FakeRpc:
+        def __init__(self, url):
+            posts.append(url)
+
+        def __call__(self, method, params):
+            posts.append((method, params))
+
+    from snaphouse import clients
+
+    monkeypatch.setattr(clients, "HttpRpc", FakeRpc)
+    rc = ak.main(["vizio", "--hub", "house", "--host", "nightstand",
+                  "--address-file", str(address_file)])
+    assert rc == 0
+    assert captured["address"]() == SPEAKER
+    captured["send"]("next")
+    assert posts == [
+        "http://house.local/jsonrpc",
+        ("Stream.Control", {"id": "Bluetooth", "command": "next"}),
+    ]
+    address_file.write_text("")
+    assert captured["address"]() is None
+    address_file.unlink()
+    assert captured["address"]() is None
+
+
+def test_speaker_mac_is_a_public_helper():
+    from snaphouse import clients
+
+    assert callable(clients.speaker_mac)
+    assert not hasattr(clients, "_speaker_mac")
+
+
+def test_run_logs_once_when_open_keeps_failing_and_once_when_it_recovers():
+    logs, sleeps, opened = [], [], []
+
+    class Gone(Exception):
+        pass
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 6:
+            raise Gone()
+
+    def open_device(event):
+        opened.append(event)
+        if len(opened) <= 3:
+            raise PermissionError(13, "denied")
+
+        def read(n):
+            raise OSError(19, "No such device")
+
+        return read, lambda: None
+
+    try:
+        ak.run(address=lambda: SPEAKER, read_devices=lambda: PROC,
+               open_device=open_device, send=lambda c: None,
+               log=logs.append, sleep=sleep)
+    except Gone:
+        pass
+    failing = [m for m in logs if "cannot open" in m]
+    recovered = [m for m in logs if "reading again" in m]
+    assert len(failing) == 1 and len(recovered) == 1
+    assert SPEAKER not in " ".join(logs)
+
+
+def test_run_returns_after_a_long_unpaired_stretch_so_systemd_rereads_the_address():
+    sleeps = []
+    ak.run(address=lambda: None, read_devices=lambda: PROC,
+           open_device=lambda e: None, send=lambda c: None,
+           log=lambda m: None, sleep=sleeps.append)
+    assert len(sleeps) == ak.UNPAIRED_SCANS_BEFORE_EXIT - 1
