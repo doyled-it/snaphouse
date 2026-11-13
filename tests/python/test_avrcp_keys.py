@@ -251,7 +251,7 @@ def test_main_wires_the_listener_to_the_address_file(tmp_path, monkeypatch):
     posts = []
 
     class FakeRpc:
-        def __init__(self, url):
+        def __init__(self, url, **kwargs):
             posts.append(url)
 
         def __call__(self, method, params):
@@ -353,3 +353,18 @@ def test_run_logs_when_the_speaker_device_is_found_and_when_it_goes():
     assert len(gone) == 1
     joined = " ".join(logs)
     assert SPEAKER not in joined and NAME not in joined
+
+
+def test_main_builds_its_rpc_with_empty_ok_and_a_two_second_timeout(monkeypatch):
+    from snaphouse import clients
+
+    made = {}
+
+    class FakeRpc:
+        def __init__(self, url, **kwargs):
+            made["kwargs"] = kwargs
+
+    monkeypatch.setattr(clients, "HttpRpc", FakeRpc)
+    monkeypatch.setattr(ak, "run", lambda **kw: None)
+    ak.main(["vizio", "--hub", "house", "--host", "house"])
+    assert made["kwargs"] == {"empty_ok": True, "timeout": 2.0}

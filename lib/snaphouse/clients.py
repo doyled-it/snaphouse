@@ -218,11 +218,23 @@ class HttpRpc:
     no third-party HTTP client is pulled in. A JSON-RPC error or a transport
     failure raises. The response is parsed tolerantly (see rpc_result), so a
     status bloated with inline art never fails the parse.
+
+    snapserver answers a successful Stream.Control with status 200 and an empty
+    body. A caller that sends controls passes `empty_ok=True`, so an empty or
+    whitespace-only reply returns {} instead of failing the parse; an error body
+    still raises.
     """
 
-    def __init__(self, url: str = DEFAULT_RPC_URL, *, timeout: float = 5.0):
+    def __init__(
+        self,
+        url: str = DEFAULT_RPC_URL,
+        *,
+        timeout: float = 5.0,
+        empty_ok: bool = False,
+    ):
         self.url = url
         self.timeout = timeout
+        self.empty_ok = empty_ok
         self._next_id = 0
 
     def __call__(self, method: str, params: dict) -> dict:
@@ -241,6 +253,8 @@ class HttpRpc:
         )
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
             text = response.read().decode("utf-8")
+        if self.empty_ok and not text.strip():
+            return {}
         return rpc_result(text, method)
 
 

@@ -386,3 +386,17 @@ def test_avrcp_keys_user_is_a_system_account_created_before_the_unit():
     assert names.index("Create the speaker buttons user") < names.index(
         "Install the speaker buttons service unit"
     )
+
+
+def test_avrcp_keys_listener_restarts_when_its_modules_change():
+    tasks = yaml.safe_load(BT_SPEAKER_TASKS.read_text())
+    digest = next(t for t in tasks if t["name"].startswith("Record the speaker buttons module digests"))
+    assert digest["loop"] == ["avrcp_keys.py", "clients.py"]
+    assert digest["when"] == "common_systemd_init"
+    assert digest["notify"] == "Restart the speaker buttons service"
+    assert "sha1" in digest["ansible.builtin.copy"]["content"]
+    assert digest["ansible.builtin.copy"]["dest"].startswith("/etc/snaphouse/")
+    handler = next(h for h in yaml.safe_load((REPO / "roles/bt_speaker/handlers/main.yml").read_text()) if h["name"] == "Restart the speaker buttons service")
+    assert handler["ansible.builtin.systemd_service"] == {"name": "snaphouse-avrcp-keys.service", "state": "restarted"}
+    assert handler["when"] == "common_systemd_init"
+    assert "service" in handler["tags"]

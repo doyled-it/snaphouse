@@ -16,6 +16,7 @@ import {
   artFromHistory,
   safeJsonParse,
   interpretRpcResponse,
+  interpretControlResponse,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // Ordered labels, the shape the page loads from rooms.json.
@@ -311,4 +312,29 @@ test("interpretRpcResponse throws a JSON-RPC error message", () => {
     () => interpretRpcResponse(true, '{"error":{"code":-32601,"message":"nope"}}'),
     /nope/
   );
+});
+
+// interpretControlResponse: snapserver answers a good Stream.Control with an empty body
+
+test("interpretControlResponse treats an ok empty body as success", () => {
+  assert.equal(interpretControlResponse(true, ""), null);
+});
+
+test("interpretControlResponse treats an ok whitespace-only body as success", () => {
+  assert.equal(interpretControlResponse(true, " \n\t "), null);
+});
+
+test("interpretControlResponse throws a JSON-RPC error body's message", () => {
+  assert.throws(
+    () => interpretControlResponse(true, '{"error":{"code":-32602,"message":"bad command"}}'),
+    /bad command/
+  );
+});
+
+test("interpretControlResponse throws on a non-ok reply, even an empty one", () => {
+  assert.throws(() => interpretControlResponse(false, ""), /not reachable/);
+});
+
+test("interpretControlResponse returns a normal result", () => {
+  assert.deepEqual(interpretControlResponse(true, '{"result":{"ok":1}}'), { ok: 1 });
 });

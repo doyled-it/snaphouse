@@ -9,3 +9,13 @@
   when: common_systemd_init
   tags:
     - service
+
+# The listener runs the code in place from /opt/snaphouse, so a changed module
+# needs a restart to take effect (see the digest task in tasks/main.yml).
+- name: Restart the speaker buttons service
+  ansible.builtin.systemd_service:
+    name: snaphouse-avrcp-keys.service
+    state: restarted
+  when: common_systemd_init
+  tags:
+    - service

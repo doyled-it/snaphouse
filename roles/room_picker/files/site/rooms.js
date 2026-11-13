@@ -27,6 +27,7 @@ import {
   formatDuration,
   historyFromBody,
   interpretRpcResponse,
+  interpretControlResponse,
   safeJsonParse,
   parseArtIndex,
   parseArtControl,
@@ -782,13 +783,13 @@ function envelope(method, params) {
   return JSON.stringify({ id: state.nextId++, jsonrpc: "2.0", method, params });
 }
 
-async function postRpc(method, params) {
+async function postRpc(method, params, interpret = interpretRpcResponse) {
   const response = await fetch(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: envelope(method, params),
   });
-  return interpretRpcResponse(response.ok, await response.text());
+  return interpret(response.ok, await response.text());
 }
 
 function sendControl(request) {
@@ -2049,7 +2050,7 @@ function onPlayback(command) {
     state.playHold = null;
   }
   const request = playbackRequest(command);
-  postRpc(request.method, request.params)
+  postRpc(request.method, request.params, interpretControlResponse)
     .catch(() => showToast("Couldn't reach your phone"))
     .then(() => setTimeout(refreshNowPlaying, 800));
 }
