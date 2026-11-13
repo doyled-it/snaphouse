@@ -48,7 +48,9 @@ export function createVolumeSlider({
     if (!(trackWidth > 0) && typeof el.offsetWidth === "number") trackWidth = el.offsetWidth;
     fill.style.transform = `scaleX(${value / 100})`;
     const travel = Math.max(0, trackWidth - THUMB_PX);
-    thumb.style.transform = `translateX(${(value / 100) * travel}px)`;
+    // `translate`, not `transform`: CSS applies the held `scale: 1.2` before
+    // `transform`, which would stretch a translateX and overshoot the track.
+    thumb.style.translate = `${(value / 100) * travel}px 0px`;
     if (onRender) onRender(value);
   }
 

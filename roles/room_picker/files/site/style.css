@@ -820,7 +820,7 @@ a.frame-title {
   background: var(--ink);
   box-shadow: 0 2px 8px oklch(0 0 0 / 0.45);
   transition: scale 0.18s var(--ease-out);
-  will-change: transform;
+  will-change: translate, scale;
 }
 
 .volume.drag .volume-thumb {
