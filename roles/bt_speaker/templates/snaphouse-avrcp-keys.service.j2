@@ -1,0 +1,35 @@
+{#
+  Speaker buttons: reads the configured speaker's "(AVRCP)" input device and posts
+  Stream.Control to snapserver (loopback on the hub, the hub's /jsonrpc proxy
+  elsewhere). It passes the speaker *name*; the address is read from local.yml on
+  the device and never appears here. It rescans by itself when the speaker
+  disconnects and reconnects, so Restart=always only covers a crash.
+
+  It runs as root: local.yml is 0600 root (it holds the household's addresses and
+  the art-share password), so a user in the input group could not read the
+  speaker's address. Root is boxed in instead: a read-only filesystem, no new
+  privileges, and only the one capability reading /dev/input needs.
+#}
+{% set hub_name = snaphouse_hosts | dict2items | selectattr('value.roles', 'contains', 'hub_input') | map(attribute='key') | first %}
+[Unit]
+Description=snaphouse speaker buttons
+After=bluetooth.service snaphouse-bt-keepalive.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=/opt/snaphouse/lib
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.avrcp_keys {{ snaphouse_hosts[snaphouse_host].output.speaker }} --hub {{ hub_name }} --host {{ snaphouse_host }}
+Restart=always
+RestartSec=5
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
