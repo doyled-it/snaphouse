@@ -25,7 +25,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 REPO = Path(__file__).resolve().parents[2]
 
 BT_IN_SERVICE_TEMPLATE = "roles/hub_input/templates/snaphouse-bt-in.service.j2"
-BT_INPUT_BUFFER_TIME_US = 1500000
+BT_INPUT_BUFFER_TIME_US = 500000
 BT_INPUT_PERIOD_TIME_US = 100000
 BT_TASKS = REPO / "roles/bluetooth/tasks/main.yml"
 BT_HANDLERS = REPO / "roles/bluetooth/handlers/main.yml"
@@ -65,9 +65,10 @@ def test_bt_input_service_drops_the_software_volume_flag():
 
 def test_bt_input_service_sizes_the_receive_buffer_to_ride_phone_stalls():
     # A phone pauses its A2DP sender when it buffers ahead; the default 500 ms
-    # loopback buffer ran dry and the house skipped (issue #92). A 1.5 s buffer
-    # with a 100 ms period, placed right after the binary, matches the hand test
-    # drop-in that logged zero underruns on the hub.
+    # loopback buffer ran dry and the house skipped (issue #92). The buffer was
+    # raised to 1.5 s for that; a later hand test at 500 ms with a 100 ms period
+    # kept video in sync, and the hub logged 3 underruns in about 9 hours. The
+    # 500 ms buffer is what ships, placed right after the binary.
     text = render_bt_in_service()
     exec_start = _exec_start(text)
     assert f"--pcm-buffer-time={BT_INPUT_BUFFER_TIME_US}" in exec_start
@@ -77,6 +78,13 @@ def test_bt_input_service_sizes_the_receive_buffer_to_ride_phone_stalls():
     assert exec_start.index(binary) < exec_start.index("--pcm-buffer-time")
     assert exec_start.index("--pcm-buffer-time") < exec_start.index("--pcm=")
     assert exec_start.index("--pcm-period-time") < exec_start.index("--pcm=")
+
+
+def test_shipped_receive_buffer_in_vars_is_the_tested_value():
+    # The service renders from vars/all.yml on the hub; pin the shipped value to
+    # the one the template test asserts so the two cannot drift apart.
+    shipped = yaml.safe_load((REPO / "vars/all.yml").read_text())
+    assert shipped["bt_input_buffer_time_us"] == BT_INPUT_BUFFER_TIME_US
 
 
 def _tasks() -> list[dict]:
