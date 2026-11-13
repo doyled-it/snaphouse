@@ -225,9 +225,35 @@ tab. While the frame shows now playing the pin button reads "Keep showing art",
 since the pin always holds art.
 
 Frame is hidden until the frame-control document lists frames or a frame mirror
-(`frame.json`) answers. Climate is hidden until the homebody page exists: to
-unhide it, flip `CLIMATE_ENABLED` in `nav-model.js` and add a `screen-climate`
-section to `index.html` and `els.screens`.
+(`frame.json`) answers. Climate is shown while the hub's `/homebody.json` answers with a
+document the page can parse (`climateTabVisible` in `nav-model.js`, the same shape as
+`frameTabVisible`: yes until the first read finishes, so a `#climate` deep link is not
+rewritten while it loads) and hidden when the file is missing or malformed. If it
+disappears while the tab is open, `rooms.js` calls `applyHash` and the page returns to Listen.
+
+## Climate tab
+
+Climate is the page half of the homebody thermostat automation (contract in
+`docs/cross-repo-features.md`, homebody section). The rules are pure in
+`climate-model.js` (`parseClimate` returns null for anything that is not a version 1
+document, and keeps every null the contract allows; `peopleLines`, `thermostatView`,
+`lastChangeText`, `overrideText`, `checkSettings`, `settingsBody`; tests in
+`tests/js/climate-model.test.js`); `rooms.js` only draws and wires. It shows who is
+home (Home, Away or Not sure yet, with "seen 3 min ago"), the thermostat now in whole
+degrees F ("Can't reach the thermostat" when `reachable` is false, "Checking the
+thermostat" when it is null, the R4 amendment), the last automatic change with its
+reason, and an override line when `override` is true. UI copy never says homebody,
+Matter or API.
+
+The document is polled every 15 s while Climate shows and once a minute from other
+tabs (so the tab can appear), through `page-timers.js`. The automation switch and the
+three numbers (comfort, away, away delay in minutes, steppers with typing) save
+through one `autosave-queue.js` queue: the switch at once, numbers after 600 ms or on
+blur, `POST /api/homebody/settings` with `X-Snaphouse: 1`, only the keys that differ.
+The 200 reply is the full status document and is rendered. A value out of range, or a
+comfort at or above away, is refused inline before any write and its field is left
+alone by polls until fixed. Rendering never overwrites a field the queue holds
+pending, saving or failed.
 
 ## The Bluetooth name is published as a static file
 

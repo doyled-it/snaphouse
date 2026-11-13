@@ -66,3 +66,10 @@ test("a throwing vibrate is swallowed", () => {
     h.roomOn();
   });
 });
+
+test("step vibrates 5 and never throws without vibrate", () => {
+  const nav = fake();
+  createHaptics(nav).step();
+  assert.deepEqual(nav.calls, [5]);
+  createHaptics({}).step();
+});

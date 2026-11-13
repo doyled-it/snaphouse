@@ -2233,3 +2233,262 @@ a.row-title {
     margin: 0;
   }
 }
+
+/* --- Climate -------------------------------------------------------------- */
+
+/* One column on a phone; on the kiosk the readings sit left and the settings
+   right (see the kiosk block below). */
+.climate-cols,
+.climate-col {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.cl-people {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cl-person {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  min-height: 44px;
+  align-content: center;
+}
+
+.cl-person-name {
+  font-weight: 600;
+}
+
+.cl-person-state {
+  grid-column: 3;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+/* Home is the accent, Away is quiet, and "Not sure yet" is hollow, so the state
+   reads without the word. */
+.cl-dot {
+  align-self: center;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: var(--accent);
+}
+
+.cl-person[data-state="away"] .cl-dot {
+  background: var(--ink-2);
+  opacity: 0.55;
+}
+
+.cl-person[data-state="unknown"] .cl-dot {
+  background: transparent;
+  border: 2px dashed var(--ink-2);
+}
+
+.cl-person[data-state="away"] .cl-person-state,
+.cl-person[data-state="unknown"] .cl-person-state {
+  color: var(--ink-2);
+}
+
+.cl-person-seen {
+  grid-column: 2 / 4;
+  grid-row: 2;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 0.85rem;
+}
+
+/* The temperature now is the one large thing on this tab. */
+.cl-reading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+}
+
+.cl-temp {
+  margin: 0;
+  font-size: 4rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.cl-set {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 1rem;
+}
+
+.cl-set b {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-mode {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cl-msg {
+  margin: 10px 0 0;
+  color: var(--red-text);
+  font-weight: 600;
+}
+
+.cl-msg.checking {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+#cl-thermostat-panel[data-status="unreachable"] .cl-temp,
+#cl-thermostat-panel[data-status="checking"] .cl-temp {
+  color: var(--ink-2);
+}
+
+/* The switch row: label left, the shared .toggle on the right. */
+.cl-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+
+/* A quiet line, not an alarm: the helper may simply be restarting. */
+.cl-stale {
+  margin: 0 0 8px;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+/* Last-known values read as remembered, not live: muted, never accent. */
+.cl-people.last-known,
+#cl-thermostat-panel.last-known .cl-mode,
+#cl-thermostat-panel.last-known .cl-set b {
+  color: var(--ink-2);
+  opacity: 0.75;
+}
+
+#cl-thermostat-panel.last-known .cl-temp {
+  color: var(--ink-2);
+}
+
+.cl-known {
+  color: var(--ink-2);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+#cl-last {
+  margin: 10px 0 0;
+}
+
+.cl-override {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--fill);
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-size: 0.95rem;
+}
+
+.cl-auto-h {
+  margin-bottom: 4px;
+}
+
+#cl-settings-panel {
+  align-self: start;
+}
+
+.cl-steppers {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.cl-stepper {
+  display: grid;
+  gap: 4px;
+}
+
+.cl-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cl-step {
+  width: 44px;
+  padding: 0;
+  background: var(--fill);
+  color: var(--ink);
+  font-size: 1.3rem;
+}
+
+.cl-input {
+  width: 64px;
+  padding: 0 4px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.cl-input[aria-invalid="true"] {
+  outline: 2px solid var(--red-text);
+}
+
+.cl-unit {
+  min-width: 34px;
+  color: var(--ink-2);
+}
+
+.cl-stepper.disabled {
+  opacity: 0.5;
+}
+
+@media (min-width: 720px) and (max-height: 540px) {
+  .climate-cols {
+    grid-template-columns: 1fr 1fr;
+    column-gap: 36px;
+    align-items: start;
+  }
+
+  .climate-col,
+  .climate-cols {
+    gap: 10px;
+  }
+
+  #screen-climate .panel {
+    padding: 10px 16px;
+  }
+
+  .cl-temp {
+    font-size: 3rem;
+  }
+
+  .cl-person {
+    min-height: 36px;
+  }
+
+  .cl-steppers {
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .cl-stepper {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+}

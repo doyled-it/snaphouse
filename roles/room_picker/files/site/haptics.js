@@ -21,5 +21,6 @@ export function createHaptics(nav = globalThis.navigator) {
     roomOn: () => buzz(10),
     roomOff: () => buzz(6),
     playPause: () => buzz(8),
+    step: () => buzz(5),
   };
 }
