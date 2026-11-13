@@ -35,6 +35,14 @@
     mode: "0644"
   notify: Reload nginx
 
+- name: Publish the Bluetooth name for the page
+  ansible.builtin.template:
+    src: bluetooth.json.j2
+    dest: /var/lib/snaphouse/room-picker/bluetooth.json
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Write the house status poll targets from the inventory
   ansible.builtin.template:
     src: house-status-targets.json.j2

@@ -194,6 +194,14 @@ Frame is hidden until the frame-control document lists frames or a frame mirror
 unhide it, flip `CLIMATE_ENABLED` in `nav-model.js` and add a `screen-climate`
 section to `index.html` and `els.screens`.
 
+## The Bluetooth name is published as a static file
+
+The `room_picker` role templates `/var/lib/snaphouse/room-picker/bluetooth.json`
+(`{"name": ...}`) from `bt_receive_alias`, falling back to `house_stream_name`,
+the same expression the `bluetooth` role uses for the adapter alias. The alias
+lives only in `/etc/snaphouse/local.yml`; the repo carries a commented
+placeholder. The page treats a missing or malformed file as "no name".
+
 ## Polling sleeps while hidden, lists patch in place
 
 Every polling interval in `rooms.js` registers with `page-timers.js`; the
