@@ -72,3 +72,20 @@ export function applyPlan(rooms, plan) {
   const want = new Map(plan.map((s) => [s.id, s.on]));
   return rooms.map((r) => (want.has(r.id) ? { ...r, on: want.get(r.id) } : r));
 }
+
+const PLAYBACK_COMMANDS = ["play", "pause", "playPause", "next", "previous"];
+
+// The now-playing card's buttons: shown only while the phone's Bluetooth stream
+// is the source (AirPlay and the rest cannot be controlled from here).
+export function playbackControls(track) {
+  if (!track || track.source !== "bluetooth") return { visible: false };
+  return { visible: true, playing: track.status !== "paused" };
+}
+
+// The Snapserver request for one playback command on the Bluetooth stream.
+export function playbackRequest(command) {
+  if (!PLAYBACK_COMMANDS.includes(command)) {
+    throw new Error(`unknown playback command: ${command}`);
+  }
+  return { method: "Stream.Control", params: { id: "Bluetooth", command } };
+}

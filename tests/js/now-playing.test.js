@@ -408,3 +408,11 @@ test("historyFromBody returns an empty list for a garbled body", () => {
 test("historyFromBody returns an empty list for a valid empty history", () => {
   assert.deepEqual(historyFromBody('{"plays": []}'), []);
 });
+
+test("parseNowPlayingDoc keeps source as a string or null", () => {
+  const doc = nowPlayingDoc();
+  assert.equal(parseNowPlayingDoc({ ...doc, track: { ...doc.track, source: "bluetooth" } }).source, "bluetooth");
+  assert.equal(parseNowPlayingDoc({ ...doc, track: { ...doc.track, source: 5 } }).source, null);
+  const { source, ...rest } = doc.track;
+  assert.equal(parseNowPlayingDoc({ ...doc, track: rest }).source, null);
+});

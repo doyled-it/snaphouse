@@ -125,3 +125,23 @@ test("Undo pressed before any status echo still reverts what was sent", async ()
   const undo = undoPlan(snapshot, applyPlan(rooms, plan));
   assert.deepEqual(undo, [{ id: "a", on: true }, { id: "b", on: true }, { id: "c", on: false }]);
 });
+
+test("playbackControls shows only for a bluetooth source", async () => {
+  const { playbackControls } = await import("../../roles/room_picker/files/site/listen-model.js");
+  assert.deepEqual(playbackControls(null), { visible: false });
+  assert.deepEqual(playbackControls({ source: null, status: "playing" }), { visible: false });
+  assert.deepEqual(playbackControls({ source: "airplay", status: "playing" }), { visible: false });
+  assert.deepEqual(playbackControls({ source: "bluetooth", status: "playing" }), { visible: true, playing: true });
+  assert.deepEqual(playbackControls({ source: "bluetooth", status: "paused" }), { visible: true, playing: false });
+});
+
+test("playbackRequest builds the Stream.Control body and rejects unknown commands", async () => {
+  const { playbackRequest } = await import("../../roles/room_picker/files/site/listen-model.js");
+  for (const command of ["play", "pause", "playPause", "next", "previous"]) {
+    assert.deepEqual(playbackRequest(command), {
+      method: "Stream.Control",
+      params: { id: "Bluetooth", command },
+    });
+  }
+  assert.throws(() => playbackRequest("seek"));
+});

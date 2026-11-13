@@ -241,6 +241,9 @@ export function parseNowPlayingDoc(raw) {
     artist: nonEmptyStringOrNull(t.artist),
     album: nonEmptyStringOrNull(t.album),
     kind: nonEmptyStringOrNull(t.kind),
+    // Which input is playing ("bluetooth", "airplay", ...); the card shows
+    // playback buttons only for the phone's Bluetooth stream.
+    source: nonEmptyStringOrNull(t.source),
     status: t.status === "paused" ? "paused" : "playing",
     duration: positiveNumberOrNull(t.duration),
     position: nonNegativeNumberOrNull(t.position),
