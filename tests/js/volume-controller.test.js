@@ -169,6 +169,9 @@ test("end() twice is harmless", () => {
   h.c.end();
   h.tick(1000);
   h.c.end();
+  // The second end() did not restart the hold: it began at t=1000 and ends at t=3000.
+  h.tick(999);
+  assert.equal(h.c.held(), true);
   h.tick(1);
   assert.equal(h.c.held(), false);
   assert.deepEqual(h.c.incoming(10), { show: true, value: 10 });
