@@ -24,6 +24,8 @@ import {
   weatherLocationLabel,
   weatherSaveBody,
   weatherClearBody,
+  effectiveQuietHours,
+  quietOverrideFromFields,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // --------------------------------------------------------------------------- #
@@ -373,4 +375,37 @@ test("weatherSaveBody wraps a trimmed query, or null when blank", () => {
 
 test("weatherClearBody clears the location", () => {
   assert.deepEqual(weatherClearBody(), { weather_location: null });
+});
+
+// --------------------------------------------------------------------------- #
+// One quiet-hours control per frame, merged from the shared and per-frame split
+// --------------------------------------------------------------------------- #
+
+test("effectiveQuietHours follows the shared window when a frame has no override", () => {
+  const shared = { start: "22:00", end: "07:00" };
+  assert.deepEqual(effectiveQuietHours(shared, null), { enabled: true, start: "22:00", end: "07:00" });
+});
+
+test("effectiveQuietHours uses a custom window, and keeps the shared times when quiet hours are off", () => {
+  const shared = { start: "22:00", end: "07:00" };
+  assert.deepEqual(effectiveQuietHours(shared, { start: "23:00", end: "06:30" }), {
+    enabled: true,
+    start: "23:00",
+    end: "06:30",
+  });
+  assert.deepEqual(effectiveQuietHours(shared, { enabled: false }), {
+    enabled: false,
+    start: "22:00",
+    end: "07:00",
+  });
+});
+
+test("quietOverrideFromFields builds the stored override from the switch and times", () => {
+  assert.deepEqual(quietOverrideFromFields({ enabled: false, start: "", end: "" }), { enabled: false });
+  assert.deepEqual(quietOverrideFromFields({ enabled: true, start: "23:00", end: "06:30" }), {
+    start: "23:00",
+    end: "06:30",
+  });
+  assert.equal(quietOverrideFromFields({ enabled: true, start: "", end: "06:30" }), undefined);
+  assert.equal(quietOverrideFromFields({ enabled: true, start: "25:00", end: "06:30" }), undefined);
 });

@@ -1190,6 +1190,33 @@ export function frameQuietHoursBody(frame, override) {
   return { ok: true, value: { frame, quiet_hours: quiet } };
 }
 
+// The one quiet-hours control a frame shows. A frame follows the shared window
+// until it has an override of its own; an override is a window or
+// { enabled: false }. Off keeps the shared times so switching back on has
+// something sensible to show.
+export function effectiveQuietHours(shared, override) {
+  if (override && override.enabled === false) {
+    return { enabled: false, start: shared.start, end: shared.end };
+  }
+  if (override && isClock(override.start) && isClock(override.end)) {
+    return { enabled: true, start: override.start, end: override.end };
+  }
+  return { enabled: true, start: shared.start, end: shared.end };
+}
+
+// The override stored for the switch and the two times, or undefined while a
+// time is missing or not a 24-hour clock time (the view then shows the error
+// and does not write).
+export function quietOverrideFromFields({ enabled, start, end }) {
+  if (!enabled) {
+    return { enabled: false };
+  }
+  if (isClock(start) && isClock(end)) {
+    return { start, end };
+  }
+  return undefined;
+}
+
 // A sentinel distinct from null so "fall back to shared" (null) never collides
 // with "the value could not be validated" (INVALID).
 const INVALID = Symbol("invalid");

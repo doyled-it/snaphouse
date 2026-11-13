@@ -49,7 +49,6 @@ import {
   validateFrameSettings,
   framePinBody,
   frameUnpinBody,
-  weatherLocationLabel,
   weatherSaveBody,
   weatherClearBody,
   selectedFrameFrom,
@@ -58,6 +57,8 @@ import {
   frameUrls,
   artCommandBody,
   frameQuietHoursBody,
+  effectiveQuietHours,
+  quietOverrideFromFields,
   pairCountdown,
   formatCountdown,
   pairPhase,
@@ -73,6 +74,7 @@ import {
   forgetPrompt,
   forgetReminder,
 } from "./rooms-model.js";
+import { createAutosave, changedKeys, saveStatus } from "./autosave-queue.js";
 import { CLIMATE_ENABLED, frameTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
 import { createPairController } from "./pair-controller.js";
 import { createDevicesController } from "./devices-controller.js";
@@ -170,18 +172,19 @@ const els = {
   fsKinds: document.getElementById("fs-kinds"),
   fsQuietStart: document.getElementById("fs-quiet-start"),
   fsQuietEnd: document.getElementById("fs-quiet-end"),
+  fsQuietStart: document.getElementById("fs-quiet-start"),
+  fsQuietEnd: document.getElementById("fs-quiet-end"),
+  fsQuietEnabled: document.getElementById("fs-quiet-enabled"),
+  fsQuietNote: document.getElementById("fs-quiet-note"),
+  fsQuietError: document.getElementById("fs-quiet-error"),
   fsMorningEnabled: document.getElementById("fs-morning-enabled"),
   fsMorningTimes: document.getElementById("fs-morning-times"),
+  fsMorningError: document.getElementById("fs-morning-error"),
   fsWeekdayStart: document.getElementById("fs-weekday-start"),
   fsWeekdayEnd: document.getElementById("fs-weekday-end"),
   fsWeekendStart: document.getElementById("fs-weekend-start"),
   fsWeekendEnd: document.getElementById("fs-weekend-end"),
-  fsSave: document.getElementById("fs-save"),
-  fsError: document.getElementById("fs-error"),
-  fsWeatherCurrent: document.getElementById("fs-weather-current"),
   fsWeatherInput: document.getElementById("fs-weather-input"),
-  fsWeatherSave: document.getElementById("fs-weather-save"),
-  fsWeatherClear: document.getElementById("fs-weather-clear"),
   fsWeatherError: document.getElementById("fs-weather-error"),
 
   pairing: document.getElementById("pairing"),
@@ -210,16 +213,6 @@ const els = {
   devReminder: document.getElementById("dev-reminder"),
   devReminderText: document.getElementById("dev-reminder-text"),
   devReminderDismiss: document.getElementById("dev-reminder-dismiss"),
-
-  frameQuiet: document.getElementById("frame-quiet"),
-  fqFrameField: document.getElementById("fq-frame-field"),
-  fqFrame: document.getElementById("fq-frame"),
-  fqMode: document.getElementById("fq-mode"),
-  fqCustom: document.getElementById("fq-custom"),
-  fqStart: document.getElementById("fq-start"),
-  fqEnd: document.getElementById("fq-end"),
-  fqSave: document.getElementById("fq-save"),
-  fqError: document.getElementById("fq-error"),
 
   npArtImg: document.getElementById("np-art-img"),
   npArtPh: document.getElementById("np-art-ph"),
@@ -1044,31 +1037,30 @@ const KIND_LABELS = { music: "Music", podcast: "Podcasts", audiobook: "Audiobook
 function wireFrameControl() {
   els.pinSet.addEventListener("click", pinCurrent);
   els.pinUnpin.addEventListener("click", unpinFrame);
-  els.fsSave.addEventListener("click", saveFrameTimes);
-  els.fsWeatherSave.addEventListener("click", saveWeatherCity);
-  els.fsWeatherClear.addEventListener("click", clearWeatherCity);
+
+  // Every field saves itself. Switches write at once; time and text fields
+  // write after a short pause (the queue's delay) and at once on blur.
+  els.fsQuietEnabled.addEventListener("change", () => editQuietHours(true));
+  for (const input of [els.fsQuietStart, els.fsQuietEnd]) {
+    input.addEventListener("input", () => editQuietHours(false));
+    input.addEventListener("blur", flushQuietHours);
+  }
+  els.fsMorningEnabled.addEventListener("change", () => editMorning(true));
+  for (const input of [els.fsWeekdayStart, els.fsWeekdayEnd, els.fsWeekendStart, els.fsWeekendEnd]) {
+    input.addEventListener("input", () => editMorning(false));
+    input.addEventListener("blur", () => sharedQueue.flush());
+  }
+  els.fsWeatherInput.addEventListener("input", editWeatherCity);
+  els.fsWeatherInput.addEventListener("blur", () => sharedQueue.flush());
   els.fsWeatherInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      saveWeatherCity();
+      sharedQueue.flush();
     }
   });
-  els.fsMorningEnabled.addEventListener("change", () => {
-    els.fsMorningTimes.classList.toggle("disabled", !els.fsMorningEnabled.checked);
+  els.artInterval.addEventListener("change", () => {
+    rotationQueue.edit({ rotate_minutes: Number(els.artInterval.value) }, { delayMs: 0 });
   });
-
-  // Per-frame quiet hours: the mode selector shows the custom times only when
-  // "custom" is chosen, and the frame selector routes through the hash so the
-  // chosen frame stays in step with the Frame screen switcher.
-  els.fqMode.addEventListener("change", () => {
-    els.fqCustom.hidden = els.fqMode.value !== "custom";
-  });
-  // The Settings frame selector changes which frame's quiet hours are edited
-  // without leaving the Settings screen (setting the "#frame/<id>" hash would
-  // route to the Frame screen). It picks the frame in place; the choice persists
-  // and the Frame screen switcher follows it.
-  els.fqFrame.addEventListener("change", () => selectFrame(els.fqFrame.value));
-  els.fqSave.addEventListener("click", saveFrameQuietHours);
 }
 
 async function refreshFrameControl() {
@@ -1150,57 +1142,113 @@ function renderFrameControl() {
     els.pinCurrent.hidden = true;
   }
 
-  // Frame settings (Settings screen).
+  // Frame settings (Frame screen).
   els.fsUnavailable.hidden = available;
   els.fsBody.hidden = !available;
   if (available) {
-    renderFrameSettings(fc.settings);
+    renderFrameSettings(fc);
   }
-
-  renderFrameQuiet();
 }
 
-// The per-frame quiet-hours section (Settings). It only applies on the new
-// multi-frame contract, where each frame carries its own quiet-hours override;
-// on the old single-frame contract (legacy) or while the document is
-// unavailable, the shared quiet hours above still work and this section is
-// hidden. The frame selector appears only when there is more than one frame.
-function renderFrameQuiet() {
-  const fc = state.frameControl;
-  const show = Boolean(fc && fc.available && !fc.legacy);
-  els.frameQuiet.hidden = !show;
-  if (!show) {
+// --------------------------------------------------------------------------- //
+// Frame settings. Every field saves itself through an autosave queue
+// (autosave-queue.js): one queue per settings object, so the shared settings
+// (kinds, morning weather, weather city), each frame's quiet hours, and the art
+// rotation each write one request at a time, latest edit wins. Switches and
+// chips write at once; time and text fields after a short pause or on blur.
+// "Saved" shows next to the setting for a moment; a failure shows "Couldn't
+// save." with Retry. A bad time is explained in place and never written.
+// --------------------------------------------------------------------------- //
+
+// The editable shared settings the hub last stored, so a write sends only what
+// changed (the city is geocoded each time it is sent).
+let sharedWritten = {};
+let sharedState = "idle";
+let sharedGroup = "kinds";
+const frameQuietQueues = new Map();
+const frameQuietStates = new Map();
+let rotationWritten = {};
+let rotationState = "idle";
+
+const sharedQueue = createAutosave({
+  write: writeSharedSettings,
+  onState: (next) => {
+    sharedState = next;
+    showSaveStatus(sharedGroup, next, () => sharedQueue.retry());
+  },
+});
+
+const rotationQueue = createAutosave({
+  write: writeRotation,
+  onState: (next) => {
+    rotationState = next;
+    showSaveStatus("rotation", next, () => rotationQueue.retry());
+  },
+});
+
+function frameQuietQueue(frame) {
+  let queue = frameQuietQueues.get(frame);
+  if (!queue) {
+    queue = createAutosave({
+      write: (obj) => writeFrameQuiet(frame, obj),
+      onState: (next) => {
+        frameQuietStates.set(frame, next);
+        if (frame === state.selectedFrame) {
+          showSaveStatus("quiet", next, () => queue.retry());
+        }
+      },
+    });
+    frameQuietQueues.set(frame, queue);
+  }
+  return queue;
+}
+
+// A queue's values are safe to overwrite from the hub's document only when
+// nothing of the owner's is waiting, in flight, or failed.
+function settled(queueState) {
+  return queueState === "idle" || queueState === "saved";
+}
+
+function showSaveStatus(group, queueState, onRetry) {
+  const el = document.querySelector(`[data-status="${group}"]`);
+  if (!el) {
     return;
   }
-
-  const rows = frameList(fc, state.mirrors);
-  if (rows.length > 1) {
-    fillSelect(
-      els.fqFrame,
-      rows.map((row) => ({ value: row.id, label: row.label })),
-      state.selectedFrame
-    );
-    els.fqFrameField.hidden = false;
-  } else {
-    els.fqFrameField.hidden = true;
+  const info = saveStatus(queueState);
+  el.replaceChildren();
+  el.classList.toggle("failed", info.retry);
+  if (info.text) {
+    el.append(document.createTextNode(info.text));
   }
-
-  const entry = fc.frames[state.selectedFrame];
-  const override = entry ? entry.quietHours : null;
-  if (override && override.start && override.end) {
-    els.fqMode.value = "custom";
-    els.fqStart.value = override.start;
-    els.fqEnd.value = override.end;
-  } else if (override && override.enabled === false) {
-    els.fqMode.value = "off";
-  } else {
-    els.fqMode.value = "shared";
+  if (info.retry) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "save-retry";
+    button.textContent = "Retry";
+    button.addEventListener("click", onRetry);
+    el.append(button);
   }
-  els.fqCustom.hidden = els.fqMode.value !== "custom";
 }
 
-function renderFrameSettings(settings) {
-  const kinds = new Set(settings.now_playing_kinds);
+function showFieldError(el, message) {
+  el.textContent = message;
+  el.hidden = false;
+}
+
+function clearFieldError(el) {
+  el.hidden = true;
+  el.textContent = "";
+}
+
+// Do not overwrite the field the owner is typing in.
+function setFieldValue(input, value) {
+  if (document.activeElement !== input) {
+    input.value = value;
+  }
+}
+
+function renderFrameSettings(fc) {
+  const settings = fc.settings;
   if (!state.fsKindsBuilt) {
     els.fsKinds.replaceChildren();
     for (const kind of FRAME_KINDS) {
@@ -1209,88 +1257,212 @@ function renderFrameSettings(settings) {
       chip.type = "button";
       chip.dataset.kind = kind;
       chip.textContent = KIND_LABELS[kind];
-      chip.addEventListener("click", () => toggleKind(kind));
+      chip.addEventListener("click", () => toggleKind(chip));
       els.fsKinds.append(chip);
     }
     state.fsKindsBuilt = true;
   }
-  for (const chip of els.fsKinds.querySelectorAll(".chip")) {
-    const on = kinds.has(chip.dataset.kind);
-    chip.classList.toggle("on", on);
-    chip.setAttribute("aria-pressed", on ? "true" : "false");
+
+  // Per-frame quiet hours exist on the multi-frame contract; on the old
+  // single-frame one the shared window is the only quiet-hours setting.
+  const perFrame = !fc.legacy;
+  const entry = perFrame ? fc.frames[state.selectedFrame] : null;
+  const override = entry ? entry.quietHours : null;
+  const quiet = effectiveQuietHours(settings.quiet_hours, override);
+  const quietQueue = perFrame ? frameQuietQueue(state.selectedFrame) : null;
+  const quietState = perFrame ? frameQuietStates.get(state.selectedFrame) || "idle" : sharedState;
+  els.fsQuietEnabled.closest(".switch-field").hidden = !perFrame;
+  const rows = frameList(fc, state.mirrors);
+  const frameName = rows.find((row) => row.id === state.selectedFrame);
+  els.fsQuietNote.textContent =
+    perFrame && rows.length > 1 && frameName
+      ? `Quiet hours for ${frameName.label}. The frame dims and stops changing.`
+      : "During quiet hours the frame dims and stops changing.";
+  if (perFrame) {
+    showSaveStatus("quiet", quietState, () => quietQueue.retry());
   }
 
-  els.fsQuietStart.value = settings.quiet_hours.start;
-  els.fsQuietEnd.value = settings.quiet_hours.end;
-  els.fsMorningEnabled.checked = settings.morning_weather.enabled;
-  els.fsMorningTimes.classList.toggle("disabled", !settings.morning_weather.enabled);
-  els.fsWeekdayStart.value = settings.morning_weather.weekday[0];
-  els.fsWeekdayEnd.value = settings.morning_weather.weekday[1];
-  els.fsWeekendStart.value = settings.morning_weather.weekend[0];
-  els.fsWeekendEnd.value = settings.morning_weather.weekend[1];
+  if (settled(sharedState)) {
+    const seed = {
+      now_playing_kinds: settings.now_playing_kinds,
+      quiet_hours: settings.quiet_hours,
+      morning_weather: settings.morning_weather,
+      weather_city: settings.weather_location ? settings.weather_location.name : "",
+    };
+    sharedWritten = JSON.parse(JSON.stringify(seed));
+    sharedQueue.seed(seed);
 
-  // The weather city shows the hub's resolved display name (or "Not set"). The
-  // input is left as the owner typed it, so a refresh after an unrelated change
-  // never clears a half-typed city.
-  els.fsWeatherCurrent.textContent = weatherLocationLabel(settings.weather_location);
+    const kinds = new Set(settings.now_playing_kinds);
+    for (const chip of els.fsKinds.querySelectorAll(".chip")) {
+      const on = kinds.has(chip.dataset.kind);
+      chip.classList.toggle("on", on);
+      chip.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    els.fsMorningEnabled.checked = settings.morning_weather.enabled;
+    els.fsMorningTimes.classList.toggle("disabled", !settings.morning_weather.enabled);
+    setFieldValue(els.fsWeekdayStart, settings.morning_weather.weekday[0]);
+    setFieldValue(els.fsWeekdayEnd, settings.morning_weather.weekday[1]);
+    setFieldValue(els.fsWeekendStart, settings.morning_weather.weekend[0]);
+    setFieldValue(els.fsWeekendEnd, settings.morning_weather.weekend[1]);
+    setFieldValue(els.fsWeatherInput, seed.weather_city);
+  }
+
+  if (settled(quietState)) {
+    if (perFrame) {
+      quietQueue.seed({ quiet_hours: override });
+    }
+    els.fsQuietEnabled.checked = quiet.enabled;
+    els.fsQuietStart.disabled = !quiet.enabled;
+    els.fsQuietEnd.disabled = !quiet.enabled;
+    setFieldValue(els.fsQuietStart, quiet.start);
+    setFieldValue(els.fsQuietEnd, quiet.end);
+  }
 }
 
-// Toggle one now-playing kind and save, like the rotation folder chips: the
-// change is immediate and always valid, so there is no form to submit.
-async function toggleKind(kind) {
+// Toggle one now-playing kind. The chip flips at once and the write follows.
+function toggleKind(chip) {
+  const on = !chip.classList.contains("on");
+  chip.classList.toggle("on", on);
+  chip.setAttribute("aria-pressed", on ? "true" : "false");
+  const chosen = new Set(
+    [...els.fsKinds.querySelectorAll(".chip.on")].map((c) => c.dataset.kind)
+  );
+  sharedGroup = "kinds";
+  sharedQueue.edit({ now_playing_kinds: FRAME_KINDS.filter((k) => chosen.has(k)) }, { delayMs: 0 });
+}
+
+function flushQuietHours() {
+  const fc = state.frameControl;
+  if (fc && !fc.legacy) {
+    frameQuietQueue(state.selectedFrame).flush();
+  } else {
+    sharedQueue.flush();
+  }
+}
+
+// The quiet-hours switch and times. A switch writes at once, a time after a
+// pause. An invalid time stays in the field with an explanation and no write.
+function editQuietHours(immediate) {
   const fc = state.frameControl;
   if (!fc || !fc.available) {
     return;
   }
-  const current = new Set(fc.settings.now_playing_kinds);
-  if (current.has(kind)) {
-    current.delete(kind);
-  } else {
-    current.add(kind);
-  }
-  const next = FRAME_KINDS.filter((k) => current.has(k));
-  await postFrameSettings({ now_playing_kinds: next });
-}
-
-// Save quiet hours and morning weather together, validated the way the hub
-// validates them, so a bad time is caught here and explained in place rather
-// than posted.
-async function saveFrameTimes() {
-  clearFsError();
-  const subset = {
-    quiet_hours: { start: els.fsQuietStart.value, end: els.fsQuietEnd.value },
-    morning_weather: {
-      enabled: els.fsMorningEnabled.checked,
-      weekday: [els.fsWeekdayStart.value, els.fsWeekdayEnd.value],
-      weekend: [els.fsWeekendStart.value, els.fsWeekendEnd.value],
-    },
-  };
-  const check = validateFrameSettings(subset);
-  if (!check.ok) {
-    showFsError(check.error);
+  const perFrame = !fc.legacy;
+  const enabled = perFrame ? els.fsQuietEnabled.checked : true;
+  els.fsQuietStart.disabled = !enabled;
+  els.fsQuietEnd.disabled = !enabled;
+  const override = quietOverrideFromFields({
+    enabled,
+    start: els.fsQuietStart.value,
+    end: els.fsQuietEnd.value,
+  });
+  if (override === undefined) {
+    showFieldError(els.fsQuietError, "Use 24-hour times like 07:30 for quiet hours.");
     return;
   }
-  const result = await postFrameSettings(check.value);
-  if (result.ok) {
-    showToast("Frame settings saved.");
+  clearFieldError(els.fsQuietError);
+  const options = immediate ? { delayMs: 0 } : undefined;
+  if (perFrame) {
+    frameQuietQueue(state.selectedFrame).edit({ quiet_hours: override }, options);
+  } else {
+    sharedGroup = "quiet";
+    sharedQueue.edit({ quiet_hours: override }, options);
   }
 }
 
-// Validate a settings subset and post it, showing the server's error on failure.
-// Returns { ok } so a caller can confirm. Always refreshes afterwards so the
-// form reflects what the hub actually stored.
-async function postFrameSettings(subset) {
+function editMorning(immediate) {
+  const morning = {
+    enabled: els.fsMorningEnabled.checked,
+    weekday: [els.fsWeekdayStart.value, els.fsWeekdayEnd.value],
+    weekend: [els.fsWeekendStart.value, els.fsWeekendEnd.value],
+  };
+  els.fsMorningTimes.classList.toggle("disabled", !morning.enabled);
+  const check = validateFrameSettings({ morning_weather: morning });
+  if (!check.ok) {
+    showFieldError(els.fsMorningError, check.error);
+    return;
+  }
+  clearFieldError(els.fsMorningError);
+  sharedGroup = "morning";
+  sharedQueue.edit({ morning_weather: check.value.morning_weather }, immediate ? { delayMs: 0 } : undefined);
+}
+
+function editWeatherCity() {
+  clearFieldError(els.fsWeatherError);
+  sharedGroup = "city";
+  sharedQueue.edit({ weather_city: els.fsWeatherInput.value.trim() });
+}
+
+// The write behind the shared queue: only the settings that differ from what
+// the hub holds, so an unchanged city is not geocoded again. A failure throws
+// so the queue shows Retry; a city the hub could not find is explained in place.
+async function writeSharedSettings(obj) {
+  const changed = changedKeys(sharedWritten, obj);
+  const subset = {};
+  for (const key of ["now_playing_kinds", "quiet_hours", "morning_weather"]) {
+    if (changed.includes(key)) {
+      subset[key] = obj[key];
+    }
+  }
   const check = validateFrameSettings(subset);
   if (!check.ok) {
-    showFsError(check.error);
-    return { ok: false };
+    throw new Error(check.error);
   }
-  const result = await postApi("/api/frame/settings", check.value);
+  const body = { ...check.value };
+  const cityChanged = changed.includes("weather_city");
+  if (cityChanged) {
+    Object.assign(body, obj.weather_city ? weatherSaveBody(obj.weather_city) : weatherClearBody());
+  }
+  if (Object.keys(body).length === 0) {
+    return;
+  }
+  const result = await postApi("/api/frame/settings", body);
   if (!result.ok) {
-    showToast(result.error);
+    if (cityChanged) {
+      showFieldError(els.fsWeatherError, result.error);
+    }
+    throw new Error(result.error);
   }
-  await refreshFrameControl();
-  return result;
+  clearFieldError(els.fsWeatherError);
+  sharedWritten = JSON.parse(JSON.stringify({ ...sharedWritten, ...obj }));
+  refreshFrameControl();
+}
+
+async function writeFrameQuiet(frame, obj) {
+  const built = frameQuietHoursBody(frame, obj.quiet_hours);
+  if (!built.ok) {
+    showFieldError(els.fsQuietError, built.error);
+    throw new Error(built.error);
+  }
+  const result = await postApi("/api/frame/settings", built.value);
+  if (!result.ok) {
+    showFieldError(els.fsQuietError, result.error);
+    throw new Error(result.error);
+  }
+  clearFieldError(els.fsQuietError);
+  refreshFrameControl();
+}
+
+// The rotation write: the change-every interval and each folder switch, one
+// request per changed key, in order.
+async function writeRotation(obj) {
+  for (const key of changedKeys(rotationWritten, obj)) {
+    let result;
+    if (key === "rotate_minutes") {
+      result = await postApi("/api/art/settings", { rotate_minutes: obj[key] });
+    } else if (key.startsWith("folder:")) {
+      result = await postApi("/api/art/folder/enable", { name: key.slice(7), enabled: obj[key] });
+    } else {
+      continue;
+    }
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    rotationWritten = { ...rotationWritten, [key]: obj[key] };
+  }
+  refreshArt();
+  refreshFrame();
+  refreshLibrary();
 }
 
 async function pinCurrent() {
@@ -1319,103 +1491,6 @@ async function unpinFrame() {
   }
   await refreshFrameControl();
   refreshFrame();
-}
-
-// Save the chosen frame's quiet-hours override: follow the shared hours
-// (null), keep none ({enabled:false}), or a custom window. A bad custom time is
-// caught by frameQuietHoursBody and shown in place rather than posted.
-async function saveFrameQuietHours() {
-  clearFqError();
-  const override = frameQuietOverrideFromForm();
-  const built = frameQuietHoursBody(state.selectedFrame, override);
-  if (!built.ok) {
-    showFqError(built.error);
-    return;
-  }
-  const result = await postApi("/api/frame/settings", built.value);
-  if (!result.ok) {
-    showFqError(result.error);
-    return;
-  }
-  showToast("Quiet hours saved.");
-  await refreshFrameControl();
-}
-
-// The quiet-hours override the per-frame form describes: null for "follow the
-// shared hours", {enabled:false} for "no quiet hours", or the custom window.
-function frameQuietOverrideFromForm() {
-  if (els.fqMode.value === "off") {
-    return { enabled: false };
-  }
-  if (els.fqMode.value === "custom") {
-    return { start: els.fqStart.value, end: els.fqEnd.value };
-  }
-  return null;
-}
-
-function showFqError(message) {
-  els.fqError.textContent = message;
-  els.fqError.hidden = false;
-}
-
-function clearFqError() {
-  els.fqError.hidden = true;
-  els.fqError.textContent = "";
-}
-
-function showFsError(message) {
-  els.fsError.textContent = message;
-  els.fsError.hidden = false;
-}
-
-function clearFsError() {
-  els.fsError.hidden = true;
-  els.fsError.textContent = "";
-}
-
-// Geocode and save the typed weather city. The body goes straight to
-// /api/frame/settings (not through the times validator, which only knows the
-// other keys): the hub geocodes the city, and on a bad city or an unreachable
-// geocoder its own error text is shown in place. Only the typed city name leaves
-// the network; the hub sends just the city part to the geocoder.
-async function saveWeatherCity() {
-  clearWeatherError();
-  const body = weatherSaveBody(els.fsWeatherInput.value);
-  if (!body) {
-    showWeatherError('Enter a city, like "San Diego, CA".');
-    return;
-  }
-  const result = await postApi("/api/frame/settings", body);
-  if (!result.ok) {
-    showWeatherError(result.error);
-    return;
-  }
-  els.fsWeatherInput.value = "";
-  showToast("Weather city saved.");
-  await refreshFrameControl();
-}
-
-// Clear the weather city, so the frame falls back to its own local config.
-async function clearWeatherCity() {
-  clearWeatherError();
-  const result = await postApi("/api/frame/settings", weatherClearBody());
-  if (!result.ok) {
-    showWeatherError(result.error);
-    return;
-  }
-  els.fsWeatherInput.value = "";
-  showToast("Weather city cleared.");
-  await refreshFrameControl();
-}
-
-function showWeatherError(message) {
-  els.fsWeatherError.textContent = message;
-  els.fsWeatherError.hidden = false;
-}
-
-function clearWeatherError() {
-  els.fsWeatherError.hidden = true;
-  els.fsWeatherError.textContent = "";
 }
 
 // --------------------------------------------------------------------------- //
@@ -2024,10 +2099,6 @@ function wireArtManager() {
     frameDeleteCurrent();
   });
 
-  els.artInterval.addEventListener("change", () => {
-    runAction("/api/art/settings", { rotate_minutes: Number(els.artInterval.value) });
-  });
-
   els.artFolderFilter.addEventListener("change", () => {
     state.artFilter = els.artFolderFilter.value;
     state.libPage = 0;
@@ -2143,7 +2214,15 @@ function renderLibrary() {
     }
     state.artIntervalBuilt = true;
   }
-  els.artInterval.value = String(control.rotateMinutes);
+  if (settled(rotationState)) {
+    els.artInterval.value = String(control.rotateMinutes);
+    const seed = { rotate_minutes: control.rotateMinutes };
+    for (const folder of index.folders) {
+      seed[`folder:${folder.name}`] = control.foldersEnabled.includes(folder.name);
+    }
+    rotationWritten = seed;
+    rotationQueue.seed(seed);
+  }
 
   const summary = rotationSummary(index, control);
   els.artRotationSummary.textContent = summary.text;
@@ -2178,6 +2257,9 @@ function renderLibrary() {
 }
 
 function renderFolderChips(index, control) {
+  if (!settled(rotationState)) {
+    return;
+  }
   const enabled = new Set(control.foldersEnabled);
   els.artFolderChips.replaceChildren();
   for (const folder of index.folders) {
@@ -2189,7 +2271,10 @@ function renderFolderChips(index, control) {
     chip.classList.toggle("on", on);
     chip.textContent = `${folder.name} (${folder.count})`;
     chip.addEventListener("click", () => {
-      runAction("/api/art/folder/enable", { name: folder.name, enabled: !on });
+      const next = chip.getAttribute("aria-pressed") !== "true";
+      chip.setAttribute("aria-pressed", next ? "true" : "false");
+      chip.classList.toggle("on", next);
+      rotationQueue.edit({ [`folder:${folder.name}`]: next }, { delayMs: 0 });
     });
     els.artFolderChips.append(chip);
   }

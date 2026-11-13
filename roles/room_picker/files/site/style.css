@@ -1500,28 +1500,46 @@ a.row-title {
   gap: 10px 14px;
 }
 
-.weather-current {
-  margin: 0;
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.weather-row {
+/* A group's title row: the label on the left, its save status on the right. */
+.group-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
+  justify-content: space-between;
+  gap: 4px 12px;
+  min-height: 28px;
 }
 
-.weather-row .text {
-  flex: 1 1 200px;
-  min-width: 160px;
+/* "Saved" for a moment after a write lands; "Couldn't save. Retry" stays until
+   it is sent again. Empty while nothing is worth saying. */
+.save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--ink-2);
+  font-size: 0.9rem;
 }
 
-/* A secondary action (Clear) that reads as lighter than the primary Save. */
-.btn-ghost {
+.save-status:empty {
+  display: none;
+}
+
+.save-status.failed {
+  color: var(--red-text);
+  font-weight: 600;
+}
+
+.save-retry {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   background: var(--fill);
   color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .fs-error {

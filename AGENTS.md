@@ -238,6 +238,30 @@ loop that runs only while a track is playing and the tab is visible; the time te
 written only when the whole second changes. Tests: `tests/js/page-timers.test.js`,
 `tests/js/keyed-list.test.js`.
 
+## Settings save themselves
+
+There are no Save buttons. Each settings object gets one autosave queue
+(`autosave-queue.js`, tests in `tests/js/autosave-queue.test.js`): the shared
+frame settings (now-playing kinds, morning weather, weather city), each frame's
+quiet hours (one queue per frame), and the art rotation. Rules: a field change
+merges into the latest known object, so two quick edits make one write; at most
+one write is in flight per object and an edit made meanwhile waits, then the next
+write carries the latest merged object (latest wins); switches and chips write at
+once (`{ delayMs: 0 }`), text and time fields after 600 ms or on blur; a failed
+write keeps its patch and Retry re-sends it merged with newer edits; `seed` takes
+the hub's document without writing and never drops an unsent patch. The page
+shows "Saved" next to the setting for 1.5 s and "Couldn't save. Retry" on failure,
+and writes only the keys that differ from what the hub holds (so an unchanged
+weather city is not geocoded again). A bad 24-hour time is explained inline and
+never written. Rendering from the hub's document skips a queue that is pending,
+saving or failed, and never overwrites the field being typed in.
+
+All frame settings live on the Frame tab (below the mirror, pin and history), not
+in Settings. Quiet hours is one control per frame: a switch and two times; the
+frame follows the shared window until it has an override, and the override is
+written through the per-frame path (the shared window alone on the old
+single-frame contract).
+
 ## Volume slider
 
 Each room's volume is a custom `div role="slider"` (`volume-slider.js`), not an

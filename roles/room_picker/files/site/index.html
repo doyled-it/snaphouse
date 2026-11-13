@@ -129,6 +129,102 @@
           <h2 id="ah-h" class="section-h">Art history</h2>
           <ul id="art-history" class="rows"></ul>
         </section>
+
+        <!-- Frame settings: every field saves itself. Now playing kinds, quiet
+             hours, morning weather and the weather city, then rotation. -->
+        <section id="frame-settings" class="section panel" aria-labelledby="fs-h">
+          <h2 id="fs-h" class="section-h">Frame settings</h2>
+          <p id="fs-unavailable" class="empty" hidden>
+            Frame settings are not available right now. The frame is running on its own.
+          </p>
+          <div id="fs-body" class="fs-body" hidden>
+            <div class="settings-group">
+              <div class="group-head">
+                <span class="field-label">Now playing on the frame</span>
+                <span class="save-status" data-status="kinds" role="status"></span>
+              </div>
+              <p class="settings-note">Choose which kinds of audio take over the frame while they play.</p>
+              <div id="fs-kinds" class="chips" role="group" aria-label="Kinds that take the frame"></div>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-head">
+                <label class="switch-field">
+                  <input id="fs-quiet-enabled" type="checkbox" class="switch-input" />
+                  <span class="field-label">Quiet hours</span>
+                </label>
+                <span class="save-status" data-status="quiet" role="status"></span>
+              </div>
+              <p id="fs-quiet-note" class="settings-note">During quiet hours the frame dims and stops changing.</p>
+              <div id="fs-quiet-times" class="time-row">
+                <label class="field">From
+                  <input id="fs-quiet-start" class="text time-input" type="time" />
+                </label>
+                <label class="field">to
+                  <input id="fs-quiet-end" class="text time-input" type="time" />
+                </label>
+              </div>
+              <p id="fs-quiet-error" class="fs-error" role="alert" hidden></p>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-head">
+                <label class="switch-field">
+                  <input id="fs-morning-enabled" type="checkbox" class="switch-input" />
+                  <span class="field-label">Morning weather</span>
+                </label>
+                <span class="save-status" data-status="morning" role="status"></span>
+              </div>
+              <div id="fs-morning-times" class="morning-times">
+                <div class="time-row">
+                  <span class="time-row-label">Weekdays</span>
+                  <input id="fs-weekday-start" class="text time-input" type="time" aria-label="Weekday morning start" />
+                  <span class="time-row-to">to</span>
+                  <input id="fs-weekday-end" class="text time-input" type="time" aria-label="Weekday morning end" />
+                </div>
+                <div class="time-row">
+                  <span class="time-row-label">Weekends</span>
+                  <input id="fs-weekend-start" class="text time-input" type="time" aria-label="Weekend morning start" />
+                  <span class="time-row-to">to</span>
+                  <input id="fs-weekend-end" class="text time-input" type="time" aria-label="Weekend morning end" />
+                </div>
+              </div>
+              <p id="fs-morning-error" class="fs-error" role="alert" hidden></p>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-head">
+                <label class="field-label" for="fs-weather-input">Weather city</label>
+                <span class="save-status" data-status="city" role="status"></span>
+              </div>
+              <p class="settings-note">
+                The city the frame shows the morning forecast for. The hub looks it
+                up; only the city name leaves your network. Leave it empty to use
+                the frame's own setting.
+              </p>
+              <input id="fs-weather-input" class="text" type="text"
+                     placeholder="San Diego, CA"
+                     maxlength="100" autocomplete="off" />
+              <p id="fs-weather-error" class="fs-error" role="alert" hidden></p>
+            </div>
+          </div>
+
+          <!-- Rotation: how often the frame changes art, and which folders rotate. -->
+          <div id="rotation" class="settings-group" hidden>
+            <div class="group-head">
+              <span class="field-label">Rotation</span>
+              <span class="save-status" data-status="rotation" role="status"></span>
+            </div>
+            <p id="art-rotation-summary" class="rotation-summary"></p>
+            <label class="field">Change every
+              <select id="art-interval" class="select"></select>
+            </label>
+            <div class="chips-field">
+              <span class="field-label">In rotation</span>
+              <div id="art-folder-chips" class="chips" role="group" aria-label="Folders in rotation"></div>
+            </div>
+          </div>
+        </section>
       </section>
 
       <!-- Gallery: the library, folders, upload, and trash. -->
@@ -188,7 +284,7 @@
         </section>
       </section>
 
-      <!-- Settings: what takes the frame, rotation, quiet hours, morning weather. -->
+      <!-- Settings: the phones paired to the hub. -->
       <section class="screen" id="screen-settings" aria-label="Settings" hidden>
         <!-- Pair a phone: make the hub discoverable for a short window. The hub
              accepts the first phone that asks, so there is no code to read here:
@@ -256,120 +352,6 @@
           <p id="dev-empty" class="empty" hidden>No phones are paired yet. Use Pair a phone above.</p>
           <p id="dev-stale" class="settings-note" hidden>Cannot reach the hub. Showing the last list.</p>
           <p id="dev-error" class="fs-error" role="alert" hidden></p>
-        </section>
-
-        <!-- Now playing on the frame: one toggle per kind of audio. -->
-        <section id="frame-settings" class="section panel" aria-labelledby="fs-h">
-          <h2 id="fs-h" class="section-h">Now playing on the frame</h2>
-          <p id="fs-unavailable" class="empty" hidden>
-            Frame settings are not available right now. The frame is running on its own.
-          </p>
-          <div id="fs-body" class="fs-body" hidden>
-            <p class="settings-note">Choose which kinds of audio take over the frame while they play.</p>
-            <div id="fs-kinds" class="chips" role="group" aria-label="Kinds that take the frame"></div>
-
-            <div class="settings-group">
-              <span class="field-label">Quiet hours</span>
-              <div class="time-row">
-                <label class="field">From
-                  <input id="fs-quiet-start" class="text time-input" type="time" />
-                </label>
-                <label class="field">to
-                  <input id="fs-quiet-end" class="text time-input" type="time" />
-                </label>
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <label class="switch-field">
-                <input id="fs-morning-enabled" type="checkbox" class="switch-input" />
-                <span class="field-label">Morning weather</span>
-              </label>
-              <div id="fs-morning-times" class="morning-times">
-                <div class="time-row">
-                  <span class="time-row-label">Weekdays</span>
-                  <input id="fs-weekday-start" class="text time-input" type="time" aria-label="Weekday morning start" />
-                  <span class="time-row-to">to</span>
-                  <input id="fs-weekday-end" class="text time-input" type="time" aria-label="Weekday morning end" />
-                </div>
-                <div class="time-row">
-                  <span class="time-row-label">Weekends</span>
-                  <input id="fs-weekend-start" class="text time-input" type="time" aria-label="Weekend morning start" />
-                  <span class="time-row-to">to</span>
-                  <input id="fs-weekend-end" class="text time-input" type="time" aria-label="Weekend morning end" />
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <span class="field-label">Weather city</span>
-              <p class="settings-note">
-                The city the frame shows the morning forecast for. The hub looks it
-                up; only the city name leaves your network.
-              </p>
-              <p id="fs-weather-current" class="weather-current">Not set</p>
-              <div class="weather-row">
-                <input id="fs-weather-input" class="text" type="text"
-                       placeholder="San Diego, CA" aria-label="Weather city"
-                       maxlength="100" autocomplete="off" />
-                <button id="fs-weather-save" class="btn" type="button">Save</button>
-                <button id="fs-weather-clear" class="btn btn-ghost" type="button">Clear</button>
-              </div>
-              <p id="fs-weather-error" class="fs-error" role="alert" hidden></p>
-            </div>
-
-            <div class="settings-actions">
-              <button id="fs-save" class="btn" type="button">Save frame settings</button>
-              <p id="fs-error" class="fs-error" role="alert" hidden></p>
-            </div>
-          </div>
-        </section>
-
-        <!-- Quiet hours per frame: each frame can follow the shared hours, keep
-             none, or set its own. Shown only on the new multi-frame contract. -->
-        <section id="frame-quiet" class="section panel" aria-labelledby="fq-h" hidden>
-          <h2 id="fq-h" class="section-h">Quiet hours by frame</h2>
-          <div id="fq-body" class="fs-body">
-            <label class="field" id="fq-frame-field" hidden>Frame
-              <select id="fq-frame" class="select"></select>
-            </label>
-            <p class="settings-note">
-              Each frame can keep its own quiet hours, or follow the shared hours above.
-              During quiet hours the frame dims and stops changing.
-            </p>
-            <label class="field">Quiet hours
-              <select id="fq-mode" class="select">
-                <option value="shared">Follow the shared hours</option>
-                <option value="off">No quiet hours</option>
-                <option value="custom">Set custom hours</option>
-              </select>
-            </label>
-            <div id="fq-custom" class="time-row" hidden>
-              <label class="field">From
-                <input id="fq-start" class="text time-input" type="time" aria-label="Frame quiet hours start" />
-              </label>
-              <label class="field">to
-                <input id="fq-end" class="text time-input" type="time" aria-label="Frame quiet hours end" />
-              </label>
-            </div>
-            <div class="settings-actions">
-              <button id="fq-save" class="btn" type="button">Save quiet hours</button>
-              <p id="fq-error" class="fs-error" role="alert" hidden></p>
-            </div>
-          </div>
-        </section>
-
-        <!-- Rotation: how often the frame changes art, and which folders rotate. -->
-        <section id="rotation" class="section panel" aria-labelledby="rot-h" hidden>
-          <h2 id="rot-h" class="section-h">Rotation</h2>
-          <p id="art-rotation-summary" class="rotation-summary"></p>
-          <label class="field">Change every
-            <select id="art-interval" class="select"></select>
-          </label>
-          <div class="chips-field">
-            <span class="field-label">In rotation</span>
-            <div id="art-folder-chips" class="chips" role="group" aria-label="Folders in rotation"></div>
-          </div>
         </section>
       </section>
     </main>
