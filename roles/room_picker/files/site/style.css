@@ -685,55 +685,86 @@ a.frame-title {
 
 .volume {
   grid-area: volume;
+  position: relative;
   width: 100%;
   height: 44px;
-  margin: 0;
-  -webkit-appearance: none;
-  appearance: none;
-  background: transparent;
-  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+  transition: opacity 0.25s var(--ease-out);
 }
 
-.volume:disabled {
+.volume.drag {
+  cursor: grabbing;
+}
+
+.volume::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 8px;
+  background: oklch(1 0 0 / 0.14);
+}
+
+.volume-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 8px;
+  transform: scaleX(0);
+  transform-origin: left;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  will-change: transform;
+}
+
+.volume-thumb {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin-top: -13px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 2px 8px oklch(0 0 0 / 0.45);
+  transition: scale 0.18s var(--ease-out);
+  will-change: transform;
+}
+
+.volume.drag .volume-thumb {
+  scale: 1.2;
+}
+
+.volume[aria-disabled="true"] {
   cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.volume::-webkit-slider-runnable-track {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--line-2);
-}
-
-.volume::-moz-range-track {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--line-2);
-}
-
-.volume::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 30px;
-  height: 30px;
-  margin-top: -11px;
-  border-radius: 50%;
-  background: var(--blue);
-  border: 3px solid var(--paper);
-}
-
-.volume::-moz-range-thumb {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--blue);
-  border: 3px solid var(--paper);
+  opacity: 0.5;
 }
 
 .volume:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 4px;
   border-radius: 999px;
+}
+
+@media (pointer: coarse) {
+  .volume {
+    height: 48px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .volume,
+  .volume-thumb {
+    transition: none;
+  }
 }
 
 /* --- Library: collapsed, paged grid -------------------------------------- */

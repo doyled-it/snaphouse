@@ -77,6 +77,8 @@ import {
 } from "./rooms-model.js";
 import { createPairController } from "./pair-controller.js";
 import { createDevicesController } from "./devices-controller.js";
+import { createVolumeSlider } from "./volume-slider.js";
+import { createHaptics } from "./haptics.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
 // is down, and each Server.GetStatus is a full status read, so a slow cadence
@@ -84,7 +86,7 @@ import { createDevicesController } from "./devices-controller.js";
 const POLL_MS = 30000;
 const HEALTH_MS = 30000;
 const RECONNECT_MS = 3000;
-const SLIDER_DEBOUNCE_MS = 150;
+const haptics = createHaptics();
 // The hub writes now-playing.json continuously and play-history.json only when a
 // play lands, so the card polls quickly and the history slowly. The card's
 // progress bar ticks client-side every second from the position anchor.
@@ -272,7 +274,7 @@ const els = {
 
 const state = {
   config: { rooms: [] },
-  cards: new Map(), // room id -> { card, toggle, slider, dragging, pending }
+  cards: new Map(), // room id -> { card, toggle, slider }
   rooms: new Map(), // room id -> latest row from roomsFromStatus
   socket: null,
   pollTimer: null,
@@ -574,28 +576,15 @@ function buildCards() {
     toggle.setAttribute("aria-label", `${room.label} on or off`);
     toggle.addEventListener("click", () => onToggle(room.id));
 
-    const slider = document.createElement("input");
-    slider.className = "volume";
-    slider.type = "range";
-    slider.min = "0";
-    slider.max = "100";
-    slider.step = "1";
-    slider.setAttribute("aria-label", `${room.label} volume`);
-
-    const entry = { card, toggle, slider, dragging: false, pending: null };
-
-    slider.addEventListener("input", () => {
-      entry.dragging = true;
-      onVolume(room.id, Number(slider.value), entry);
+    const slider = createVolumeSlider({
+      label: `${room.label} volume`,
+      onSend: (p) => sendControl(volumeRequest(room.id, p)),
+      haptics,
     });
-    const release = () => {
-      entry.dragging = false;
-    };
-    slider.addEventListener("change", release);
-    slider.addEventListener("pointerup", release);
-    slider.addEventListener("blur", release);
 
-    card.append(label, toggle, slider);
+    const entry = { card, toggle, slider };
+
+    card.append(label, toggle, slider.el);
     els.rooms.append(card);
     state.cards.set(room.id, entry);
   }
@@ -696,9 +685,9 @@ async function postRpc(method, params) {
 function sendControl(request) {
   if (state.socket && state.socket.readyState === WebSocket.OPEN) {
     state.socket.send(envelope(request.method, request.params));
-    return;
+    return undefined;
   }
-  postRpc(request.method, request.params)
+  return postRpc(request.method, request.params)
     .then(() => requestStatus())
     .catch(() => setConnection("Could not reach snapserver."));
 }
@@ -731,10 +720,8 @@ function render(status) {
     entry.toggle.setAttribute("aria-checked", room.on ? "true" : "false");
     entry.toggle.textContent = room.on ? "On" : "Off";
     entry.toggle.disabled = !room.connected;
-    if (!entry.dragging) {
-      entry.slider.value = String(room.volume);
-    }
-    entry.slider.disabled = !room.connected;
+    entry.slider.applyStatus(room.volume);
+    entry.slider.setEnabled(room.connected);
   }
 }
 
@@ -747,19 +734,14 @@ function onToggle(id) {
   const next = !nowOn;
   entry.toggle.setAttribute("aria-checked", next ? "true" : "false");
   entry.toggle.textContent = next ? "On" : "Off";
+  if (next) haptics.roomOn();
+  else haptics.roomOff();
 
   const room = state.rooms.get(id);
   if (next && room && room.groupMuted && room.groupId) {
     sendControl(groupUnmuteRequest(room.groupId));
   }
   sendControl(toggleRequest(id, next));
-}
-
-function onVolume(id, percent, entry) {
-  clearTimeout(entry.pending);
-  entry.pending = setTimeout(() => {
-    sendControl(volumeRequest(id, percent));
-  }, SLIDER_DEBOUNCE_MS);
 }
 
 async function refreshHealth() {

@@ -176,6 +176,20 @@ fails authentication (the phone forgot the speaker, the hub kept the key) has it
 stale pairing removed once so its next try in the same window succeeds
 (`_make_line_handler` in `pairing.py`).
 
+## Volume slider
+
+Each room's volume is a custom `div role="slider"` (`volume-slider.js`), not an
+`<input type=range>`, so it follows the finger and never snaps back. The rules
+live in `volume-controller.js`, the pure part (no DOM, clock and transport
+injected), pinned by `tests/js/volume-controller.test.js`: at most one write per
+100 ms with a trailing send of the final value, at most one request in flight per
+room (`sendControl` returns the HTTP promise so the slot is held until it
+settles), status for a room is ignored while it is dragged, and after release the
+user's value is held until the hub reports within 1 of it or 2 s pass. Fill and
+thumb move by `transform` once per animation frame from a cached track width.
+Haptics (`haptics.js`, Android `navigator.vibrate`, feature-detected) fire only
+from pointer, key and tap handlers, never from a status update.
+
 ## mDNS advertises IPv4 only
 
 The `common` role sets `use-ipv6=no` ([server]) and `publish-aaaa-on-ipv4=no`
