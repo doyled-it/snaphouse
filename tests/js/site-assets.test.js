@@ -116,3 +116,15 @@ test("panels carry the shared surface values", () => {
   assert.match(html, /id="now-playing" class="section panel"/);
   assert.match(html, /id="rooms-section" class="section panel"/);
 });
+
+test("section labels are sentence case, not tracked caps", () => {
+  const rule = css.match(/\n\.section-h\s*\{([^}]*)\}/)[1];
+  assert.doesNotMatch(rule, /text-transform/);
+  assert.match(rule, /letter-spacing:\s*0\.01em/);
+});
+
+test("the top bar bleeds across the body gutters", () => {
+  const rule = css.match(/\n\.topbar\s*\{([^}]*)\}/)[1];
+  assert.match(rule, /margin:\s*0 calc\(-1 \* var\(--gutter-r\)\) 8px calc\(-1 \* var\(--gutter-l\)\)/);
+  assert.match(rule, /padding:[^;]*var\(--gutter-r\)[^;]*var\(--gutter-l\)/);
+});
