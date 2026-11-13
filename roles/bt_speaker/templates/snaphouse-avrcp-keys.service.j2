@@ -8,7 +8,9 @@
   It runs unprivileged. local.yml is 0600 root (it holds the household's addresses
   and the art-share password), so a root-only ExecStartPre ("+" ignores User=)
   copies just the speaker's address into this unit's runtime directory, owned by
-  the service user, and the listener reads that. The service user gets the input
+  the service user, and resolves the speaker's BlueZ Name into a "name" file beside
+  it. The listener reads the name: BlueZ's "(AVRCP)" input devices have an empty
+  uniq, so it matches the device called "<name> (AVRCP)". The service user gets the input
   group for /dev/input/event* (root:input 0660) and no capabilities. A speaker
   paired after the unit started is picked up because the listener returns after a
   long unpaired stretch and Restart=always reruns the ExecStartPre.
