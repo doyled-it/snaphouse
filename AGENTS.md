@@ -176,6 +176,34 @@ fails authentication (the phone forgot the speaker, the hub kept the key) has it
 stale pairing removed once so its next try in the same window succeeds
 (`_make_line_handler` in `pairing.py`).
 
+## Polling sleeps while hidden, lists patch in place
+
+Every polling interval in `rooms.js` registers with `page-timers.js`; the
+`visibilitychange` handler pauses them all while the tab is hidden and resumes them
+(then refreshes once) on return. The socket and its reconnect are separate. The
+devices list and the art grid patch by key (`keyed-list.js`): each row carries a
+signature of everything that affects its DOM, so only a changed row is replaced and
+a poll that changes nothing leaves focus, hover and thumbnails alone. The now-playing
+progress fill is a full-width element moved by `scaleX` in one `requestAnimationFrame`
+loop that runs only while a track is playing and the tab is visible; the time text is
+written only when the whole second changes. Tests: `tests/js/page-timers.test.js`,
+`tests/js/keyed-list.test.js`.
+
+## Volume slider
+
+Each room's volume is a custom `div role="slider"` (`volume-slider.js`), not an
+`<input type=range>`, so it follows the finger and never snaps back. The rules
+live in `volume-controller.js`, the pure part (no DOM, clock and transport
+injected), pinned by `tests/js/volume-controller.test.js`: at most one write per
+100 ms with a trailing send of the final value, at most one request in flight per
+room (the WebSocket path is fire-and-forget, so it holds the slot for the
+100 ms gap only; the HTTP fallback returns its promise from `sendControl`, so it
+holds the slot until the promise settles), status for a room is ignored while it is dragged, and after release the
+user's value is held until the hub reports within 1 of it or 2 s pass. Fill and
+thumb move by `transform` once per animation frame from a cached track width.
+Haptics (`haptics.js`, Android `navigator.vibrate`, feature-detected) fire only
+from pointer, key and tap handlers, never from a status update.
+
 ## mDNS advertises IPv4 only
 
 The `common` role sets `use-ipv6=no` ([server]) and `publish-aaaa-on-ipv4=no`
@@ -213,6 +241,23 @@ than risk deleting a check, and `tests/python/test_update_prune.py` fails CI if 
 shipped check (any `roles/*/files/verify.d/*` or any verify-check template) is not
 captured by the derivation, so a new install shape is caught in review, not in
 the field.
+
+## Cover color
+
+The page color follows the now-playing cover. `cover-color.js` is pure at its core
+(`extractHues` turns canvas pixels into `{h1, h2, chroma}` via OKLab, ignoring
+transparent, near-black, near-white and near-grey pixels); only `loadCoverHues`
+(a 32x32 canvas, same-origin `/cover/...` so `getImageData` is allowed) and
+`swapImage` (preload and `decode()`, then set `src`, so the image never blanks)
+touch the DOM. `applyCoverColor` writes `--h`, `--h2` and `--k` on the root, and
+every token in `style.css` is OKLCH derived from them. The default hue is 255
+(slate blue). A greyscale or missing cover returns the defaults with chroma 0, so
+`--k` (`0.15 + 0.85 * chroma`) scales chroma down to near-neutral instead of
+picking a random hue. `@property` registers the three variables so the hue eases
+over 1.4 s; browsers without `@property` change hue instantly, and reduced motion
+turns the easing off. In `rooms.js`, `followCover` guards out-of-order results with
+a token. The frame mirror image only preloads through `swapImage`; the now-playing
+cover is the single source of color. Tests: `tests/js/cover-color.test.js`.
 
 ## Tooling
 

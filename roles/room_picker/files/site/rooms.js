@@ -77,6 +77,11 @@ import {
 } from "./rooms-model.js";
 import { createPairController } from "./pair-controller.js";
 import { createDevicesController } from "./devices-controller.js";
+import { createVolumeSlider } from "./volume-slider.js";
+import { createHaptics } from "./haptics.js";
+import { patchKeyed } from "./keyed-list.js";
+import { createPageTimers } from "./page-timers.js";
+import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
 // is down, and each Server.GetStatus is a full status read, so a slow cadence
@@ -84,13 +89,20 @@ import { createDevicesController } from "./devices-controller.js";
 const POLL_MS = 30000;
 const HEALTH_MS = 30000;
 const RECONNECT_MS = 3000;
-const SLIDER_DEBOUNCE_MS = 150;
+const haptics = createHaptics();
 // The hub writes now-playing.json continuously and play-history.json only when a
 // play lands, so the card polls quickly and the history slowly. The card's
 // progress bar ticks client-side every second from the position anchor.
 const NOW_PLAYING_MS = 5000;
 const HISTORY_MS = 30000;
 const TICK_MS = 1000;
+
+// Every polling interval registers here so they all sleep while the tab is hidden.
+const timers = createPageTimers({
+  setInterval: (fn, ms) => window.setInterval(fn, ms),
+  clearInterval: (id) => window.clearInterval(id),
+  isHidden: () => document.hidden,
+});
 // The frame mirror and the art library documents the hub publishes, refreshed on
 // the same slow cadence as the frame history and re-read after every action.
 const FRAME_MS = 30000;
@@ -272,7 +284,7 @@ const els = {
 
 const state = {
   config: { rooms: [] },
-  cards: new Map(), // room id -> { card, toggle, slider, dragging, pending }
+  cards: new Map(), // room id -> { card, toggle, slider }
   rooms: new Map(), // room id -> latest row from roomsFromStatus
   socket: null,
   pollTimer: null,
@@ -367,18 +379,19 @@ async function start() {
   refreshLibrary();
   refreshNowPlaying();
   refreshHistory();
-  setInterval(refreshHealth, HEALTH_MS);
-  setInterval(refreshFrame, FRAME_MS);
-  setInterval(refreshFrameControl, FRAME_CONTROL_MS);
-  setInterval(refreshArt, HEALTH_MS);
-  setInterval(() => refreshLibrary({ periodic: true }), LIBRARY_MS);
-  setInterval(refreshNowPlaying, NOW_PLAYING_MS);
-  setInterval(refreshHistory, HISTORY_MS);
-  setInterval(tickNowPlaying, TICK_MS);
+  timers.add(refreshHealth, HEALTH_MS);
+  timers.add(refreshFrame, FRAME_MS);
+  timers.add(refreshFrameControl, FRAME_CONTROL_MS);
+  timers.add(refreshArt, HEALTH_MS);
+  timers.add(() => refreshLibrary({ periodic: true }), LIBRARY_MS);
+  timers.add(refreshNowPlaying, NOW_PLAYING_MS);
+  timers.add(refreshHistory, HISTORY_MS);
+  timers.add(tickNowPlaying, TICK_MS);
   // Poll the pairing state and tick its countdown once a second; pairTick itself
   // polls only when shouldPollPair allows it, so a hidden tab never polls.
-  setInterval(pairTick, PAIR_MS);
-  setInterval(devicesTick, DEVICES_MS);
+  timers.add(pairTick, PAIR_MS);
+  timers.add(devicesTick, DEVICES_MS);
+  timers.start();
 
   // The URL hash is the screen and the chosen frame: Back, forward, and a shared
   // link all land on the right one.
@@ -389,8 +402,11 @@ async function start() {
   // refresh everything so the page is current at a glance.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") {
+      timers.pause();
+      stopProgressLoop();
       return;
     }
+    timers.resume();
     const socket = state.socket;
     if (!socket || socket.readyState === WebSocket.CLOSED) {
       connect();
@@ -406,6 +422,7 @@ async function start() {
     refreshHistory();
     maybePollPairing();
     maybePollDevices();
+    tickNowPlaying();
   });
 }
 
@@ -574,28 +591,22 @@ function buildCards() {
     toggle.setAttribute("aria-label", `${room.label} on or off`);
     toggle.addEventListener("click", () => onToggle(room.id));
 
-    const slider = document.createElement("input");
-    slider.className = "volume";
-    slider.type = "range";
-    slider.min = "0";
-    slider.max = "100";
-    slider.step = "1";
-    slider.setAttribute("aria-label", `${room.label} volume`);
+    const pct = document.createElement("div");
+    pct.className = "pct";
+    pct.setAttribute("aria-hidden", "true");
 
-    const entry = { card, toggle, slider, dragging: false, pending: null };
-
-    slider.addEventListener("input", () => {
-      entry.dragging = true;
-      onVolume(room.id, Number(slider.value), entry);
+    const slider = createVolumeSlider({
+      label: `${room.label} volume`,
+      onSend: (p) => sendControl(volumeRequest(room.id, p)),
+      onRender: (p) => {
+        pct.textContent = `${p}%`;
+      },
+      haptics,
     });
-    const release = () => {
-      entry.dragging = false;
-    };
-    slider.addEventListener("change", release);
-    slider.addEventListener("pointerup", release);
-    slider.addEventListener("blur", release);
 
-    card.append(label, toggle, slider);
+    const entry = { card, toggle, slider };
+
+    card.append(label, pct, toggle, slider.el);
     els.rooms.append(card);
     state.cards.set(room.id, entry);
   }
@@ -696,9 +707,9 @@ async function postRpc(method, params) {
 function sendControl(request) {
   if (state.socket && state.socket.readyState === WebSocket.OPEN) {
     state.socket.send(envelope(request.method, request.params));
-    return;
+    return undefined;
   }
-  postRpc(request.method, request.params)
+  return postRpc(request.method, request.params)
     .then(() => requestStatus())
     .catch(() => setConnection("Could not reach snapserver."));
 }
@@ -731,10 +742,8 @@ function render(status) {
     entry.toggle.setAttribute("aria-checked", room.on ? "true" : "false");
     entry.toggle.textContent = room.on ? "On" : "Off";
     entry.toggle.disabled = !room.connected;
-    if (!entry.dragging) {
-      entry.slider.value = String(room.volume);
-    }
-    entry.slider.disabled = !room.connected;
+    entry.slider.applyStatus(room.volume);
+    entry.slider.setEnabled(room.connected);
   }
 }
 
@@ -747,19 +756,14 @@ function onToggle(id) {
   const next = !nowOn;
   entry.toggle.setAttribute("aria-checked", next ? "true" : "false");
   entry.toggle.textContent = next ? "On" : "Off";
+  if (next) haptics.roomOn();
+  else haptics.roomOff();
 
   const room = state.rooms.get(id);
   if (next && room && room.groupMuted && room.groupId) {
     sendControl(groupUnmuteRequest(room.groupId));
   }
   sendControl(toggleRequest(id, next));
-}
-
-function onVolume(id, percent, entry) {
-  clearTimeout(entry.pending);
-  entry.pending = setTimeout(() => {
-    sendControl(volumeRequest(id, percent));
-  }, SLIDER_DEBOUNCE_MS);
 }
 
 async function refreshHealth() {
@@ -886,7 +890,7 @@ function renderMirror(json, legacy, frameId) {
   const imageBase = urls ? urls.image : "frame.png";
   const src = `${imageBase}?v=${encodeURIComponent(stamp)}`;
   if (state.mirrorSrc !== src) {
-    els.mirrorImg.src = src;
+    swapImage(els.mirrorImg, src);
     state.mirrorSrc = src;
   }
   // If the image itself 404s (the json landed before the png), hide the mirror
@@ -1624,18 +1628,40 @@ async function refreshNowPlaying() {
   updateNowPlayingCard(nowPlayingFromBody(body));
 }
 
+// The page color follows the now-playing cover. A token drops a slow older
+// extraction so it can never overwrite a newer cover's color.
+let coverColorToken = 0;
+function followCover(url) {
+  coverColorToken += 1;
+  const token = coverColorToken;
+  if (!url) {
+    applyCoverColor(document.documentElement, DEFAULT_HUES);
+    return;
+  }
+  loadCoverHues(url).then((hues) => {
+    if (token === coverColorToken) {
+      applyCoverColor(document.documentElement, hues);
+    }
+  });
+}
+
 function updateNowPlayingCard(track) {
   state.nowTrack = track;
   if (!track) {
     els.npSection.hidden = true;
+    if (state.npArtSrc !== null) {
+      state.npArtSrc = null;
+      followCover(null);
+    }
     return;
   }
   els.npSection.hidden = false;
 
   if (track.artUrl) {
     if (state.npArtSrc !== track.artUrl) {
-      els.npArtImg.src = track.artUrl;
+      swapImage(els.npArtImg, track.artUrl);
       state.npArtSrc = track.artUrl;
+      followCover(track.artUrl);
     }
     els.npArtImg.alt = track.title;
     els.npArtImg.hidden = false;
@@ -1645,6 +1671,7 @@ function updateNowPlayingCard(track) {
     els.npArtImg.removeAttribute("src");
     state.npArtSrc = null;
     els.npArtPh.hidden = false;
+    followCover(null);
   }
 
   els.npTitle.textContent = track.title;
@@ -1670,27 +1697,86 @@ function joinNames(names) {
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
+function setProgressFill(fraction) {
+  els.npFill.style.transform = `scaleX(${Math.max(0, Math.min(1, fraction)).toFixed(4)})`;
+}
+
+function writeProgressText(progress, paused) {
+  els.npElapsed.textContent = `${formatDuration(progress.elapsed)} / ${formatDuration(progress.total)}`;
+  if (paused) {
+    els.npEnds.hidden = true;
+  } else {
+    els.npEnds.hidden = false;
+    els.npEnds.textContent = `ends ${formatClock(progress.endsAtMs)}`;
+  }
+}
+
 function tickNowPlaying() {
   const track = state.nowTrack;
   if (!track || els.npSection.hidden) {
+    stopProgressLoop();
     return;
   }
   const paused = track.status === "paused";
   const progress = progressAt(track, Date.now());
   if (progress) {
     els.npProgress.hidden = false;
-    els.npFill.style.width = `${(progress.fraction * 100).toFixed(1)}%`;
-    els.npElapsed.textContent = `${formatDuration(progress.elapsed)} / ${formatDuration(progress.total)}`;
-    if (paused) {
-      els.npEnds.hidden = true;
-    } else {
-      els.npEnds.hidden = false;
-      els.npEnds.textContent = `ends ${formatClock(progress.endsAtMs)}`;
-    }
+    setProgressFill(progress.fraction);
+    writeProgressText(progress, paused);
+    progressSecond = Math.floor(progress.elapsed);
   } else {
     els.npProgress.hidden = true;
   }
   els.npStatus.hidden = !paused;
+  if (progress && !paused && !document.hidden) {
+    startProgressLoop();
+  } else {
+    stopProgressLoop();
+  }
+}
+
+// One requestAnimationFrame loop moves the fill by transform. It runs only while
+// a track is playing with its progress shown and the tab visible; the text is
+// written only when the whole second changes.
+let progressFrame = 0;
+let progressSecond = -1;
+
+function progressLoopWanted() {
+  const track = state.nowTrack;
+  return Boolean(
+    track && track.status !== "paused" && !els.npSection.hidden && !els.npProgress.hidden && !document.hidden,
+  );
+}
+
+function progressStep() {
+  progressFrame = 0;
+  if (!progressLoopWanted()) {
+    return;
+  }
+  const progress = progressAt(state.nowTrack, Date.now());
+  if (!progress) {
+    return;
+  }
+  setProgressFill(progress.fraction);
+  const second = Math.floor(progress.elapsed);
+  if (second !== progressSecond) {
+    progressSecond = second;
+    writeProgressText(progress, false);
+  }
+  progressFrame = requestAnimationFrame(progressStep);
+}
+
+function startProgressLoop() {
+  if (progressFrame === 0 && progressLoopWanted()) {
+    progressFrame = requestAnimationFrame(progressStep);
+  }
+}
+
+function stopProgressLoop() {
+  if (progressFrame !== 0) {
+    cancelAnimationFrame(progressFrame);
+    progressFrame = 0;
+  }
 }
 
 function setOptionalLine(el, text) {
@@ -2029,10 +2115,13 @@ function renderLibraryGrid() {
   state.libPage = Math.max(0, Math.min(count - 1, state.libPage));
   const slice = pageSlice(pieces, state.libPage);
 
-  els.artGrid.replaceChildren();
-  for (const piece of slice) {
-    els.artGrid.append(libraryTile(piece, index));
-  }
+  const folderNames = index.folders.map((f) => f.name).join("\u0001");
+  patchKeyed(els.artGrid, slice, {
+    key: (piece) => String(piece.id),
+    sig: (piece) =>
+      JSON.stringify([piece.title, piece.artist, piece.thumb, piece.landscape, piece.folder, folderNames]),
+    create: (piece) => libraryTile(piece, index),
+  });
   els.artGridEmpty.hidden = pieces.length > 0;
 
   els.libraryPager.hidden = count <= 1;
@@ -2522,7 +2611,6 @@ const devices = createDevicesController({
 
 // What the list last drew, so a poll that changes nothing leaves the rows (and
 // whatever has keyboard focus in them) alone.
-let devicesDrawn = "";
 
 function wireDevices() {
   els.devList.addEventListener("click", (event) => {
@@ -2645,6 +2733,9 @@ function deviceRow(device) {
   return row;
 }
 
+// The confirm that last got the safe-answer focus, so a poll never steals it again.
+let devicesConfirmFocused = null;
+
 function renderDevices() {
   const s = devices.state;
   els.devLoading.hidden = s.loaded;
@@ -2655,33 +2746,40 @@ function renderDevices() {
   els.devReminder.hidden = s.forgotten === null;
   els.devReminderText.textContent = s.forgotten === null ? "" : forgetReminder(s.forgotten);
 
-  const now = Date.now();
-  const signature = JSON.stringify([
-    s.devices.map((d) => [d.id, d.name, d.connected, lastConnectedText(d, now)]),
-    s.pending,
-    s.confirmingId,
-  ]);
-  if (signature === devicesDrawn) {
-    return;
-  }
-  devicesDrawn = signature;
-
   // Keep keyboard focus on the same control across a redraw, and move it to the
   // safe answer when a confirm opens.
   const active = document.activeElement;
   const focusKey =
-    active && active.dataset && active.dataset.action
+    active && active.dataset && active.dataset.action && els.devList.contains(active)
       ? `${active.dataset.action}:${active.dataset.id}`
       : null;
-  els.devList.replaceChildren(...s.devices.map(deviceRow));
+  const now = Date.now();
+  patchKeyed(els.devList, s.devices, {
+    key: (d) => String(d.id),
+    sig: (d) =>
+      JSON.stringify([
+        d.name,
+        d.connected,
+        lastConnectedText(d, now),
+        s.pending,
+        s.confirmingId === d.id,
+        deviceButtons(d, s),
+      ]),
+    create: deviceRow,
+  });
+  if (focusKey && els.devList.contains(document.activeElement)) {
+    devicesConfirmFocused = s.confirmingId;
+    return;
+  }
   let target = null;
   if (focusKey) {
     const [action, id] = focusKey.split(":");
     target = els.devList.querySelector(`[data-action="${action}"][data-id="${id}"]:not(:disabled)`);
   }
-  if (!target && s.confirmingId !== null) {
+  if (!target && s.confirmingId !== null && s.confirmingId !== devicesConfirmFocused) {
     target = els.devList.querySelector(`[data-action="forget-no"][data-id="${s.confirmingId}"]`);
   }
+  devicesConfirmFocused = s.confirmingId;
   if (target) {
     target.focus();
   }
