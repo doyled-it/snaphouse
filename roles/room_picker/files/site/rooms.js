@@ -577,15 +577,22 @@ function buildCards() {
     toggle.setAttribute("aria-label", `${room.label} on or off`);
     toggle.addEventListener("click", () => onToggle(room.id));
 
+    const pct = document.createElement("div");
+    pct.className = "pct";
+    pct.setAttribute("aria-hidden", "true");
+
     const slider = createVolumeSlider({
       label: `${room.label} volume`,
       onSend: (p) => sendControl(volumeRequest(room.id, p)),
+      onRender: (p) => {
+        pct.textContent = `${p}%`;
+      },
       haptics,
     });
 
     const entry = { card, toggle, slider };
 
-    card.append(label, toggle, slider.el);
+    card.append(label, pct, toggle, slider.el);
     els.rooms.append(card);
     state.cards.set(room.id, entry);
   }

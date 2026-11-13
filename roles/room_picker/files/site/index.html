@@ -36,7 +36,7 @@
       <!-- Listen: what is playing on the House stream, the rooms, and the plays. -->
       <section class="screen" id="screen-listen" aria-label="Listen">
         <!-- Now playing on the House stream. -->
-        <section id="now-playing" class="section" aria-labelledby="np-h" hidden>
+        <section id="now-playing" class="section panel" aria-labelledby="np-h" hidden>
           <h2 id="np-h" class="section-h">Now playing</h2>
           <div class="np">
             <div class="np-cover">
@@ -61,13 +61,13 @@
         </section>
 
         <!-- The rooms, a plain list of rows. -->
-        <section id="rooms-section" class="section" aria-labelledby="rooms-h">
+        <section id="rooms-section" class="section panel" aria-labelledby="rooms-h">
           <h2 id="rooms-h" class="section-h">Rooms</h2>
           <ul id="rooms" class="rooms"></ul>
         </section>
 
         <!-- The play history; a tap opens the "Open in" sheet. -->
-        <section id="play-history-section" class="section" aria-labelledby="ph-h" hidden>
+        <section id="play-history-section" class="section panel" aria-labelledby="ph-h" hidden>
           <h2 id="ph-h" class="section-h">Play history</h2>
           <ul id="np-history-list" class="rows"></ul>
         </section>
@@ -75,7 +75,7 @@
 
       <!-- Frame: the live mirror, the controls, pinning, and what the frame has shown. -->
       <section class="screen" id="screen-frame" aria-label="Frame" hidden>
-        <section id="frame" class="section" aria-labelledby="frame-h">
+        <section id="frame" class="section panel" aria-labelledby="frame-h">
           <h2 id="frame-h" class="section-h">Frame</h2>
 
           <!-- One button per frame. Hidden while there is only one frame. -->
@@ -106,7 +106,7 @@
         </section>
 
         <!-- Pinning: keep one thing on the frame for a while, or until unpinned. -->
-        <section id="pin" class="section" aria-labelledby="pin-h" hidden>
+        <section id="pin" class="section panel" aria-labelledby="pin-h" hidden>
           <h2 id="pin-h" class="section-h">Pin</h2>
           <p id="pin-status" class="pin-status" role="status" hidden></p>
           <div id="pin-current" class="pin-current" hidden>
@@ -136,7 +136,7 @@
         </section>
 
         <!-- The frame's art history, each entry deletable. -->
-        <section id="art-history-section" class="section" aria-labelledby="ah-h" hidden>
+        <section id="art-history-section" class="section panel" aria-labelledby="ah-h" hidden>
           <h2 id="ah-h" class="section-h">Art history</h2>
           <ul id="art-history" class="rows"></ul>
         </section>
@@ -145,7 +145,7 @@
       <!-- Art: the library, folders, upload, and trash. -->
       <section class="screen" id="screen-art" aria-label="Art" hidden>
         <!-- The library, collapsed and paged. -->
-        <section id="library" class="section" aria-labelledby="lib-h" hidden>
+        <section id="library" class="section panel" aria-labelledby="lib-h" hidden>
           <h2 id="lib-h" class="section-h">Library</h2>
           <details id="library-details" class="library">
             <summary class="library-summary">
@@ -167,7 +167,7 @@
         </section>
 
         <!-- Upload, with folder management. -->
-        <section id="upload" class="section" aria-labelledby="up-h" hidden>
+        <section id="upload" class="section panel" aria-labelledby="up-h" hidden>
           <h2 id="up-h" class="section-h">Upload</h2>
           <div class="upload-row">
             <label class="field">Add to
@@ -192,7 +192,7 @@
         </section>
 
         <!-- Trash, restorable for 30 days. -->
-        <section id="trash" class="section" aria-labelledby="tr-h" hidden>
+        <section id="trash" class="section panel" aria-labelledby="tr-h" hidden>
           <h2 id="tr-h" class="section-h">Trash</h2>
           <ul id="art-trash-list" class="rows"></ul>
           <p id="art-trash-empty" class="empty" hidden>Trash is empty.</p>
@@ -204,7 +204,7 @@
         <!-- Pair a phone: make the hub discoverable for a short window. The hub
              accepts the first phone that asks, so there is no code to read here:
              the person finishes on the phone and comes back for the outcome. -->
-        <section id="pairing" class="section" aria-labelledby="pair-h">
+        <section id="pairing" class="section panel" aria-labelledby="pair-h">
           <h2 id="pair-h" class="section-h">Pair a phone</h2>
 
           <!-- Before a window: what pairing does, and the button that starts it. -->
@@ -256,7 +256,7 @@
              state. Disconnect drops the current connection and keeps the pairing;
              Forget removes the pairing after an inline confirm. The rows are drawn
              by rooms.js from GET /api/pair/devices. -->
-        <section id="devices" class="section" aria-labelledby="dev-h">
+        <section id="devices" class="section panel" aria-labelledby="dev-h">
           <h2 id="dev-h" class="section-h">Bluetooth devices</h2>
           <p id="dev-reminder" class="dev-reminder" role="status" hidden>
             <span id="dev-reminder-text"></span>
@@ -270,7 +270,7 @@
         </section>
 
         <!-- Now playing on the frame: one toggle per kind of audio. -->
-        <section id="frame-settings" class="section" aria-labelledby="fs-h">
+        <section id="frame-settings" class="section panel" aria-labelledby="fs-h">
           <h2 id="fs-h" class="section-h">Now playing on the frame</h2>
           <p id="fs-unavailable" class="empty" hidden>
             Frame settings are not available right now. The frame is running on its own.
@@ -338,7 +338,7 @@
 
         <!-- Quiet hours per frame: each frame can follow the shared hours, keep
              none, or set its own. Shown only on the new multi-frame contract. -->
-        <section id="frame-quiet" class="section" aria-labelledby="fq-h" hidden>
+        <section id="frame-quiet" class="section panel" aria-labelledby="fq-h" hidden>
           <h2 id="fq-h" class="section-h">Quiet hours by frame</h2>
           <div id="fq-body" class="fs-body">
             <label class="field" id="fq-frame-field" hidden>Frame
@@ -371,7 +371,7 @@
         </section>
 
         <!-- Rotation: how often the frame changes art, and which folders rotate. -->
-        <section id="rotation" class="section" aria-labelledby="rot-h" hidden>
+        <section id="rotation" class="section panel" aria-labelledby="rot-h" hidden>
           <h2 id="rot-h" class="section-h">Rotation</h2>
           <p id="art-rotation-summary" class="rotation-summary"></p>
           <label class="field">Change every

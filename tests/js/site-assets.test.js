@@ -46,3 +46,73 @@ test("fonts directory carries OFL.txt, SOURCE.md and no Hanken files", () => {
   assert.equal(files.filter((f) => /hanken/i.test(f)).length, 0);
   assert.match(readFileSync(path.join(SITE, "fonts", "OFL.txt"), "utf8"), /Instrument Sans/);
 });
+
+// --- Dusk styling (Task 5) ---------------------------------------------------
+
+function blockAfter(source, header) {
+  const start = source.indexOf(header);
+  assert.ok(start >= 0, `${header} not found`);
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}" && --depth === 0) return source.slice(open + 1, i);
+  }
+  throw new Error(`${header} is unbalanced`);
+}
+
+test("every transition and animation is covered by reduced motion", () => {
+  const block = blockAfter(css, "@media (prefers-reduced-motion: reduce)");
+  assert.match(block, /\*,\s*\*::before,\s*\*::after/);
+  assert.match(block, /transition:\s*none\s*!important/);
+  assert.match(block, /animation:\s*none\s*!important/);
+  assert.match(block, /:root\s*\{[^}]*transition:\s*none/);
+});
+
+test("kiosk block drops backdrop-filter", () => {
+  const block = blockAfter(css, "@media (min-width: 720px) and (max-height: 540px)");
+  assert.match(block, /backdrop-filter:\s*none/);
+  assert.match(block, /-webkit-backdrop-filter:\s*none/);
+});
+
+test("no transition lasts 300ms or more except the hue drift and the switch spring", () => {
+  const found = [];
+  for (const m of css.matchAll(/(?:^|\n)\s*(transition|animation)(?:-duration)?:\s*([^;]+);/g)) {
+    for (const d of m[2].matchAll(/(?<![\w.-])(\d*\.?\d+)(ms|s)\b/g)) {
+      const ms = d[2] === "s" ? parseFloat(d[1]) * 1000 : parseFloat(d[1]);
+      found.push({ ms, text: m[0].trim() });
+    }
+  }
+  assert.ok(found.length > 5);
+  for (const { ms, text } of found) {
+    if (ms < 300) continue;
+    const allowed = /--h\b/.test(text) || /tile-flash/.test(text) || /--spring/.test(text) || /\.45s/.test(text);
+    assert.ok(allowed, `too long: ${text}`);
+  }
+});
+
+test("no light-theme tokens remain", () => {
+  assert.doesNotMatch(css, /#e9e7e0|#f4f2ec/i);
+  assert.doesNotMatch(css, /--paper|--mat\b/);
+});
+
+test("press feedback is shared and hover is gated", () => {
+  assert.match(css, /:active\s*\{[^}]*transform:\s*scale\(0?\.96\)/);
+  assert.match(css, /touch-action:\s*manipulation/);
+  assert.match(css, /@media \(hover: hover\)/);
+  assert.match(css, /:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\)/);
+});
+
+test("the switch uses the spring behind a supports guard", () => {
+  assert.match(css, /@supports \(transition-timing-function: linear\(0, 1\)\)/);
+  assert.match(css, /transition:\s*transform \.45s var\(--spring\)|transition:\s*transform 0\.45s var\(--spring\)/);
+});
+
+test("panels carry the shared surface values", () => {
+  const panel = blockAfter(css, "\n.panel");
+  assert.match(panel, /border-radius:\s*24px/);
+  assert.match(panel, /padding:\s*16px/);
+  assert.match(panel, /backdrop-filter:\s*blur\(24px\) saturate\(1\.3\)/);
+  assert.match(html, /id="now-playing" class="section panel"/);
+  assert.match(html, /id="rooms-section" class="section panel"/);
+});

@@ -67,42 +67,29 @@
   --ink-3: oklch(0.55 calc(0.02 * var(--k)) var(--h));
   --accent: oklch(0.8 calc(0.11 * var(--k)) var(--h));
   --accent-2: oklch(0.7 calc(0.1 * var(--k)) var(--h2));
-  --line: oklch(1 0 0 / 0.1);
+  --line: oklch(1 0 0 / 0.06);
 
   --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto,
     sans-serif;
 
-  /* Aliases so rules not yet converted keep working (removed in Task 5). */
-  --paper: var(--ground);
-  --mat: oklch(0.2 calc(0.02 * var(--k)) var(--h));
-  --muted: var(--ink-2);
-  --line-2: oklch(1 0 0 / 0.2);
-
-  --blue: oklch(0.45 calc(0.1 * var(--k)) var(--h));
-  --blue-text: var(--accent);
-  --on-blue: var(--ink);
+  --on-accent: oklch(0.2 calc(0.03 * var(--k)) var(--h));
+  --fill: oklch(1 0 0 / 0.08);
+  --fill-hover: oklch(1 0 0 / 0.13);
+  --line-strong: oklch(1 0 0 / 0.16);
 
   --red: #a8433b;
-  --red-text: #e8958b;
-  --on-red: #f8f3f0;
+  --red-text: #f0a69d;
 
   --yellow: #d8c766;
   --on-yellow: #2b292a;
 
   --green: #5f855f;
-  --green-text: #9cc19c;
+  --green-text: #a9cfa9;
 
-  --focus: var(--accent);
-  --shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.45);
-  --radius: 10px;
-  --radius-sm: 7px;
+  --shadow: 0 12px 30px oklch(0 0 0 / 0.35), 0 2px 6px oklch(0 0 0 / 0.3);
+  --radius: 16px;
+  --radius-sm: 12px;
   --page: 560px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    transition: none;
-  }
 }
 
 /* The hidden attribute must beat an element's own display (grid/flex/block). */
@@ -129,14 +116,13 @@ body {
   background-attachment: fixed;
   color: var(--ink);
   font-family: var(--sans);
-  -webkit-tap-highlight-color: transparent;
   font-size: 16px;
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
 }
 
 a {
-  color: var(--blue-text);
+  color: var(--accent);
 }
 
 /* --- Top bar and the section drawer -------------------------------------- */
@@ -150,8 +136,7 @@ a {
   gap: 12px;
   padding: max(10px, env(safe-area-inset-top)) 0 10px;
   margin-bottom: 8px;
-  background: var(--paper);
-  border-bottom: 1px solid var(--line);
+  background: linear-gradient(oklch(0.15 calc(0.03 * var(--k)) var(--h) / 0.55) 70%, transparent);
 }
 
 .menu-button {
@@ -174,10 +159,6 @@ a {
   height: 24px;
 }
 
-.menu-button:hover {
-  background: var(--mat);
-}
-
 .house {
   margin: 0;
   font-size: 1.15rem;
@@ -188,22 +169,23 @@ a {
 /* The current screen's name, quiet, to the right of the title. */
 .screen-title {
   margin-left: auto;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
-/* The first section on each screen drops its top hairline so a screen does not
-   open under a stray rule. */
-.screen > .section:first-child {
-  border-top: none;
+/* Each screen is a stack of panels. */
+.screen {
+  display: grid;
+  gap: 16px;
+  align-content: start;
 }
 
 /* The current screen, marked in the drawer. */
 .drawer-link.current {
-  background: var(--mat);
-  color: var(--blue-text);
+  background: var(--fill);
+  color: var(--accent);
 }
 
 .drawer {
@@ -215,13 +197,16 @@ a {
   height: 100dvh;
   max-height: 100dvh;
   inset: 0 auto 0 0; /* pinned to the left edge */
-  background: var(--paper);
+  border-radius: 0 24px 24px 0;
+  background: oklch(0.18 calc(0.02 * var(--k)) var(--h) / 0.78);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  backdrop-filter: blur(24px) saturate(1.3);
   color: var(--ink);
   box-shadow: var(--shadow);
 }
 
 .drawer::backdrop {
-  background: rgba(43, 41, 42, 0.42);
+  background: oklch(0 0 0 / 0.5);
 }
 
 .drawer-nav {
@@ -234,7 +219,7 @@ a {
 .drawer-title {
   margin: 0 0 8px;
   padding: 0 12px;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.85rem;
 }
 
@@ -252,8 +237,68 @@ a {
   cursor: pointer;
 }
 
-.drawer-link:hover {
-  background: var(--mat);
+/* --- Press feedback, hover and focus, shared ------------------------------ */
+
+.btn,
+.btn-ghost,
+.toggle,
+.menu-button,
+.drawer-link,
+.frame-tab,
+.chip,
+.tile,
+.row-link,
+.row-tappable,
+.menu-item,
+.sheet-link,
+.sheet-close,
+.toast-undo {
+  transition: transform var(--dur-press) var(--ease-out),
+    background-color 0.2s var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.btn:active,
+.btn-ghost:active,
+.toggle:active,
+.menu-button:active,
+.drawer-link:active,
+.frame-tab:active,
+.chip:active,
+.tile:active,
+.row-link:active,
+.row-tappable:active,
+.menu-item:active,
+.sheet-link:active,
+.sheet-close:active,
+.toast-undo:active {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) {
+  .btn:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--accent), white 12%);
+  }
+
+  .btn-ghost:hover:not(:disabled),
+  .menu-button:hover,
+  .drawer-link:hover,
+  .menu-item:hover,
+  .sheet-link:hover,
+  .frame-tab:not(.current):hover,
+  .chip:not(.on):hover {
+    background: var(--fill-hover);
+  }
+
+  .danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--red) 40%, transparent);
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 /* --- Banners ------------------------------------------------------------- */
@@ -266,40 +311,43 @@ a {
 }
 
 .health {
-  background: color-mix(in srgb, var(--yellow) 24%, var(--paper));
+  background: color-mix(in srgb, var(--yellow) 22%, transparent);
   color: var(--ink);
   border: 1px solid color-mix(in srgb, var(--yellow) 55%, transparent);
   font-weight: 600;
 }
 
 .connection {
-  background: var(--mat);
-  color: var(--muted);
+  background: var(--fill);
+  color: var(--ink-2);
 }
 
 /* --- Sections ------------------------------------------------------------ */
 
-.section {
-  padding: 22px 0;
-  border-top: 1px solid var(--line);
-}
-
-#frame {
-  border-top: none;
-  padding-top: 6px;
+/* The one surface: a frosted, cover-tinted panel. Cards and borders stay only
+   for separate objects (tiles, history rows). */
+.panel {
+  padding: 16px;
+  border-radius: 24px;
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  backdrop-filter: blur(24px) saturate(1.3);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.1), inset 0 0 0 1px oklch(1 0 0 / 0.06),
+    0 12px 30px oklch(0 0 0 / 0.25);
 }
 
 .section-h {
   margin: 0 0 14px;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
 }
 
 .empty {
   margin: 8px 0 0;
-  color: var(--muted);
+  color: var(--ink-2);
 }
 
 /* --- The frame switcher (one button per frame) --------------------------- */
@@ -320,25 +368,18 @@ a {
   gap: 8px;
   min-height: 40px;
   padding: 0 16px;
-  border: 1px solid var(--line-2);
+  border: none;
   border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
+  background: var(--fill);
+  color: var(--ink-2);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 
-.frame-tab:hover {
-  border-color: var(--ink);
-  color: var(--ink);
-}
-
 .frame-tab.current {
-  background: var(--mat);
-  border-color: var(--blue);
-  color: var(--ink);
-  box-shadow: inset 0 0 0 1px var(--blue);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .frame-tab.offline .frame-tab-name {
@@ -356,11 +397,9 @@ a {
 /* --- The frame mirror (the one memorable element) ------------------------ */
 
 .mat {
-  padding: 14px;
-  background: var(--mat);
-  border: 1px solid var(--line);
+  padding: 8px;
+  background: oklch(0 0 0 / 0.25);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
 }
 
 .mirror-img {
@@ -368,20 +407,20 @@ a {
   width: 100%;
   aspect-ratio: 5 / 3; /* the frame's true ratio */
   object-fit: cover;
-  border-radius: 3px;
-  background: var(--paper);
+  border-radius: 10px;
+  background: oklch(0 0 0 / 0.3);
 }
 
 .mirror-updated {
   margin: 8px 2px 0;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
 }
 
 .mirror-caption {
   margin: 8px 2px 0;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.9rem;
   line-height: 1.4;
 }
@@ -398,7 +437,7 @@ a {
    this eyebrow sits on its own line above the title to say so. */
 .frame-next-label {
   flex-basis: 100%;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -412,14 +451,14 @@ a {
 }
 
 a.frame-title {
-  color: var(--blue-text);
+  color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
 }
 
 .frame-artist {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 1.05rem;
   overflow-wrap: anywhere;
 }
@@ -437,7 +476,7 @@ a.frame-title {
 
 .hint {
   margin: 10px 0 0;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.85rem;
 }
 
@@ -446,10 +485,10 @@ a.frame-title {
 .btn {
   min-height: 44px;
   padding: 0 18px;
-  border: 1px solid var(--line-2);
+  border: none;
   border-radius: 999px;
-  background: var(--mat);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--on-accent);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -457,10 +496,6 @@ a.frame-title {
   align-items: center;
   justify-content: center;
   gap: 8px;
-}
-
-.btn:hover {
-  border-color: var(--ink);
 }
 
 .btn:disabled {
@@ -478,42 +513,47 @@ a.frame-title {
 .text {
   min-height: 44px;
   padding: 0 12px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
+  border: none;
+  border-radius: 12px;
+  background: var(--fill);
   color: var(--ink);
   font: inherit;
+}
+
+.select:focus-visible,
+.text:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.select option {
+  background: oklch(0.2 0.02 var(--h));
+  color: var(--ink);
 }
 
 .field {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.95rem;
 }
 
 .field-label {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.95rem;
 }
 
-:where(button, a, summary, input, select, .drawer-link):focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-
 .danger {
+  background: color-mix(in srgb, var(--red) 28%, transparent);
   color: var(--red-text);
-  border-color: color-mix(in srgb, var(--red) 45%, transparent);
 }
 
 /* --- Now playing --------------------------------------------------------- */
 
 .np {
   display: grid;
-  grid-template-columns: 88px 1fr;
+  grid-template-columns: 72px 1fr;
   gap: 16px;
   align-items: center;
 }
@@ -521,11 +561,11 @@ a.frame-title {
 .np-art-img,
 .np-art-ph {
   display: block;
-  width: 88px;
-  height: 88px;
-  border-radius: var(--radius-sm);
+  width: 72px;
+  height: 72px;
+  border-radius: 12px;
   object-fit: cover;
-  background: var(--mat);
+  background: var(--fill);
 }
 
 .np-art-ph,
@@ -543,7 +583,7 @@ a.frame-title {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--muted);
+  color: var(--ink-2);
 }
 
 .np-art-ph::before {
@@ -567,16 +607,14 @@ a.frame-title {
 
 .np-title {
   font-weight: 600;
-  font-size: 1.1rem;
+  font-size: 18px;
+  line-height: 1.2;
 }
 
 .np-artist,
 .np-album {
-  color: var(--muted);
-}
-
-.np-album {
-  font-size: 0.95rem;
+  color: var(--ink-2);
+  font-size: 12.5px;
 }
 
 .np-progress {
@@ -587,9 +625,9 @@ a.frame-title {
 }
 
 .np-track {
-  height: 6px;
+  height: 4px;
   border-radius: 999px;
-  background: var(--line-2);
+  background: oklch(1 0 0 / 0.12);
   overflow: hidden;
 }
 
@@ -597,29 +635,29 @@ a.frame-title {
   height: 100%;
   width: 0;
   border-radius: 999px;
-  background: var(--red); /* live audio: red */
-  transition: width 0.3s linear;
+  background: var(--ink);
+  transition: width 0.25s linear;
 }
 
 .np-times {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
 }
 
 .np-status {
   margin-top: 4px;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.9rem;
   font-weight: 600;
 }
 
 .np-rooms {
   margin-top: 4px;
-  color: var(--red-text);
+  color: var(--accent);
   font-size: 0.9rem;
 }
 
@@ -629,22 +667,19 @@ a.frame-title {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: grid;
+  gap: 16px;
 }
 
 .room {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   grid-template-areas:
-    "label toggle"
-    "volume volume";
+    "label pct toggle"
+    "volume volume volume";
   align-items: center;
-  gap: 14px;
-  padding: 16px 0;
-  border-top: 1px solid var(--line);
-}
-
-.room:first-child {
-  border-top: none;
+  column-gap: 14px;
+  transition: opacity 0.25s var(--ease-out);
 }
 
 .room.disconnected {
@@ -653,29 +688,74 @@ a.frame-title {
 
 .room-label {
   grid-area: label;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   font-weight: 600;
 }
 
+/* The volume figure, driven by the slider's render callback. */
+.pct {
+  grid-area: pct;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The switch: a 50x30 track with a 24px thumb that springs. The "On"/"Off" text
+   rooms.js sets stays for screen readers (font-size 0), and the 44px hit area is
+   the padding around the track. */
 .toggle {
   grid-area: toggle;
-  min-width: 92px;
-  min-height: 44px;
-  padding: 0 20px;
-  border: 1px solid var(--line-2);
-  border-radius: 999px;
-  background: var(--mat);
-  color: var(--muted);
-  font: inherit;
-  font-weight: 600;
+  position: relative;
+  box-sizing: content-box;
+  width: 50px;
+  height: 30px;
+  --tp: 7px;
+  margin: calc(-1 * var(--tp)) -4px;
+  padding: var(--tp) 4px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  background-clip: content-box;
+  color: transparent;
+  font-size: 0;
   cursor: pointer;
 }
 
-/* An audible room is live audio: red (design). */
-.toggle[aria-checked="true"] {
-  background: var(--red);
-  color: var(--on-red);
-  border-color: var(--red);
+.toggle::before {
+  content: "";
+  position: absolute;
+  inset: var(--tp) 4px;
+  border-radius: 999px;
+  background: oklch(1 0 0 / 0.14);
+  transition: background-color 0.2s var(--ease-out);
+}
+
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--tp) + 3px);
+  left: 7px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 2px 6px oklch(0 0 0 / 0.35);
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  .toggle::after {
+    transition: transform 0.45s var(--spring);
+  }
+}
+
+.toggle[aria-checked="true"]::before {
+  background: var(--accent);
+}
+
+.toggle[aria-checked="true"]::after {
+  transform: translateX(20px);
+  background: var(--on-accent);
 }
 
 .toggle:disabled {
@@ -688,6 +768,7 @@ a.frame-title {
   position: relative;
   width: 100%;
   height: 44px;
+  margin-top: 10px;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -749,21 +830,12 @@ a.frame-title {
 }
 
 .volume:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 4px;
   border-radius: 999px;
 }
 
 @media (pointer: coarse) {
   .volume {
     height: 48px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .volume,
-  .volume-thumb {
-    transition: none;
   }
 }
 
@@ -788,10 +860,10 @@ a.frame-title {
   content: "";
   width: 9px;
   height: 9px;
-  border-right: 2px solid var(--muted);
-  border-bottom: 2px solid var(--muted);
+  border-right: 2px solid var(--ink-2);
+  border-bottom: 2px solid var(--ink-2);
   transform: rotate(-45deg);
-  transition: transform 0.15s ease;
+  transition: transform 0.15s var(--ease-out);
 }
 
 .library[open] .library-summary::before {
@@ -828,10 +900,10 @@ a.frame-title {
 
 @keyframes tile-flash {
   0% {
-    box-shadow: 0 0 0 3px var(--focus);
+    box-shadow: 0 0 0 3px var(--accent);
   }
   70% {
-    box-shadow: 0 0 0 3px var(--focus);
+    box-shadow: 0 0 0 3px var(--accent);
   }
   100% {
     box-shadow: 0 0 0 3px transparent;
@@ -847,7 +919,7 @@ a.frame-title {
   aspect-ratio: 1 / 1;
   object-fit: cover;
   border-radius: var(--radius-sm);
-  background: var(--mat);
+  background: var(--fill);
   display: block;
 }
 
@@ -870,7 +942,7 @@ a.frame-title {
 }
 
 .tile-artist {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.85rem;
   overflow-wrap: anywhere;
 }
@@ -899,7 +971,7 @@ a.frame-title {
   padding: 0;
   border: none;
   background: none;
-  color: var(--blue-text);
+  color: var(--accent);
   font-size: 0.88rem;
   font-weight: 600;
   justify-content: flex-start;
@@ -910,9 +982,10 @@ a.frame-title {
   gap: 8px;
   margin-top: 8px;
   padding: 10px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
+  border-radius: var(--radius);
+  background: oklch(0.2 calc(0.02 * var(--k)) var(--h) / 0.92);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  backdrop-filter: blur(24px) saturate(1.3);
 }
 
 .frame-menu-wrap .menu-body,
@@ -932,9 +1005,9 @@ a.frame-title {
 .menu-item {
   min-height: 42px;
   padding: 0 12px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  background: var(--mat);
+  border: none;
+  border-radius: 12px;
+  background: var(--fill);
   color: var(--ink);
   font: inherit;
   font-size: 0.92rem;
@@ -947,7 +1020,7 @@ a.frame-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.9rem;
 }
 
@@ -968,7 +1041,7 @@ a.frame-title {
 }
 
 .pager-label {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
 }
@@ -1010,7 +1083,7 @@ a.frame-title {
   height: 54px;
   object-fit: cover;
   border-radius: var(--radius-sm);
-  background: var(--mat);
+  background: var(--fill);
 }
 
 .row-thumb-ph::before {
@@ -1030,20 +1103,20 @@ a.frame-title {
 }
 
 a.row-title {
-  color: var(--blue-text);
+  color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
-  text-decoration-color: var(--line-2);
+  text-decoration-color: var(--line-strong);
 }
 
 .row-sub {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.9rem;
   overflow-wrap: anywhere;
 }
 
 .row-when {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.82rem;
 }
 
@@ -1059,7 +1132,7 @@ a.row-title {
 }
 
 .rotation-summary.empty {
-  color: var(--muted);
+  color: var(--ink-2);
   font-weight: 400;
 }
 
@@ -1078,20 +1151,19 @@ a.row-title {
 .chip {
   min-height: 42px;
   padding: 0 14px;
-  border: 1px solid var(--line-2);
+  border: none;
   border-radius: 999px;
-  background: var(--mat);
-  color: var(--muted);
+  background: var(--fill);
+  color: var(--ink-2);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 
-/* An enabled folder is a selected control: blue (design). */
+/* An enabled folder is a selected control: the accent. */
 .chip.on {
-  background: var(--blue);
-  color: var(--on-blue);
-  border-color: var(--blue);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 /* --- Upload and folders -------------------------------------------------- */
@@ -1139,7 +1211,7 @@ a.row-title {
 }
 
 .upload-status {
-  color: var(--muted);
+  color: var(--ink-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1214,14 +1286,16 @@ a.row-title {
   margin: auto auto 0;
   padding: 0 16px calc(20px + env(safe-area-inset-bottom));
   border: none;
-  border-radius: var(--radius) var(--radius) 0 0;
-  background: var(--paper);
+  border-radius: 24px 24px 0 0;
+  background: oklch(0.18 calc(0.02 * var(--k)) var(--h) / 0.78);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  backdrop-filter: blur(24px) saturate(1.3);
   color: var(--ink);
   box-shadow: var(--shadow);
 }
 
 .sheet::backdrop {
-  background: rgba(43, 41, 42, 0.42);
+  background: oklch(0 0 0 / 0.5);
 }
 
 .sheet-head {
@@ -1244,8 +1318,9 @@ a.row-title {
   min-height: 40px;
   padding: 0 12px;
   border: none;
+  border-radius: 12px;
   background: none;
-  color: var(--blue-text);
+  color: var(--accent);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -1262,9 +1337,9 @@ a.row-title {
   align-items: center;
   min-height: 52px;
   padding: 0 16px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  background: var(--mat);
+  border: none;
+  border-radius: 12px;
+  background: var(--fill);
   color: var(--ink);
   font-weight: 600;
   text-decoration: none;
@@ -1284,9 +1359,11 @@ a.row-title {
   max-width: calc(100vw - 32px);
   padding: 12px 16px;
   border-radius: 999px;
-  background: var(--ink);
-  color: var(--paper);
-  box-shadow: var(--shadow);
+  background: oklch(0.2 calc(0.02 * var(--k)) var(--h) / 0.78);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  backdrop-filter: blur(24px) saturate(1.3);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.06), var(--shadow);
   font-size: 0.95rem;
 }
 
@@ -1300,7 +1377,7 @@ a.row-title {
   padding: 0 6px;
   border: none;
   background: none;
-  color: var(--yellow);
+  color: var(--accent);
   font: inherit;
   font-weight: 700;
   cursor: pointer;
@@ -1345,7 +1422,7 @@ a.row-title {
 
 .settings-note {
   margin: 0;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.95rem;
 }
 
@@ -1371,7 +1448,7 @@ a.row-title {
 }
 
 .time-row-to {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.95rem;
 }
 
@@ -1390,7 +1467,7 @@ a.row-title {
 .switch-input {
   width: 20px;
   height: 20px;
-  accent-color: var(--blue);
+  accent-color: var(--accent);
   cursor: pointer;
 }
 
@@ -1427,13 +1504,8 @@ a.row-title {
 
 /* A secondary action (Clear) that reads as lighter than the primary Save. */
 .btn-ghost {
-  background: transparent;
+  background: var(--fill);
   color: var(--ink);
-  border: 1px solid var(--line);
-}
-
-.btn-ghost:hover {
-  background: var(--hover, rgba(127, 127, 127, 0.12));
 }
 
 .fs-error {
@@ -1461,7 +1533,7 @@ a.row-title {
 
 .pair-count {
   margin: 0;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.95rem;
   font-variant-numeric: tabular-nums;
 }
@@ -1530,14 +1602,18 @@ a.row-title {
   white-space: nowrap;
 }
 
+/* Everything that moves stops: transitions, springs, the hue easing and the
+   tile flash all become instant. */
 @media (prefers-reduced-motion: reduce) {
-  .np-fill,
-  .library-summary::before {
-    transition: none;
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
   }
 
-  .tile-flash {
-    animation: none;
+  :root {
+    transition: none;
   }
 }
 
@@ -1582,11 +1658,6 @@ a.row-title {
 
   /* Each column's first section sits at the top of its column, so the shared
      top hairline would read as a stray rule: drop it. */
-  #now-playing,
-  #rooms-section {
-    border-top: none;
-  }
-
   /* The Frame, Art, and Settings screens stay one readable column, centered, so
      the mirror and forms do not stretch the full panel width. */
   #screen-frame,
@@ -1596,9 +1667,18 @@ a.row-title {
     margin-inline: auto;
   }
 
+  /* No blur on the wall panel's GPU: solid translucent fills instead. */
+  .panel,
+  dialog,
+  .toast,
+  .menu-body {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: oklch(0.2 0.02 var(--h) / 0.72);
+  }
+
   /* 48px touch targets for a panel used by finger. */
   .btn,
-  .toggle,
   .select,
   .text,
   .frame-tab,
@@ -1608,6 +1688,10 @@ a.row-title {
 
   .volume {
     height: 48px;
+  }
+
+  .toggle {
+    --tp: 9px;
   }
 
   .menu-button {
@@ -1650,7 +1734,7 @@ a.row-title {
   flex-wrap: wrap;
   gap: 2px 8px;
   margin: 2px 0 0;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.92rem;
 }
 
@@ -1661,7 +1745,7 @@ a.row-title {
   width: 9px;
   height: 9px;
   margin-right: 7px;
-  border: 2px solid var(--muted);
+  border: 2px solid var(--ink-2);
   border-radius: 50%;
   vertical-align: 0;
 }
@@ -1694,9 +1778,8 @@ a.row-title {
   display: grid;
   gap: 10px;
   padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
   border-radius: var(--radius-sm);
-  background: var(--mat);
+  background: color-mix(in srgb, var(--red) 18%, transparent);
 }
 
 .dev-confirm .dev-actions {
@@ -1710,7 +1793,7 @@ a.row-title {
 
 .dev-confirm-detail {
   margin: 0;
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 0.92rem;
 }
 
@@ -1725,7 +1808,7 @@ a.row-title {
   margin: 0 0 12px;
   padding: 12px 14px;
   border-left: 3px solid var(--green);
-  background: var(--mat);
+  background: var(--fill);
   border-radius: var(--radius-sm);
 }
 
@@ -1745,5 +1828,4 @@ a.row-title {
 
 .dev-btn.danger {
   color: var(--red-text);
-  border-color: color-mix(in srgb, var(--red) 45%, transparent);
 }
