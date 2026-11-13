@@ -79,6 +79,7 @@ import { createPairController } from "./pair-controller.js";
 import { createDevicesController } from "./devices-controller.js";
 import { createVolumeSlider } from "./volume-slider.js";
 import { createHaptics } from "./haptics.js";
+import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
 // is down, and each Server.GetStatus is a full status read, so a slow cadence
@@ -868,7 +869,7 @@ function renderMirror(json, legacy, frameId) {
   const imageBase = urls ? urls.image : "frame.png";
   const src = `${imageBase}?v=${encodeURIComponent(stamp)}`;
   if (state.mirrorSrc !== src) {
-    els.mirrorImg.src = src;
+    swapImage(els.mirrorImg, src);
     state.mirrorSrc = src;
   }
   // If the image itself 404s (the json landed before the png), hide the mirror
@@ -1606,18 +1607,40 @@ async function refreshNowPlaying() {
   updateNowPlayingCard(nowPlayingFromBody(body));
 }
 
+// The page color follows the now-playing cover. A token drops a slow older
+// extraction so it can never overwrite a newer cover's color.
+let coverColorToken = 0;
+function followCover(url) {
+  coverColorToken += 1;
+  const token = coverColorToken;
+  if (!url) {
+    applyCoverColor(document.documentElement, DEFAULT_HUES);
+    return;
+  }
+  loadCoverHues(url).then((hues) => {
+    if (token === coverColorToken) {
+      applyCoverColor(document.documentElement, hues);
+    }
+  });
+}
+
 function updateNowPlayingCard(track) {
   state.nowTrack = track;
   if (!track) {
     els.npSection.hidden = true;
+    if (state.npArtSrc !== null) {
+      state.npArtSrc = null;
+      followCover(null);
+    }
     return;
   }
   els.npSection.hidden = false;
 
   if (track.artUrl) {
     if (state.npArtSrc !== track.artUrl) {
-      els.npArtImg.src = track.artUrl;
+      swapImage(els.npArtImg, track.artUrl);
       state.npArtSrc = track.artUrl;
+      followCover(track.artUrl);
     }
     els.npArtImg.alt = track.title;
     els.npArtImg.hidden = false;
@@ -1627,6 +1650,7 @@ function updateNowPlayingCard(track) {
     els.npArtImg.removeAttribute("src");
     state.npArtSrc = null;
     els.npArtPh.hidden = false;
+    followCover(null);
   }
 
   els.npTitle.textContent = track.title;

@@ -229,6 +229,23 @@ shipped check (any `roles/*/files/verify.d/*` or any verify-check template) is n
 captured by the derivation, so a new install shape is caught in review, not in
 the field.
 
+## Cover color
+
+The page color follows the now-playing cover. `cover-color.js` is pure at its core
+(`extractHues` turns canvas pixels into `{h1, h2, chroma}` via OKLab, ignoring
+transparent, near-black, near-white and near-grey pixels); only `loadCoverHues`
+(a 32x32 canvas, same-origin `/cover/...` so `getImageData` is allowed) and
+`swapImage` (preload and `decode()`, then set `src`, so the image never blanks)
+touch the DOM. `applyCoverColor` writes `--h`, `--h2` and `--k` on the root, and
+every token in `style.css` is OKLCH derived from them. The default hue is 255
+(slate blue). A greyscale or missing cover returns the defaults with chroma 0, so
+`--k` (`0.15 + 0.85 * chroma`) scales chroma down to near-neutral instead of
+picking a random hue. `@property` registers the three variables so the hue eases
+over 1.4 s; browsers without `@property` change hue instantly, and reduced motion
+turns the easing off. In `rooms.js`, `followCover` guards out-of-order results with
+a token. The frame mirror image only preloads through `swapImage`; the now-playing
+cover is the single source of color. Tests: `tests/js/cover-color.test.js`.
+
 ## Tooling
 
 - Python: `uv run pytest tests/python`. Dev deps (pytest, pyyaml) are in
