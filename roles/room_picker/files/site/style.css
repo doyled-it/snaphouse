@@ -1757,12 +1757,49 @@ a.row-title {
     align-items: start;
   }
 
+  /* The panel never scrolls on Listen: the page is exactly one viewport tall
+     (header, banner and main stacked), the two columns share what is left, and
+     a long play history scrolls inside its own box. Scoped to Listen with :has
+     so Frame, Gallery and Settings keep scrolling as a page. */
+  body:has(#screen-listen:not([hidden])) {
+    box-sizing: border-box;
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  body:has(#screen-listen:not([hidden])) > main {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #screen-listen {
+    flex: 1 1 0;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
   #now-playing {
     grid-area: nowplaying;
   }
 
   #play-history-section {
     grid-area: history;
+    align-self: stretch;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #np-history-list {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   #rooms-section {
