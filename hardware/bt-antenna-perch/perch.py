@@ -81,6 +81,13 @@ shelf_clip_wall = 3.5         # wall thickness of the hook jaws
 
 MOUNT_STYLES = ("wall-screw", "shelf-clip")
 
+# --- Test-fit coupon --------------------------------------------------------
+# A thin slice of the perch: the adapter pocket cross-section (floor plus both
+# side walls) and one screw ear with its countersunk hole. It reuses every
+# parameter above, so it tests the same numbers as the full part. Prints
+# base-down, no supports, in well under 15 minutes.
+coupon_length = 12.0  # slice thickness along the trough; > screw_head_diameter
+
 
 def perch_body(
     body_length=adapter_body_length,
@@ -200,8 +207,10 @@ def _screw_ears(length, outer_w, floor, ear_width, wall):
     return bd.Pos(0, ear_y, 0) * ear + bd.Pos(0, -ear_y, 0) * ear
 
 
-def _screw_holes(length, outer_w, floor, ear_width, screw_d, screw_head_d):
-    """Countersunk through holes in the two ears; cones open upward."""
+def _screw_holes(length, outer_w, floor, ear_width, screw_d, screw_head_d, sides=(1, -1)):
+    """Countersunk through holes in the ears; cones open upward.
+
+    ``sides`` picks the ears: (1, -1) is both, (1,) is the +Y ear only."""
     # Center the hole in the ear, a little out from the body wall.
     hole_y = outer_w / 2 + ear_width * 0.55
     shank = bd.Cylinder(
@@ -221,7 +230,9 @@ def _screw_holes(length, outer_w, floor, ear_width, screw_d, screw_head_d):
         align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN),
     )
     one = shank + cone
-    holes = bd.Pos(0, hole_y, 0) * one + bd.Pos(0, -hole_y, 0) * one
+    holes = bd.Pos(0, sides[0] * hole_y, 0) * one
+    for side in sides[1:]:
+        holes = holes + bd.Pos(0, side * hole_y, 0) * one
     return holes
 
 
@@ -256,6 +267,41 @@ def _shelf_clip(length, outer_w, floor, shelf, clip_gap, clip_wall):
     return back + under
 
 
+def perch_coupon_body(
+    body_width=adapter_body_width,
+    fit=clearance,
+    wall=wall_thickness,
+    floor=base_thickness,
+    wall_height=cradle_wall_height,
+    screw_d=screw_hole_diameter,
+    screw_head_d=screw_head_diameter,
+    ear_width=mount_ear_width,
+    thickness=coupon_length,
+):
+    """Test-fit coupon: the pocket cross-section and one countersunk ear.
+
+    Same width, wall, floor and screw numbers as ``perch_body``; the adapter
+    pocket is open at both ends so the adapter body can be slid or dropped in.
+    The ear is on the +Y side, as in the full part.
+    """
+    inner_w = body_width + 2 * fit
+    outer_w = inner_w + 2 * wall
+    align = (bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN)
+    slab = bd.Box(thickness, outer_w, floor, align=align)
+    side = bd.Box(thickness, wall, wall_height, align=align)
+    wall_y = inner_w / 2 + wall / 2
+    part = slab + bd.Pos(0, wall_y, floor) * side + bd.Pos(0, -wall_y, floor) * side
+    ear = bd.Box(thickness, ear_width + wall, floor, align=align)
+    part = part + bd.Pos(0, outer_w / 2 + ear_width / 2, 0) * ear
+    part = part - _screw_holes(
+        thickness, outer_w, floor, ear_width, screw_d, screw_head_d, sides=(1,)
+    )
+    part = part.clean()
+    part.label = "bt-antenna-perch-coupon"
+    part.color = "#c98a2b"
+    return part
+
+
 @model
 def perch():
     return perch_body()
@@ -266,6 +312,12 @@ def perch_shelf_clip():
     return perch_body(mount="shelf-clip")
 
 
+@model
+def perch_coupon():
+    return perch_coupon_body()
+
+
 if __name__ == "__main__":
     perch()
     perch_shelf_clip()
+    perch_coupon()
