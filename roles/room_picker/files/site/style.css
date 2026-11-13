@@ -1150,7 +1150,7 @@ a.row-title {
 }
 
 .chip {
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 14px;
   border: none;
   border-radius: 999px;
@@ -1709,6 +1709,11 @@ a.row-title {
     margin: 4px 0;
     padding: 6px 12px;
     font-size: 0.85rem;
+  }
+
+  /* Only the first shown banner fits on the kiosk; a second would push the last room off screen. */
+  .banner:not([hidden]) ~ .banner:not([hidden]) {
+    display: none;
   }
 
   /* The tabs become a vertical rail down the left edge. */
