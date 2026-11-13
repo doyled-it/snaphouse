@@ -1610,6 +1610,49 @@ export function frameUnpinBody(frame) {
   return { frame };
 }
 
+// The body the one-tap "Keep showing this" sends: pin the frame's current image
+// until it is unpinned. The same body the full form sends for "this art piece /
+// until I unpin", or null for a malformed frame id.
+export function keepShowingBody(frame) {
+  return framePinBody(frame, "art", "forever");
+}
+
+// The body that puts a pin back after Unpin was tapped by mistake: the same
+// target, for the shortest fixed duration that covers the time it had left
+// (until you unpin stays until you unpin). Null without a pin.
+export function repinBody(frame, pin, nowMs) {
+  if (!pin || typeof pin !== "object") {
+    return null;
+  }
+  let duration = "forever";
+  if (pin.until !== null && pin.until !== undefined) {
+    const left = Date.parse(pin.until) - nowMs;
+    if (Number.isNaN(left)) {
+      duration = "morning";
+    } else if (left <= 60 * 60000) {
+      duration = "1h";
+    } else if (left <= 4 * 60 * 60000) {
+      duration = "4h";
+    } else {
+      duration = "morning";
+    }
+  }
+  return framePinBody(frame, pin.what, duration);
+}
+
+// What the Frame tab's Keep showing control looks like: hidden without the
+// frame-control document, "Keep showing this" with no pin, "Unpin" while one is
+// held. `pin` is the chosen frame's pin (already cleared once it has expired).
+export function pinControlState(frameControl, pin) {
+  if (!frameControl || !frameControl.available) {
+    return { visible: false, pinned: false, label: "Keep showing this" };
+  }
+  if (pin) {
+    return { visible: true, pinned: true, label: "Unpin" };
+  }
+  return { visible: true, pinned: false, label: "Keep showing this" };
+}
+
 // A 24-hour HH:MM clock string (00:00 to 23:59), the format the hub stores and
 // the page sends. Anything else (a single-digit hour, an out-of-range value, a
 // different separator) is rejected.

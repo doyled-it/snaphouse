@@ -1404,8 +1404,32 @@ a.row-title {
   font-weight: 600;
 }
 
-.pin-current {
-  margin-bottom: 14px;
+.keep {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.keep .pin-status {
+  margin: 0;
+}
+
+.keep-toggle {
+  width: 100%;
+  min-height: 48px;
+}
+
+.keep-more-summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.keep-more[open] .keep-more-summary {
+  margin-bottom: 6px;
 }
 
 .pin-form {

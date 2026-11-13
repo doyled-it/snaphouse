@@ -101,3 +101,15 @@ test("a deep-linked piece outside the filter steps through the whole library", (
   assert.equal(idAfterRemoval(after.slice(0, 4), 4), "p3");
   assert.equal(idAfterRemoval([], 0), null);
 });
+
+test("the history viewer offers removeFromHistory and the grid does not", () => {
+  assert.ok(viewerState(items(3), 1, "history").actions.includes("removeFromHistory"));
+  assert.ok(!viewerState(items(3), 1, "grid").actions.includes("removeFromHistory"));
+});
+
+test("history items step and clamp like grid items", () => {
+  const v = viewerState(items(3), 2, "history");
+  assert.equal(v.position, "3 of 3");
+  assert.equal(v.canNext, false);
+  assert.equal(v.canPrev, true);
+});

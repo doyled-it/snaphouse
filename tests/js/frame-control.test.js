@@ -21,6 +21,9 @@ import {
   validateFrameSettings,
   framePinBody,
   frameUnpinBody,
+  keepShowingBody,
+  repinBody,
+  pinControlState,
   weatherLocationLabel,
   weatherSaveBody,
   weatherClearBody,
@@ -421,4 +424,58 @@ test("a reset override is accepted by frameQuietHoursBody as quiet_hours null", 
     ok: true,
     value: { frame: "office", quiet_hours: null },
   });
+});
+
+// --------------------------------------------------------------------------- #
+// keepShowingBody / pinControlState: the one-tap Keep showing control
+// --------------------------------------------------------------------------- #
+
+test("keepShowingBody matches the form's this-image / until-I-unpin body", () => {
+  assert.deepEqual(keepShowingBody("office"), framePinBody("office", "art", "forever"));
+  assert.deepEqual(keepShowingBody("office"), { frame: "office", what: "art", duration: "forever" });
+});
+
+test("keepShowingBody is null for a malformed frame id", () => {
+  assert.equal(keepShowingBody("../x"), null);
+  assert.equal(keepShowingBody(""), null);
+});
+
+test("pinControlState is not visible without frame control", () => {
+  assert.equal(pinControlState(null, null).visible, false);
+  assert.equal(pinControlState({ available: false }, null).visible, false);
+});
+
+test("pinControlState offers Keep showing this when nothing is pinned", () => {
+  assert.deepEqual(pinControlState({ available: true }, null), {
+    visible: true,
+    pinned: false,
+    label: "Keep showing this",
+  });
+});
+
+test("pinControlState offers Unpin while a pin is held", () => {
+  const pin = { what: "art", until: null };
+  assert.deepEqual(pinControlState({ available: true }, pin), {
+    visible: true,
+    pinned: true,
+    label: "Unpin",
+  });
+});
+
+test("repinBody undoes an unpin with a duration that covers what was left", () => {
+  const now = Date.parse("2026-11-13T10:00:00Z");
+  const at = (min) => new Date(now + min * 60000).toISOString();
+  assert.deepEqual(repinBody("office", { what: "art", until: null }, now), {
+    frame: "office",
+    what: "art",
+    duration: "forever",
+  });
+  assert.equal(repinBody("office", { what: "weather", until: at(40) }, now).duration, "1h");
+  assert.equal(repinBody("office", { what: "art", until: at(120) }, now).duration, "4h");
+  assert.equal(repinBody("office", { what: "art", until: at(600) }, now).duration, "morning");
+});
+
+test("repinBody is null without a pin or with a bad frame", () => {
+  assert.equal(repinBody("office", null, 0), null);
+  assert.equal(repinBody("../x", { what: "art", until: null }, 0), null);
 });

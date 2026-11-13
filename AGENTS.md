@@ -189,6 +189,17 @@ them on load and on `hashchange`, and rewrites the hash with `replaceState`
 when it was an alias or a hidden screen, so Back never lands on it. The current
 tab carries `aria-current="page"`.
 
+Frame content is, top to bottom: the frame switcher (two or more frames), the
+mirror, Back / Next, **Keep showing this** (one tap pins the current image until
+unpinned via `keepShowingBody`, then the button reads Unpin and an unpin gives an
+Undo toast through `repinBody`; "For how long..." opens the full what and how-long
+choice; the whole control is gone without `frame-control.json`), the art history,
+then the autosaving frame settings. A history row opens the Gallery viewer at
+`#gallery/<id>` with `viewerState(..., "history")` (state `viewerKind`): the same
+Show on the frame and Keep it there actions, plus Remove from history, which sends
+today's delete (the picture goes to the trash) with an Undo toast; Back returns to
+the Frame tab.
+
 Frame is hidden until the frame-control document lists frames or a frame mirror
 (`frame.json`) answers. Climate is hidden until the homebody page exists: to
 unhide it, flip `CLIMATE_ENABLED` in `nav-model.js` and add a `screen-climate`

@@ -50,6 +50,9 @@ import {
   validateFrameSettings,
   framePinBody,
   frameUnpinBody,
+  keepShowingBody,
+  pinControlState,
+  repinBody,
   weatherSaveBody,
   weatherClearBody,
   selectedFrameFrom,
@@ -160,13 +163,12 @@ const els = {
 
   pin: document.getElementById("pin"),
   pinStatus: document.getElementById("pin-status"),
-  pinCurrent: document.getElementById("pin-current"),
-  pinUnpin: document.getElementById("pin-unpin"),
+  keepToggle: document.getElementById("keep-toggle"),
+  keepMore: document.getElementById("keep-more"),
   pinForm: document.getElementById("pin-form"),
   pinWhat: document.getElementById("pin-what"),
   pinDuration: document.getElementById("pin-duration"),
   pinSet: document.getElementById("pin-set"),
-  pinUnavailable: document.getElementById("pin-unavailable"),
 
   frameSettings: document.getElementById("frame-settings"),
   fsUnavailable: document.getElementById("fs-unavailable"),
@@ -245,6 +247,8 @@ const els = {
   viewerPin: document.getElementById("viewer-pin"),
   viewerMove: document.getElementById("viewer-move"),
   viewerTrash: document.getElementById("viewer-trash"),
+  viewerRemove: document.getElementById("viewer-remove"),
+  viewerMoveWrap: document.querySelector(".viewer-move"),
   viewerNote: document.getElementById("viewer-note"),
   libraryCount: document.getElementById("library-count"),
   artFolderFilter: document.getElementById("art-folder-filter"),
@@ -334,6 +338,11 @@ const state = {
   // position to return to, the folder row asking to confirm a delete, and the
   // folder list's last rendered signature.
   viewerId: null,
+  // "grid" or "history": which list the open viewer steps through.
+  viewerKind: "grid",
+  // History entries removed this page session, so a log that still lists a
+  // trashed piece does not bring it back until Undo.
+  historyHidden: new Set(),
   viewerPushed: false,
   gridScroll: 0,
   folderConfirm: null,
@@ -1067,7 +1076,7 @@ const KIND_LABELS = { music: "Music", podcast: "Podcasts", audiobook: "Audiobook
 
 function wireFrameControl() {
   els.pinSet.addEventListener("click", pinCurrent);
-  els.pinUnpin.addEventListener("click", unpinFrame);
+  els.keepToggle.addEventListener("click", toggleKeepShowing);
 
   // Every field saves itself. Switches write at once; time and text fields
   // write after a short pause (the queue's delay) and at once on blur.
@@ -1150,29 +1159,24 @@ function selectedFramePin() {
   return entry ? entry.pin : null;
 }
 
+let frameControlVisible = false;
+
 function renderFrameControl() {
   const fc = state.frameControl;
   const available = Boolean(fc && fc.available);
 
-  // Pin control (Frame screen): the chosen frame's own pin.
-  els.pinForm.hidden = !available;
-  els.pinUnavailable.hidden = available;
-  if (available) {
-    const summary = pinSummary(selectedFramePin(), Date.now());
-    if (summary) {
-      els.pinStatus.textContent = summary;
-      els.pinStatus.hidden = false;
-      els.pinCurrent.hidden = false;
-    } else {
-      els.pinStatus.hidden = true;
-      els.pinStatus.textContent = "";
-      els.pinCurrent.hidden = true;
-    }
-  } else {
-    els.pinStatus.hidden = true;
-    els.pinStatus.textContent = "";
-    els.pinCurrent.hidden = true;
-  }
+  // Keep showing (Frame screen): the chosen frame's own pin. One button that
+  // becomes Unpin; gone when the hub has no frame-control document.
+  const pin = selectedFramePin();
+  const control = pinControlState(fc, pinSummary(pin, Date.now()) ? pin : null);
+  frameControlVisible = control.visible;
+  els.keepToggle.textContent = control.label;
+  els.keepToggle.classList.toggle("danger", control.pinned);
+  els.keepToggle.dataset.pinned = control.pinned ? "1" : "0";
+  const summary = control.pinned ? pinSummary(pin, Date.now()) : null;
+  els.pinStatus.hidden = !summary;
+  els.pinStatus.textContent = summary || "";
+  updateSections();
 
   // Frame settings (Frame screen).
   els.fsUnavailable.hidden = available;
@@ -1537,6 +1541,22 @@ async function writeRotation(obj) {
   refreshLibrary();
 }
 
+async function toggleKeepShowing() {
+  if (els.keepToggle.dataset.pinned === "1") {
+    await unpinFrame();
+    return;
+  }
+  const body = keepShowingBody(state.selectedFrame);
+  if (!body) {
+    return;
+  }
+  const result = await postApi("/api/frame/pin", body);
+  showToast(result.ok ? "Keeping this on the frame until you unpin it." : result.error);
+  await refreshFrameControl();
+  refreshFrame();
+}
+
+// The full choice behind "For how long...": what to keep, and for how long.
 async function pinCurrent() {
   // The pin is scoped to the chosen frame, so pinning one never moves another
   // (Review Focus 2).
@@ -1547,6 +1567,8 @@ async function pinCurrent() {
   const result = await postApi("/api/frame/pin", body);
   if (!result.ok) {
     showToast(result.error);
+  } else {
+    els.keepMore.open = false;
   }
   await refreshFrameControl();
   refreshFrame();
@@ -1557,8 +1579,24 @@ async function unpinFrame() {
   if (!body) {
     return;
   }
+  const before = selectedFramePin();
+  const undoBody = repinBody(state.selectedFrame, before, Date.now());
   const result = await postApi("/api/frame/unpin", body);
-  if (!result.ok) {
+  if (result.ok) {
+    showToast(
+      "Unpinned.",
+      undoBody
+        ? async () => {
+            const back = await postApi("/api/frame/pin", undoBody);
+            if (!back.ok) {
+              showToast(back.error);
+            }
+            await refreshFrameControl();
+            refreshFrame();
+          }
+        : null,
+    );
+  } else {
     showToast(result.error);
   }
   await refreshFrameControl();
@@ -1760,13 +1798,31 @@ function renderFrameCaption(current) {
 function renderArtHistory(history) {
   els.artHistory.replaceChildren();
   for (const piece of history) {
+    const id = historyDeleteTarget(piece);
+    if (id && state.historyHidden.has(id)) {
+      continue;
+    }
     els.artHistory.append(artHistoryRow(piece));
   }
 }
 
+// A history row is one button that opens the picture in the viewer. The title
+// is plain text here (a link inside a button is not valid); the viewer is where
+// the actions live.
 function artHistoryRow(piece) {
   const li = document.createElement("li");
-  li.className = "row";
+  const id = historyDeleteTarget(piece);
+
+  const button = document.createElement("button");
+  button.className = "row row-tappable";
+  button.type = "button";
+  button.setAttribute("aria-label", `Open ${piece.title}`);
+  if (id) {
+    li.dataset.pieceId = id;
+    button.addEventListener("click", () => openViewer(id, "history"));
+  } else {
+    button.disabled = true;
+  }
 
   const thumb = document.createElement("img");
   thumb.className = "row-thumb";
@@ -1779,11 +1835,14 @@ function artHistoryRow(piece) {
   thumb.addEventListener("error", () => {
     thumb.replaceWith(thumbPlaceholder("row-thumb"));
   });
-  li.append(thumb);
+  button.append(thumb);
 
   const meta = document.createElement("div");
   meta.className = "row-meta";
-  meta.append(titleNode(piece, "row-title"));
+  const title = document.createElement("span");
+  title.className = "row-title";
+  title.textContent = piece.title;
+  meta.append(title);
   if (piece.artist) {
     const artist = document.createElement("span");
     artist.className = "row-sub";
@@ -1798,19 +1857,9 @@ function artHistoryRow(piece) {
     time.textContent = when;
     meta.append(time);
   }
-  li.append(meta);
+  button.append(meta);
 
-  // Delete is offered only when the entry can be targeted safely (an id, or a
-  // bare file name at the library root); otherwise the button is left out.
-  const target = historyDeleteTarget(piece);
-  if (target) {
-    const del = document.createElement("button");
-    del.className = "btn btn-small danger row-action";
-    del.type = "button";
-    del.textContent = "Delete";
-    del.addEventListener("click", () => moveToTrash(target));
-    li.append(del);
-  }
+  li.append(button);
   return li;
 }
 
@@ -2602,6 +2651,8 @@ async function moveToTrash(target) {
 }
 
 async function undoTrash(target) {
+  state.historyHidden.delete(target);
+  renderArtHistory(state.artHistory);
   await refreshLibrary();
   const index = state.artIndex;
   const restoreId = index ? trashRestoreId(index.trash, target) : null;
@@ -2728,6 +2779,9 @@ function uploadOne(file, folder) {
 // The pieces the viewer steps through: the grid's current folder filter, or
 // every piece when the opened one is not in it (a link, or a folder change).
 function viewerList() {
+  if (state.viewerKind === "history") {
+    return historyViewerItems();
+  }
   const index = state.artIndex;
   if (!index) {
     return [];
@@ -2739,11 +2793,37 @@ function viewerList() {
   return filtered;
 }
 
+// The frame's history as viewer items: newest first, one per picture, without
+// the ones removed this session. The library's own URL is used when it knows the
+// piece (a folder-deep one is not reachable at the share root).
+function historyViewerItems() {
+  const seen = new Set();
+  const items = [];
+  for (const piece of state.artHistory) {
+    const id = historyDeleteTarget(piece);
+    if (!id || seen.has(id) || state.historyHidden.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    const known = state.artIndex ? state.artIndex.pieces.find((p) => p.id === id) : null;
+    items.push({
+      id,
+      file: piece.file,
+      title: piece.title,
+      artist: piece.artist,
+      folder: known ? known.folder : "",
+      url: known ? known.url : artUrl(piece.file),
+    });
+  }
+  return items;
+}
+
 function viewerIndexNow(list) {
   return list.findIndex((p) => p.id === state.viewerId);
 }
 
-function openViewer(pieceId) {
+function openViewer(pieceId, kind = "grid") {
+  state.viewerKind = kind;
   state.gridScroll = window.scrollY;
   state.viewerPushed = true;
   window.location.hash = galleryHash(pieceId);
@@ -2758,7 +2838,7 @@ function syncViewer() {
     closeViewerView(wasOpen);
     return;
   }
-  if (!state.artIndex) {
+  if (state.viewerKind === "grid" && !state.artIndex) {
     return;
   }
   state.viewerId = id;
@@ -2783,11 +2863,16 @@ function syncViewer() {
 function closeViewerView(wasOpen) {
   const lastId = state.viewerId;
   state.viewerId = null;
+  state.viewerKind = "grid";
   els.galleryViewer.hidden = true;
   els.galleryGridView.hidden = false;
   if (wasOpen) {
     window.scrollTo({ top: state.gridScroll, behavior: "auto" });
-    const tile = lastId ? els.artGrid.querySelector(`[data-piece-id="${CSS.escape(lastId)}"] .tile-open`) : null;
+    const tile = lastId
+      ? document.querySelector(
+          `[data-piece-id="${CSS.escape(lastId)}"] .tile-open, [data-piece-id="${CSS.escape(lastId)}"] .row-tappable`,
+        )
+      : null;
     if (tile) {
       tile.focus({ preventScroll: true });
     }
@@ -2796,14 +2881,19 @@ function closeViewerView(wasOpen) {
 
 function renderViewer(list, idx) {
   const piece = list[idx];
-  const view = viewerState(list, idx, "grid");
+  const view = viewerState(list, idx, state.viewerKind);
+  const fromHistory = state.viewerKind === "history";
+  els.viewerTrash.hidden = fromHistory;
+  els.viewerMoveWrap.hidden = fromHistory;
+  els.viewerRemove.hidden = !fromHistory;
+  els.viewerClose.textContent = fromHistory ? "Back to frame" : "Back to gallery";
   els.viewerPosition.textContent = view.position;
   if (els.viewerImage.getAttribute("src") !== piece.url) {
     els.viewerImage.src = piece.url;
   }
   els.viewerImage.alt = piece.title;
   els.viewerTitle.textContent = piece.title;
-  els.viewerSub.textContent = piece.artist ? `${piece.artist}, ${piece.folder}` : piece.folder;
+  els.viewerSub.textContent = [piece.artist, piece.folder].filter(Boolean).join(", ");
   els.viewerPrev.disabled = !view.canPrev;
   els.viewerNext.disabled = !view.canNext;
   els.viewerShow.disabled = view.showBlockedReason !== null;
@@ -2811,7 +2901,7 @@ function renderViewer(list, idx) {
   els.viewerNote.hidden = view.showBlockedReason === null;
   els.viewerNote.textContent = view.showBlockedReason || "";
 
-  const others = state.artIndex.folders.map((f) => f.name).filter((n) => n !== piece.folder);
+  const others = fromHistory || !state.artIndex ? [] : state.artIndex.folders.map((f) => f.name).filter((n) => n !== piece.folder);
   const sig = JSON.stringify(others);
   if (els.viewerMove.dataset.sig !== sig) {
     els.viewerMove.dataset.sig = sig;
@@ -2883,6 +2973,9 @@ function currentViewerPiece() {
   if (idx < 0) {
     return null;
   }
+  if (state.viewerKind === "history") {
+    return { piece: list[idx], idx, source: "history" };
+  }
   const filtered = state.artIndex ? piecesInFolder(state.artIndex, state.artFilter) : [];
   return { piece: list[idx], idx, source: viewerSource(filtered, state.viewerId) };
 }
@@ -2952,7 +3045,32 @@ async function trashViewerPiece() {
   }
 }
 
+// Remove from history: today's history delete (the picture goes to the trash and
+// can be restored), with the same Undo toast, then land on the next entry.
+async function removeViewerFromHistory() {
+  const here = currentViewerPiece();
+  if (!here) {
+    return;
+  }
+  const rest = viewerList().filter((p) => p.id !== here.piece.id);
+  await advanceFrameIfShowing(here.piece);
+  if (!(await moveToTrash(here.piece.id))) {
+    return;
+  }
+  state.historyHidden.add(here.piece.id);
+  renderArtHistory(state.artHistory);
+  const id = idAfterRemoval(rest, here.idx);
+  if (id === null) {
+    closeViewer();
+    return;
+  }
+  state.viewerId = id;
+  history.replaceState(null, "", galleryHash(id));
+  syncViewer();
+}
+
 function wireViewer() {
+  els.viewerRemove.addEventListener("click", removeViewerFromHistory);
   els.viewerClose.addEventListener("click", closeViewer);
   els.viewerPrev.addEventListener("click", () => stepViewer(-1));
   els.viewerNext.addEventListener("click", () => stepViewer(1));
@@ -3125,9 +3243,8 @@ function updateSections() {
   els.frameHint.hidden = !managerActive;
   els.frameCaption.hidden = !state.artCurrent;
 
-  // The Pin control shows whenever there is a frame to pin; its own body shows
-  // the pin form or the "unavailable" note from the frame-control document.
-  els.pin.hidden = !frameVisible;
+  // Keep showing needs a frame to pin and the frame-control document.
+  els.pin.hidden = !frameVisible || !frameControlVisible;
 
   els.library.hidden = !managerActive;
   els.rotation.hidden = !managerActive;

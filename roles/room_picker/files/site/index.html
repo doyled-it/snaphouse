@@ -92,36 +92,35 @@
             </details>
           </div>
           <p id="frame-hint" class="hint" hidden>The frame takes about 30 seconds to change.</p>
-        </section>
 
-        <!-- Pinning: keep one thing on the frame for a while, or until unpinned. -->
-        <section id="pin" class="section panel" aria-labelledby="pin-h" hidden>
-          <h2 id="pin-h" class="section-h">Pin</h2>
-          <p id="pin-status" class="pin-status" role="status" hidden></p>
-          <div id="pin-current" class="pin-current" hidden>
-            <button id="pin-unpin" class="btn danger" type="button">Unpin</button>
+          <!-- Keep showing: one tap pins this image until unpinned (the button
+               then reads Unpin). "For how long..." opens the full choice. The
+               whole block is gone when the hub has no frame-control document. -->
+          <div id="pin" class="keep" hidden>
+            <p id="pin-status" class="pin-status" role="status" hidden></p>
+            <button id="keep-toggle" class="btn keep-toggle" type="button">Keep showing this</button>
+            <details id="keep-more" class="keep-more">
+              <summary class="keep-more-summary">For how long...</summary>
+              <div id="pin-form" class="pin-form">
+                <label class="field">Keep
+                  <select id="pin-what" class="select">
+                    <option value="art">this image</option>
+                    <option value="weather">the weather</option>
+                    <option value="now_playing">now playing</option>
+                  </select>
+                </label>
+                <label class="field">for
+                  <select id="pin-duration" class="select">
+                    <option value="1h">1 hour</option>
+                    <option value="4h">4 hours</option>
+                    <option value="morning">until morning</option>
+                    <option value="forever">until I unpin</option>
+                  </select>
+                </label>
+                <button id="pin-set" class="btn" type="button">Keep it</button>
+              </div>
+            </details>
           </div>
-          <div id="pin-form" class="pin-form">
-            <label class="field">Keep
-              <select id="pin-what" class="select">
-                <option value="art">this art piece</option>
-                <option value="weather">the weather</option>
-                <option value="now_playing">now playing</option>
-              </select>
-            </label>
-            <label class="field">for
-              <select id="pin-duration" class="select">
-                <option value="1h">1 hour</option>
-                <option value="4h">4 hours</option>
-                <option value="morning">until morning</option>
-                <option value="forever">until I unpin</option>
-              </select>
-            </label>
-            <button id="pin-set" class="btn" type="button">Pin</button>
-          </div>
-          <p id="pin-unavailable" class="empty" hidden>
-            Frame settings are not available right now. The frame is running on its own.
-          </p>
         </section>
 
         <!-- The frame's art history, each entry deletable. -->
@@ -306,6 +305,7 @@
               <select id="viewer-move" class="select" aria-label="Move to folder"></select>
             </label>
             <button id="viewer-trash" class="btn danger" type="button">Move to trash</button>
+            <button id="viewer-remove" class="btn danger" type="button" hidden>Remove from history</button>
           </div>
           <p id="viewer-note" class="settings-note" hidden></p>
         </section>
