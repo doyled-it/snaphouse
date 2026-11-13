@@ -54,3 +54,9 @@ test("frame tab hides when nothing lists a frame and no mirror answers", () => {
   assert.equal(frameTabVisible(legacy, { nightstand: null }, true), false);
   assert.equal(frameTabVisible(null, {}, true), false);
 });
+
+test("#gallery/<id> keeps the piece, and #art/<id> aliases to it", () => {
+  assert.deepEqual(resolveScreen("#gallery/Trip%2Fa.jpg", none), { screen: "gallery", hash: "#gallery/Trip%2Fa.jpg" });
+  assert.deepEqual(resolveScreen("#art/a.jpg", none), { screen: "gallery", hash: "#gallery/a.jpg" });
+  assert.deepEqual(resolveScreen("#gallery/", none), { screen: "gallery", hash: "#gallery" });
+});

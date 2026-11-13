@@ -228,60 +228,86 @@
         </section>
       </section>
 
-      <!-- Gallery: the library, folders, upload, and trash. -->
+      <!-- Gallery: the grid, the image viewer, upload, folders, and trash. -->
       <section class="screen" id="screen-gallery" aria-label="Gallery" hidden>
-        <!-- The library, collapsed and paged. -->
-        <section id="library" class="section panel" aria-labelledby="lib-h" hidden>
-          <h2 id="lib-h" class="section-h">Library</h2>
-          <details id="library-details" class="library">
-            <summary class="library-summary">
-              <span id="library-count" class="library-count">Library</span>
-            </summary>
+        <div id="gallery-grid-view">
+          <section id="library" class="section panel" aria-labelledby="lib-h" hidden>
+            <h2 id="lib-h" class="section-h">Gallery</h2>
+            <p id="library-count" class="library-count">Gallery</p>
             <div class="library-body">
               <label class="field">Show
                 <select id="art-folder-filter" class="select"></select>
               </label>
               <ul id="art-grid" class="grid"></ul>
-              <p id="art-grid-empty" class="empty" hidden>No pieces here yet.</p>
+              <p id="art-grid-empty" class="empty" hidden>No pictures here yet.</p>
               <div id="library-pager" class="pager" hidden>
                 <button id="lib-prev" class="btn" type="button">Previous</button>
                 <span id="lib-page" class="pager-label" role="status"></span>
                 <button id="lib-next" class="btn" type="button">Next</button>
               </div>
             </div>
-          </details>
-        </section>
+          </section>
 
-        <!-- Upload, with folder management. -->
-        <section id="upload" class="section panel" aria-labelledby="up-h" hidden>
-          <h2 id="up-h" class="section-h">Upload</h2>
-          <div class="upload-row">
-            <label class="field">Add to
-              <select id="art-upload-folder" class="select"></select>
-            </label>
-            <label class="btn file-btn">
-              Choose images
-              <input id="art-upload-input" class="file-input" type="file" accept="image/*" multiple />
-            </label>
+          <!-- Upload with its target folder, then the folder manager. -->
+          <section id="upload" class="section panel" aria-labelledby="up-h" hidden>
+            <h2 id="up-h" class="section-h">Add pictures</h2>
+            <div class="upload-row">
+              <label class="field">Add to
+                <select id="art-upload-folder" class="select"></select>
+              </label>
+              <label class="btn file-btn">
+                Choose images
+                <input id="art-upload-input" class="file-input" type="file" accept="image/*" multiple />
+              </label>
+            </div>
+            <ul id="art-upload-progress" class="upload-progress"></ul>
+
+            <details id="art-folders" class="folders">
+              <summary class="sub-h">Manage folders</summary>
+              <form id="art-folder-create" class="folder-create">
+                <input id="art-folder-name" class="text" type="text" placeholder="New folder name"
+                       maxlength="40" aria-label="New folder name" />
+                <button class="btn" type="submit">Create</button>
+              </form>
+              <ul id="art-folder-list" class="folder-list"></ul>
+            </details>
+          </section>
+
+          <!-- Trash, restorable for 30 days. -->
+          <section id="trash" class="section panel" aria-labelledby="tr-h" hidden>
+            <h2 id="tr-h" class="section-h">Trash</h2>
+            <p class="settings-note">Pictures in the trash can be restored for 30 days.</p>
+            <ul id="art-trash-list" class="rows"></ul>
+            <p id="art-trash-empty" class="empty" hidden>Trash is empty.</p>
+          </section>
+        </div>
+
+        <!-- The viewer: one picture, large, with its actions. It has its own
+             hash entry (#gallery/<id>), so Back closes it. -->
+        <section id="gallery-viewer" class="viewer" aria-label="Picture" hidden>
+          <div class="viewer-top">
+            <button id="viewer-close" class="btn btn-ghost" type="button">Back to gallery</button>
+            <span id="viewer-position" class="viewer-position" role="status"></span>
           </div>
-          <ul id="art-upload-progress" class="upload-progress"></ul>
-
-          <details id="art-folders" class="folders">
-            <summary class="sub-h">Folders</summary>
-            <form id="art-folder-create" class="folder-create">
-              <input id="art-folder-name" class="text" type="text" placeholder="New folder name"
-                     maxlength="40" aria-label="New folder name" />
-              <button class="btn" type="submit">Create</button>
-            </form>
-            <ul id="art-folder-list" class="folder-list"></ul>
-          </details>
-        </section>
-
-        <!-- Trash, restorable for 30 days. -->
-        <section id="trash" class="section panel" aria-labelledby="tr-h" hidden>
-          <h2 id="tr-h" class="section-h">Trash</h2>
-          <ul id="art-trash-list" class="rows"></ul>
-          <p id="art-trash-empty" class="empty" hidden>Trash is empty.</p>
+          <div id="viewer-stage" class="viewer-stage">
+            <button id="viewer-prev" class="viewer-step viewer-prev" type="button" aria-label="Previous picture">&#8249;</button>
+            <img id="viewer-image" class="viewer-image" alt="" decoding="async" />
+            <button id="viewer-next" class="viewer-step viewer-next" type="button" aria-label="Next picture">&#8250;</button>
+          </div>
+          <div class="viewer-meta">
+            <span id="viewer-title" class="viewer-title"></span>
+            <span id="viewer-sub" class="viewer-sub"></span>
+          </div>
+          <div id="viewer-actions" class="viewer-actions">
+            <button id="viewer-show" class="btn" type="button">Show on the frame</button>
+            <button id="viewer-pin" class="btn" type="button">Keep it there</button>
+            <label class="viewer-move">
+              <span class="viewer-move-label">Move to</span>
+              <select id="viewer-move" class="select" aria-label="Move to folder"></select>
+            </label>
+            <button id="viewer-trash" class="btn danger" type="button">Move to trash</button>
+          </div>
+          <p id="viewer-note" class="settings-note" hidden></p>
         </section>
       </section>
 

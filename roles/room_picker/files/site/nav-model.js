@@ -44,6 +44,11 @@ export function resolveScreen(hash, visible) {
     const text = typeof hash === "string" ? hash : "";
     return { screen, hash: text.startsWith("#") ? text : `#${text}` };
   }
+  if (screen === "gallery") {
+    // "#gallery/<id>" opens the viewer and is kept; "#art/<id>" is its old name.
+    const rest = (typeof hash === "string" ? hash : "").replace(/^#/, "").split("/").slice(1).join("/");
+    return { screen, hash: rest ? `#gallery/${rest}` : "#gallery" };
+  }
   return { screen, hash: `#${screen}` };
 }
 

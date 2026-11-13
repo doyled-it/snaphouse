@@ -18,6 +18,7 @@ import {
   apiRequest,
   libraryRefreshMayRebuild,
   trashRestoreId,
+  movedPieceId,
   ALLOWED_INTERVALS,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
@@ -438,4 +439,13 @@ test("trashRestoreId returns null when nothing matches or the input is unusable"
   assert.equal(trashRestoreId(null, "x.jpg"), null);
   assert.equal(trashRestoreId(trash, ""), null);
   assert.equal(trashRestoreId(trash, null), null);
+});
+
+test("movedPieceId finds a moved piece in its new folder by file name", () => {
+  const index = parseArtIndex(indexDoc());
+  const beach = index.pieces.find((p) => p.file === "beach.jpg");
+  assert.equal(movedPieceId(index, "Photos", { file: "beach.jpg" }), beach.id);
+  assert.equal(movedPieceId(index, "Collection", { file: "beach.jpg" }), null);
+  assert.equal(movedPieceId(null, "Photos", { file: "beach.jpg" }), null);
+  assert.equal(movedPieceId(index, "Photos", null), null);
 });

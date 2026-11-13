@@ -225,6 +225,24 @@ per-room on/off snapshot taken before the action (`snapshotRooms`, `undoPlan` in
 playing, the now-playing strip shows how to start something, naming the
 Bluetooth speaker from `bluetooth.json` when the hub published one.
 
+## Gallery grid and viewer
+
+The Gallery tab shows the library grid open by default (folder filter and pager),
+then upload with its target-folder select, a "Manage folders" disclosure, and the
+trash. A tile is one button that opens the viewer, an in-tab view addressed by
+`#gallery/<encoded id>` (`#art/<id>` aliases to it; `resolveScreen` keeps the
+piece). Opening pushes a hash entry, so Back closes the viewer and the grid comes
+back at the scroll position taken at the tap; stepping (buttons, arrow keys, a
+swipe) uses `replaceState`, so Back is still one step. The pure rules are in
+`gallery-viewer.js` (`viewerState`, `stepIndex`, `swipeDirection`, hash helpers,
+tests in `tests/js/gallery-viewer.test.js`); the frame history reuses `viewerState` with
+source `"history"`. Actions: Show on the frame (landscape only), Keep it there
+(show, then pin art until unpinned), Move to folder and Move to trash (both
+advance the frame first when it is showing the piece, and give an Undo toast).
+There is no hub API to empty the trash, so there is no "Empty trash" button; the
+hub purges after 30 days. Deleting a folder that still has pictures asks inline,
+then moves each picture to the trash before removing the (now empty) folder.
+
 ## Polling sleeps while hidden, lists patch in place
 
 Every polling interval in `rooms.js` registers with `page-timers.js`; the

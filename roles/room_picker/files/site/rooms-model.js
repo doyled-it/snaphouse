@@ -849,6 +849,18 @@ export function trashRestoreId(trash, target) {
   return matches.length > 0 ? matches[0].id : null;
 }
 
+// The id a piece has after a move into `folder`, found in the fresh index by its
+// file name, or null when it is not there (a name collision renames it, so the
+// caller then points the owner at the folder instead of guessing).
+export function movedPieceId(index, folder, piece) {
+  if (!index || !Array.isArray(index.pieces) || !piece || typeof piece.file !== "string") {
+    return null;
+  }
+  const base = (name) => String(name).split("/").pop();
+  const hit = index.pieces.find((p) => p.folder === folder && base(p.file) === base(piece.file));
+  return hit ? hit.id : null;
+}
+
 // The frame mirror's visibility and "Updated" caption, from the hub's
 // same-origin /frame.json ({ updated_at, screen }) and the client clock `nowMs`.
 // A missing or malformed document (the caller passes null on a 404) hides the

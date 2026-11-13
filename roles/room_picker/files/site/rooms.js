@@ -36,6 +36,7 @@ import {
   intervalOptions,
   apiRequest,
   libraryRefreshMayRebuild,
+  movedPieceId,
   mirrorState,
   mirrorCaption,
   historyDeleteTarget,
@@ -82,6 +83,7 @@ import { createVolumeSlider } from "./volume-slider.js";
 import { createHaptics } from "./haptics.js";
 import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
+import { galleryHash, pieceIdFromHash, stepIndex, swipeDirection, viewerState } from "./gallery-viewer.js";
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
 import { applyPlan, everythingOffPlan, howToText, loadBluetoothName, onlyHerePlan, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
@@ -229,7 +231,21 @@ const els = {
   rooms: document.getElementById("rooms"),
 
   library: document.getElementById("library"),
-  libraryDetails: document.getElementById("library-details"),
+  galleryGridView: document.getElementById("gallery-grid-view"),
+  galleryViewer: document.getElementById("gallery-viewer"),
+  viewerClose: document.getElementById("viewer-close"),
+  viewerPosition: document.getElementById("viewer-position"),
+  viewerStage: document.getElementById("viewer-stage"),
+  viewerPrev: document.getElementById("viewer-prev"),
+  viewerNext: document.getElementById("viewer-next"),
+  viewerImage: document.getElementById("viewer-image"),
+  viewerTitle: document.getElementById("viewer-title"),
+  viewerSub: document.getElementById("viewer-sub"),
+  viewerShow: document.getElementById("viewer-show"),
+  viewerPin: document.getElementById("viewer-pin"),
+  viewerMove: document.getElementById("viewer-move"),
+  viewerTrash: document.getElementById("viewer-trash"),
+  viewerNote: document.getElementById("viewer-note"),
   libraryCount: document.getElementById("library-count"),
   artFolderFilter: document.getElementById("art-folder-filter"),
   artGrid: document.getElementById("art-grid"),
@@ -312,6 +328,16 @@ const state = {
   libPage: 0,
   artIntervalBuilt: false,
   artRefreshPending: false,
+
+  // The Gallery viewer: the piece id it shows (null when closed), whether this
+  // page session pushed its hash entry (so Back closes it), the grid's scroll
+  // position to return to, the folder row asking to confirm a delete, and the
+  // folder list's last rendered signature.
+  viewerId: null,
+  viewerPushed: false,
+  gridScroll: 0,
+  folderConfirm: null,
+  folderSig: "",
 
   // The current screen (hash-routed), and the hub's parsed /frame-control.json
   // (shared settings plus each frame's quiet hours and pin), null until read
@@ -480,13 +506,16 @@ function navVisible() {
 // was scrolled.
 function showScreen(name) {
   const screen = name in els.screens ? name : "listen";
+  const changed = screen !== state.screen;
   state.screen = screen;
   for (const [key, el] of Object.entries(els.screens)) {
     el.hidden = key !== screen;
   }
   syncTabs();
   els.everythingOff.hidden = screen !== "listen";
-  window.scrollTo({ top: 0, behavior: "auto" });
+  if (changed) {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
   // Entering Settings shows the pairing state, so fetch it now rather than
   // waiting up to a second for the next tick. The devices list too.
   maybePollPairing();
@@ -525,6 +554,7 @@ function applyHash() {
     history.replaceState(null, "", hash);
   }
   showScreen(screen);
+  syncViewer();
 }
 
 // The known frame ids (from the parsed frame-control document), and whether the
@@ -2178,17 +2208,18 @@ function wireArtManager() {
     runAction("/api/art/folder/create", { name });
   });
 
-  // When a held refresh is pending, resume it once the grid goes idle: a menu
-  // closing (toggle does not bubble, so capture) or a select losing focus.
-  els.artGrid.addEventListener("toggle", maybeResumeLibraryRefresh, true);
-  els.artGrid.addEventListener("focusout", maybeResumeLibraryRefresh);
+  // When a held refresh is pending, resume it once the viewer's select loses focus.
+  els.galleryViewer.addEventListener("focusout", maybeResumeLibraryRefresh);
+
+  wireViewer();
 }
 
 function libraryMenuBusy() {
-  const menuOpen = els.artGrid.querySelector("details.menu[open]") !== null;
+  // No menus remain; a focused select in the viewer still holds a periodic
+  // rebuild so its list is not replaced while it is open.
   const active = document.activeElement;
-  const selectFocused = active instanceof HTMLSelectElement && els.artGrid.contains(active);
-  return { menuOpen, selectFocused };
+  const selectFocused = active instanceof HTMLSelectElement && els.galleryViewer.contains(active);
+  return { menuOpen: false, selectFocused };
 }
 
 function maybeResumeLibraryRefresh() {
@@ -2274,10 +2305,10 @@ function renderLibrary() {
   // The library count, in plain words.
   const total = index.pieces.length;
   if (total === 0) {
-    els.libraryCount.textContent = "Library is empty";
+    els.libraryCount.textContent = "No pictures yet";
   } else {
-    const noun = total === 1 ? "piece" : "pieces";
-    els.libraryCount.textContent = `Library: ${total} ${noun}, ${summary.count} in rotation`;
+    const noun = total === 1 ? "picture" : "pictures";
+    els.libraryCount.textContent = `${total} ${noun}, ${summary.count} in rotation`;
   }
 
   const folderNames = index.folders.map((f) => f.name);
@@ -2296,6 +2327,7 @@ function renderLibrary() {
   renderFolderList(index);
   renderTrash(index);
   updateSections();
+  syncViewer();
 }
 
 function renderFolderChips(index, control) {
@@ -2337,7 +2369,7 @@ function renderLibraryGrid() {
     key: (piece) => String(piece.id),
     sig: (piece) =>
       JSON.stringify([piece.title, piece.artist, piece.thumb, piece.landscape, piece.folder, folderNames]),
-    create: (piece) => libraryTile(piece, index),
+    create: (piece) => libraryTile(piece),
   });
   els.artGridEmpty.hidden = pieces.length > 0;
 
@@ -2347,10 +2379,16 @@ function renderLibraryGrid() {
   els.libNext.disabled = state.libPage >= count - 1;
 }
 
-function libraryTile(piece, index) {
+function libraryTile(piece) {
   const li = document.createElement("li");
   li.className = "tile";
   li.dataset.pieceId = piece.id;
+
+  const open = document.createElement("button");
+  open.className = "tile-open";
+  open.type = "button";
+  open.setAttribute("aria-label", `Open ${piece.title}`);
+  open.addEventListener("click", () => openViewer(piece.id));
 
   const wrap = document.createElement("div");
   wrap.className = "tile-thumb-wrap";
@@ -2362,78 +2400,64 @@ function libraryTile(piece, index) {
     badge.title = "Too tall to rotate on the frame.";
     wrap.append(badge);
   }
-  li.append(wrap);
+  open.append(wrap);
 
   const title = document.createElement("span");
   title.className = "tile-title";
   title.textContent = piece.title;
-  li.append(title);
+  open.append(title);
 
   if (piece.artist) {
     const artist = document.createElement("span");
     artist.className = "tile-artist";
     artist.textContent = piece.artist;
-    li.append(artist);
+    open.append(artist);
   }
 
-  li.append(tileMenu(piece, index));
+  li.append(open);
   return li;
 }
 
-function tileMenu(piece, index) {
-  const menu = document.createElement("details");
-  menu.className = "menu";
-  const summary = document.createElement("summary");
-  summary.className = "btn menu-summary";
-  summary.textContent = "Options";
-  menu.append(summary);
-
-  const body = document.createElement("div");
-  body.className = "menu-body";
-
-  if (piece.landscape) {
-    body.append(menuButton("Show now", () => runArtCommand("show", piece.id)));
-  }
-
-  const others = index.folders.map((f) => f.name).filter((n) => n !== piece.folder);
-  if (others.length > 0) {
-    const moveLabel = document.createElement("label");
-    moveLabel.className = "menu-move";
-    moveLabel.append(document.createTextNode("Move to "));
-    const select = document.createElement("select");
-    select.className = "select";
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "folder...";
-    select.append(placeholder);
-    for (const name of others) {
-      const option = document.createElement("option");
-      option.value = name;
-      option.textContent = name;
-      select.append(option);
-    }
-    select.addEventListener("change", () => {
-      if (select.value) {
-        runAction("/api/art/move", { id: piece.id, folder: select.value });
-      }
-    });
-    moveLabel.append(select);
-    body.append(moveLabel);
-  }
-
-  body.append(menuButton("Delete", () => moveToTrash(piece.id), "danger"));
-  menu.append(body);
-  return menu;
-}
-
 function renderFolderList(index) {
+  // Rebuild only when something visible changed, so a name being typed into a
+  // rename field survives a refresh that changes nothing.
+  const folders = index.folders.filter((f) => !f.builtin);
+  const sig = JSON.stringify([folders.map((f) => [f.name, f.count]), state.folderConfirm]);
+  if (sig === state.folderSig) {
+    return;
+  }
+  state.folderSig = sig;
   els.artFolderList.replaceChildren();
-  for (const folder of index.folders) {
-    if (folder.builtin) {
-      continue;
-    }
+  for (const folder of folders) {
     const li = document.createElement("li");
     li.className = "folder-row";
+
+    if (state.folderConfirm === folder.name) {
+      const ask = document.createElement("p");
+      ask.className = "folder-ask";
+      const noun = folder.count === 1 ? "picture" : "pictures";
+      ask.textContent = `Delete ${folder.name} and move its ${folder.count} ${noun} to the trash?`;
+      li.append(ask);
+      const yes = document.createElement("button");
+      yes.className = "btn btn-small danger";
+      yes.type = "button";
+      yes.textContent = "Delete folder";
+      yes.addEventListener("click", () => {
+        state.folderConfirm = null;
+        deleteFolderWithPictures(folder);
+      });
+      const no = document.createElement("button");
+      no.className = "btn btn-small";
+      no.type = "button";
+      no.textContent = "Cancel";
+      no.addEventListener("click", () => {
+        state.folderConfirm = null;
+        renderFolderList(state.artIndex);
+      });
+      li.append(yes, no);
+      els.artFolderList.append(li);
+      continue;
+    }
 
     const form = document.createElement("form");
     form.className = "folder-rename";
@@ -2464,15 +2488,38 @@ function renderFolderList(index) {
     del.className = "btn btn-small danger";
     del.type = "button";
     del.textContent = "Delete";
-    del.disabled = folder.count > 0;
-    if (folder.count > 0) {
-      del.title = "Only an empty folder can be deleted.";
-    }
-    del.addEventListener("click", () => runAction("/api/art/folder/delete", { name: folder.name }));
+    del.setAttribute("aria-label", `Delete ${folder.name}`);
+    del.addEventListener("click", () => {
+      if (folder.count > 0) {
+        // Still holds pictures: ask first (no Undo for this one).
+        state.folderConfirm = folder.name;
+        renderFolderList(state.artIndex);
+        return;
+      }
+      runAction("/api/art/folder/delete", { name: folder.name });
+    });
     li.append(del);
 
     els.artFolderList.append(li);
   }
+}
+
+// The hub only removes an empty folder, so a folder with pictures has them moved
+// to the trash first (each restorable for 30 days, which recreates the folder).
+async function deleteFolderWithPictures(folder) {
+  const ids = (state.artIndex ? state.artIndex.pieces : [])
+    .filter((p) => p.folder === folder.name)
+    .map((p) => p.id);
+  for (const id of ids) {
+    const result = await postApi("/api/art/delete", { id });
+    if (!result.ok) {
+      showToast(result.error);
+      refreshLibrary();
+      return;
+    }
+  }
+  await runAction("/api/art/folder/delete", { name: folder.name });
+  showToast("Folder deleted. Its pictures are in the trash.");
 }
 
 function renderTrash(index) {
@@ -2535,8 +2582,8 @@ async function frameDeleteCurrent() {
 
 async function moveToTrash(target) {
   if (!target) {
-    showToast("This piece can't be deleted.");
-    return;
+    showToast("This picture can't be deleted.");
+    return false;
   }
   const result = await postApi("/api/art/delete", { id: target });
   refreshArt();
@@ -2544,12 +2591,13 @@ async function moveToTrash(target) {
   await refreshLibrary();
   if (!result.ok) {
     showToast(result.error);
-    return;
+    return false;
   }
   // Undo is keyed on the delete target (the piece id), which is what the hub
   // records as the trash entry's `original`. Keying on the basename instead
   // silently failed to restore any piece that lived in a user folder.
   showToast("Moved to trash.", () => undoTrash(target));
+  return true;
 }
 
 async function undoTrash(target) {
@@ -2557,13 +2605,13 @@ async function undoTrash(target) {
   const index = state.artIndex;
   const restoreId = index ? trashRestoreId(index.trash, target) : null;
   if (!restoreId) {
-    showToast("Couldn't undo. Restore it from the Trash section.");
+    showToast("Couldn't undo. Restore it from the Trash list.");
     return;
   }
   runAction("/api/art/restore", { id: restoreId });
 }
 
-// Open the library, filter to the current piece's folder, page to it, and
+// Open the gallery grid, filter to the current piece's folder, page to it, and
 // scroll there, so "Show in library" lands on the piece.
 function showInLibrary(current) {
   const index = state.artIndex;
@@ -2571,7 +2619,7 @@ function showInLibrary(current) {
     return;
   }
   const piece = index.pieces.find((p) => (current.id && p.id === current.id) || p.file === current.file);
-  els.libraryDetails.open = true;
+  state.viewerPushed = false;
   if (piece) {
     state.artFilter = piece.folder;
     const list = piecesInFolder(index, piece.folder);
@@ -2668,6 +2716,291 @@ function uploadOne(file, folder) {
     li.classList.add("err");
   });
   xhr.send(init.body);
+}
+
+// --------------------------------------------------------------------------- //
+// The Gallery viewer: one picture, large, in the Gallery tab. It has its own
+// hash entry (#gallery/<id>), so Back closes it and the grid is where it was.
+// The pure rules (position, edges, swipe) are in gallery-viewer.js.
+// --------------------------------------------------------------------------- //
+
+// The pieces the viewer steps through: the grid's current folder filter, or
+// every piece when the opened one is not in it (a link, or a folder change).
+function viewerList() {
+  const index = state.artIndex;
+  if (!index) {
+    return [];
+  }
+  const filtered = piecesInFolder(index, state.artFilter);
+  if (state.viewerId && !filtered.some((p) => p.id === state.viewerId)) {
+    return index.pieces;
+  }
+  return filtered;
+}
+
+function viewerIndexNow(list) {
+  return list.findIndex((p) => p.id === state.viewerId);
+}
+
+function openViewer(pieceId) {
+  state.gridScroll = window.scrollY;
+  state.viewerPushed = true;
+  window.location.hash = galleryHash(pieceId);
+}
+
+// Make the view match the hash: show the piece it names, or the grid. Runs after
+// every route change and every library render.
+function syncViewer() {
+  const id = state.screen === "gallery" ? pieceIdFromHash(window.location.hash) : null;
+  const wasOpen = !els.galleryViewer.hidden;
+  if (!id) {
+    closeViewerView(wasOpen);
+    return;
+  }
+  if (!state.artIndex) {
+    return;
+  }
+  state.viewerId = id;
+  const list = viewerList();
+  const idx = viewerIndexNow(list);
+  if (idx < 0) {
+    history.replaceState(null, "", "#gallery");
+    closeViewerView(wasOpen);
+    return;
+  }
+  els.galleryGridView.hidden = true;
+  els.galleryViewer.hidden = false;
+  if (!wasOpen) {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+  renderViewer(list, idx);
+  if (!wasOpen) {
+    els.viewerClose.focus({ preventScroll: true });
+  }
+}
+
+function closeViewerView(wasOpen) {
+  const lastId = state.viewerId;
+  state.viewerId = null;
+  els.galleryViewer.hidden = true;
+  els.galleryGridView.hidden = false;
+  if (wasOpen) {
+    window.scrollTo({ top: state.gridScroll, behavior: "auto" });
+    const tile = lastId ? els.artGrid.querySelector(`[data-piece-id="${CSS.escape(lastId)}"] .tile-open`) : null;
+    if (tile) {
+      tile.focus({ preventScroll: true });
+    }
+  }
+}
+
+function renderViewer(list, idx) {
+  const piece = list[idx];
+  const view = viewerState(list, idx, "grid");
+  els.viewerPosition.textContent = view.position;
+  if (els.viewerImage.getAttribute("src") !== piece.url) {
+    els.viewerImage.src = piece.url;
+  }
+  els.viewerImage.alt = piece.title;
+  els.viewerTitle.textContent = piece.title;
+  els.viewerSub.textContent = piece.artist ? `${piece.artist}, ${piece.folder}` : piece.folder;
+  els.viewerPrev.disabled = !view.canPrev;
+  els.viewerNext.disabled = !view.canNext;
+  els.viewerShow.disabled = view.showBlockedReason !== null;
+  els.viewerPin.disabled = view.showBlockedReason !== null;
+  els.viewerNote.hidden = view.showBlockedReason === null;
+  els.viewerNote.textContent = view.showBlockedReason || "";
+
+  const others = state.artIndex.folders.map((f) => f.name).filter((n) => n !== piece.folder);
+  const sig = JSON.stringify(others);
+  if (els.viewerMove.dataset.sig !== sig) {
+    els.viewerMove.dataset.sig = sig;
+    els.viewerMove.replaceChildren();
+    const first = document.createElement("option");
+    first.value = "";
+    first.textContent = "Choose a folder";
+    els.viewerMove.append(first);
+    for (const name of others) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      els.viewerMove.append(option);
+    }
+  }
+  els.viewerMove.value = "";
+  els.viewerMove.disabled = others.length === 0;
+
+  // Warm the neighbours so a step does not wait on the network.
+  for (const near of [list[idx - 1], list[idx + 1]]) {
+    if (near) {
+      new Image().src = near.url;
+    }
+  }
+}
+
+function stepViewer(dir) {
+  const list = viewerList();
+  const idx = viewerIndexNow(list);
+  const next = stepIndex(idx, list.length, dir);
+  if (idx < 0 || next === idx) {
+    return;
+  }
+  state.viewerId = list[next].id;
+  // Replace, not push: Back still closes the viewer in one step.
+  history.replaceState(null, "", galleryHash(state.viewerId));
+  renderViewer(list, next);
+}
+
+function closeViewer() {
+  if (state.viewerPushed) {
+    state.viewerPushed = false;
+    history.back();
+    return;
+  }
+  history.replaceState(null, "", "#gallery");
+  syncViewer();
+}
+
+// After the shown piece left the list (trashed, or moved out of this folder),
+// land on whatever took its place, or close when nothing is left.
+function viewerAfterRemoval(idx) {
+  const index = state.artIndex;
+  const list = index ? piecesInFolder(index, state.artFilter) : [];
+  if (list.length === 0) {
+    closeViewer();
+    return;
+  }
+  state.viewerId = list[Math.min(idx, list.length - 1)].id;
+  history.replaceState(null, "", galleryHash(state.viewerId));
+  syncViewer();
+}
+
+function currentViewerPiece() {
+  const list = viewerList();
+  const idx = viewerIndexNow(list);
+  return idx < 0 ? null : { piece: list[idx], idx };
+}
+
+// If the frame is showing this piece now, move it on first so it is gone from
+// the panel in one redraw (as the frame's own Delete does).
+async function advanceFrameIfShowing(piece) {
+  const current = state.artCurrent;
+  if (!current) {
+    return;
+  }
+  const same = (current.id && current.id === piece.id) || current.file === piece.file;
+  const command = same ? artCommandBody(state.selectedFrame, "next") : null;
+  if (command) {
+    await postApi("/api/art/command", command);
+  }
+}
+
+async function keepOnFrame(piece) {
+  const show = artCommandBody(state.selectedFrame, "show", piece.id);
+  const pin = framePinBody(state.selectedFrame, "art", "forever");
+  if (!show || !pin) {
+    return;
+  }
+  let result = await postApi("/api/art/command", show);
+  if (result.ok) {
+    result = await postApi("/api/frame/pin", pin);
+  }
+  showToast(result.ok ? "On the frame until you unpin it." : result.error);
+  refreshArt();
+  refreshFrame();
+  refreshFrameControl();
+}
+
+async function moveViewerPiece(folder) {
+  const here = currentViewerPiece();
+  if (!here || !folder) {
+    return;
+  }
+  const { piece, idx } = here;
+  await advanceFrameIfShowing(piece);
+  const result = await postApi("/api/art/move", { id: piece.id, folder });
+  if (!result.ok) {
+    showToast(result.error);
+    renderViewer(viewerList(), idx);
+    return;
+  }
+  refreshArt();
+  refreshFrame();
+  await refreshLibrary();
+  const movedId = movedPieceId(state.artIndex, folder, piece);
+  showToast(
+    `Moved to ${folder}.`,
+    movedId ? () => runAction("/api/art/move", { id: movedId, folder: piece.folder }) : null,
+  );
+  viewerAfterRemoval(idx);
+}
+
+async function trashViewerPiece() {
+  const here = currentViewerPiece();
+  if (!here) {
+    return;
+  }
+  await advanceFrameIfShowing(here.piece);
+  if (await moveToTrash(here.piece.id)) {
+    viewerAfterRemoval(here.idx);
+  }
+}
+
+function wireViewer() {
+  els.viewerClose.addEventListener("click", closeViewer);
+  els.viewerPrev.addEventListener("click", () => stepViewer(-1));
+  els.viewerNext.addEventListener("click", () => stepViewer(1));
+  els.viewerShow.addEventListener("click", () => {
+    const here = currentViewerPiece();
+    if (here) {
+      runArtCommand("show", here.piece.id);
+      showToast("Showing on the frame.");
+    }
+  });
+  els.viewerPin.addEventListener("click", () => {
+    const here = currentViewerPiece();
+    if (here) {
+      keepOnFrame(here.piece);
+    }
+  });
+  els.viewerMove.addEventListener("change", () => moveViewerPiece(els.viewerMove.value));
+  els.viewerTrash.addEventListener("click", trashViewerPiece);
+
+  // Swipe: the finger moves left to go on. Mostly vertical moves are left to
+  // the page (the stage allows vertical panning only).
+  let start = null;
+  els.viewerStage.addEventListener("pointerdown", (event) => {
+    start = { x: event.clientX, y: event.clientY };
+  });
+  els.viewerStage.addEventListener("pointerup", (event) => {
+    if (!start) {
+      return;
+    }
+    const dir = swipeDirection(start.x - event.clientX, event.clientY - start.y);
+    start = null;
+    if (dir !== 0) {
+      stepViewer(dir);
+    }
+  });
+  els.viewerStage.addEventListener("pointercancel", () => {
+    start = null;
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (els.galleryViewer.hidden || event.defaultPrevented) {
+      return;
+    }
+    const tag = event.target instanceof Element ? event.target.tagName : "";
+    if (tag === "SELECT" || tag === "INPUT" || tag === "TEXTAREA") {
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      stepViewer(-1);
+    } else if (event.key === "ArrowRight") {
+      stepViewer(1);
+    } else if (event.key === "Escape") {
+      closeViewer();
+    }
+  });
 }
 
 // Post one write to the admin service, returning { ok } or { ok:false, error }.
@@ -2771,15 +3104,6 @@ function thumbPlaceholder(className) {
   ph.className = `${className} thumb-ph`;
   ph.setAttribute("aria-hidden", "true");
   return ph;
-}
-
-function menuButton(label, onClick, extraClass) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = extraClass ? `menu-item ${extraClass}` : "menu-item";
-  button.textContent = label;
-  button.addEventListener("click", onClick);
-  return button;
 }
 
 // Section visibility: the frame shows with a mirror, a current piece, or the
