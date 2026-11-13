@@ -64,7 +64,6 @@
   --panel: oklch(0.2 calc(0.02 * var(--k)) var(--h) / 0.45);
   --ink: oklch(0.93 calc(0.01 * var(--k)) var(--h));
   --ink-2: oklch(0.72 calc(0.02 * var(--k)) var(--h));
-  --ink-3: oklch(0.55 calc(0.02 * var(--k)) var(--h));
   --accent: oklch(0.8 calc(0.11 * var(--k)) var(--h));
   --accent-2: oklch(0.7 calc(0.1 * var(--k)) var(--h2));
   --line: oklch(1 0 0 / 0.06);
@@ -775,6 +774,7 @@ a.frame-title {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
   cursor: grab;
   transition: opacity 0.25s var(--ease-out);
 }
