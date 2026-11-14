@@ -521,8 +521,16 @@ GEO_LINE = (
     "192.168.0.0/16 1; fc00::/7 1; fe80::/10 1; }"
 )
 MAP_LINE = (
-    'map "$http_cf_connecting_ip:$snaphouse_lan" $snaphouse_origin '
+    'map "$http_cf_connecting_ip$http_cf_ray$http_cf_access_authenticated_user_email'
+    '$http_cf_access_jwt_assertion:$snaphouse_lan" $snaphouse_origin '
     '{ default tunnel; ":1" home; }'
+)
+
+CLOUDFLARE_HEADER_VARS = (
+    "$http_cf_connecting_ip",
+    "$http_cf_ray",
+    "$http_cf_access_authenticated_user_email",
+    "$http_cf_access_jwt_assertion",
 )
 
 
@@ -587,3 +595,37 @@ def test_agents_md_no_longer_says_no_tunnels():
     assert "X-Snaphouse-Origin" in text
     assert "ntfy server" in text
     assert "6053" in text
+
+
+def _classify(cf_values: list[str], lan: int) -> str:
+    """Evaluate the rendered map the way nginx does: the concatenated key."""
+    key = "".join(cf_values) + f":{lan}"
+    return "home" if key == ":1" else "tunnel"
+
+
+def test_origin_map_key_covers_every_cloudflare_header():
+    conf = _origin_conf()
+    key = conf.split('map "', 1)[1].split('"', 1)[0]
+    for var in CLOUDFLARE_HEADER_VARS:
+        assert var in key.split(":$snaphouse_lan")[0]
+
+
+def test_origin_case_table():
+    empty = ["", "", "", ""]
+    cases = [
+        (empty, 1, "home"),
+        (empty, 0, "tunnel"),
+        (["x", "", "", ""], 1, "tunnel"),
+        (["", "x", "", ""], 1, "tunnel"),
+        (["", "", "x", ""], 1, "tunnel"),
+        (["", "", "", "x"], 1, "tunnel"),
+        (["x", "x", "x", "x"], 0, "tunnel"),
+    ]
+    for values, lan, expected in cases:
+        assert _classify(values, lan) == expected, (values, lan)
+
+
+def test_origin_comment_states_the_lan_connector_model():
+    text = _origin_conf()
+    assert "loopback" not in text.lower()
+    assert "connector" in text

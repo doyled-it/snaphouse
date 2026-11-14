@@ -6,8 +6,14 @@
 # snaphouse.d/homebody.conf drops into. The location block sets the result as
 # X-Snaphouse-Origin, overwriting anything a client sent.
 #
-# A request is "home" only when it has no Cf-Connecting-Ip header and its source
-# is a private range. Loopback is deliberately not listed, so the tunnel daemon
-# (which connects from loopback) is never treated as home.
+# The tunnel connector runs on another machine on the home LAN and proxies to this
+# web server, so a tunnel request arrives from a private LAN address, the same as a
+# phone at home. The source address cannot tell them apart. The Cloudflare headers
+# are the discriminator: a request is "home" only when the source is a private range
+# AND all four of Cf-Connecting-Ip, Cf-Ray, Cf-Access-Authenticated-User-Email and
+# Cf-Access-Jwt-Assertion are empty. Any one of them present means tunnel. Several
+# headers are checked because a tunnel request that lacked one of them would
+# otherwise be misclassified as home. The map key is the four values joined with the
+# LAN flag, so it equals ":1" only when every header is empty and the source is LAN.
 geo $remote_addr $snaphouse_lan { default 0; 10.0.0.0/8 1; 172.16.0.0/12 1; 192.168.0.0/16 1; fc00::/7 1; fe80::/10 1; }
-map "$http_cf_connecting_ip:$snaphouse_lan" $snaphouse_origin { default tunnel; ":1" home; }
+map "$http_cf_connecting_ip$http_cf_ray$http_cf_access_authenticated_user_email$http_cf_access_jwt_assertion:$snaphouse_lan" $snaphouse_origin { default tunnel; ":1" home; }
