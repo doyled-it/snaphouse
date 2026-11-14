@@ -7,12 +7,13 @@ export const TAB_LABELS = {
   frame: "Frame",
   gallery: "Gallery",
   climate: "Climate",
+  garage: "Garage",
   settings: "Settings",
 };
 
-const TAB_ORDER = ["listen", "frame", "gallery", "climate", "settings"];
+const TAB_ORDER = ["listen", "frame", "gallery", "climate", "garage", "settings"];
 
-// visible: { frame: boolean, climate: boolean }. Listen, Gallery and Settings
+// visible: { frame: boolean, climate: boolean, garage: boolean }. Listen, Gallery and Settings
 // are always present.
 function isVisible(screen, visible) {
   if (screen === "frame") {
@@ -20,6 +21,9 @@ function isVisible(screen, visible) {
   }
   if (screen === "climate") {
     return Boolean(visible && visible.climate);
+  }
+  if (screen === "garage") {
+    return Boolean(visible && visible.garage);
   }
   return true;
 }
@@ -71,4 +75,15 @@ export function climateTabVisible(doc, probed) {
     return true;
   }
   return Boolean(doc);
+}
+
+// Whether the Garage tab shows: the hub's homebody.json carries a usable garage
+// block (null or missing means the garage module is off). Until the first read
+// finishes the answer is yes, so a deep link to #garage is not rewritten while
+// it loads.
+export function garageTabVisible(garage, probed) {
+  if (!probed) {
+    return true;
+  }
+  return Boolean(garage);
 }

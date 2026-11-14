@@ -1052,7 +1052,7 @@ export function openInLinks(play) {
 
 // The screens the tab bar switches between, each addressed by the
 // URL hash so Back and refresh keep the screen (design "Page: screens").
-export const SCREENS = ["listen", "frame", "gallery", "climate", "settings"];
+export const SCREENS = ["listen", "frame", "gallery", "climate", "garage", "settings"];
 
 // The default screen when the hash is empty or unknown (design: Listen).
 const DEFAULT_SCREEN = "listen";
