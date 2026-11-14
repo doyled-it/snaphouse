@@ -90,6 +90,11 @@ import {
   overrideText,
   editSetting,
   parseClimateText,
+  parseThisDevice,
+  addBody,
+  checkName,
+  deviceLine,
+  removeBody,
   parseWhole,
   peopleLines,
   staleness,
@@ -3628,6 +3633,14 @@ const climateEls = {
   known: document.getElementById("cl-known"),
   people: document.getElementById("cl-people"),
   peopleEmpty: document.getElementById("cl-people-empty"),
+  device: document.getElementById("cl-device"),
+  deviceText: document.getElementById("cl-device-text"),
+  deviceAdd: document.getElementById("cl-device-add"),
+  deviceForm: document.getElementById("cl-device-form"),
+  deviceName: document.getElementById("cl-device-name"),
+  deviceGo: document.getElementById("cl-device-go"),
+  deviceCancel: document.getElementById("cl-device-cancel"),
+  deviceError: document.getElementById("cl-device-error"),
   panel: document.getElementById("cl-thermostat-panel"),
   temp: document.getElementById("cl-temp"),
   mode: document.getElementById("cl-mode"),
@@ -3654,6 +3667,13 @@ let climateRefused = new Map();
 let climateState = "idle";
 let climateTicks = 0;
 let climatePeopleKey = "";
+// People controls: what this phone is (null: the hub cannot say, so no
+// controls), whether the name form is open, the row asking to confirm a remove,
+// and whether a people write is in flight.
+let climateDevice = null;
+let climateAdding = false;
+let climateRemoveId = null;
+let climatePeopleBusy = false;
 
 const climateQueue = createAutosave({
   write: writeClimate,
@@ -3681,6 +3701,23 @@ async function refreshClimate() {
     doc = null;
   }
   applyClimate(doc);
+  refreshThisDevice();
+}
+
+// Ask the hub what this phone is to the climate automation. A 404 (a hub that
+// has not got the endpoint yet), an error or a malformed reply means no controls.
+async function refreshThisDevice() {
+  let device = null;
+  try {
+    const response = await fetch("api/homebody/people/this-device", { cache: "no-store" });
+    if (response.ok) {
+      device = parseThisDevice(safeJsonParse(await response.text()));
+    }
+  } catch (_) {
+    device = null;
+  }
+  climateDevice = device;
+  renderClimate();
 }
 
 // Take a new document (a poll, or the reply to a write) and draw it. A missing
@@ -3723,7 +3760,7 @@ function renderClimate() {
   climateEls.people.classList.toggle("last-known", stale);
 
   const lines = peopleLines(doc, now, stale);
-  const key = JSON.stringify(lines);
+  const key = JSON.stringify([lines, climateRemoveId, climatePeopleBusy]);
   if (key !== climatePeopleKey) {
     climatePeopleKey = key;
     climateEls.people.replaceChildren(
@@ -3747,6 +3784,9 @@ function renderClimate() {
           seen.textContent = line.seen;
           li.append(seen);
         }
+        if (line.removable) {
+          li.append(personRemoveControl(line));
+        }
         return li;
       })
     );
@@ -3754,6 +3794,8 @@ function renderClimate() {
   climateEls.people.hidden = lines.length === 0;
   climateEls.peopleEmpty.hidden = lines.length > 0;
   climateEls.peopleEmpty.textContent = lines.length > 0 ? "" : EMPTY_PEOPLE_TEXT;
+
+  renderDevice(doc);
 
   const thermo = thermostatView(doc, stale);
   climateEls.panel.dataset.status = thermo.status;
@@ -3783,6 +3825,115 @@ function renderClimate() {
   }
 }
 
+function personRemoveControl(line) {
+  const box = document.createElement("div");
+  box.className = "cl-person-actions";
+  const button = (label, cls, onClick, disabled = false) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = cls;
+    b.textContent = label;
+    b.disabled = disabled;
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  if (climateRemoveId === line.id) {
+    const q = document.createElement("span");
+    q.className = "cl-person-q";
+    q.textContent = `Stop counting ${line.name}?`;
+    box.append(
+      q,
+      button("Remove", "btn btn-small danger", () => removePerson(line.id), climatePeopleBusy),
+      button("Keep", "btn-ghost btn-small", () => {
+        climateRemoveId = null;
+        renderClimate();
+      })
+    );
+  } else {
+    const b = button("Remove", "btn-ghost btn-small", () => {
+      climateRemoveId = line.id;
+      renderClimate();
+    }, climatePeopleBusy);
+    b.setAttribute("aria-label", `Remove ${line.name}`);
+    box.append(b);
+  }
+  return box;
+}
+
+function renderDevice(doc) {
+  const line = deviceLine(climateDevice);
+  const showAdd = line.kind === "add" && !climateAdding;
+  const showForm = line.kind === "add" && climateAdding;
+  const showText = line.kind === "counted" || line.kind === "remote";
+  climateEls.device.hidden = line.kind === "none";
+  climateEls.deviceText.hidden = !showText;
+  climateEls.deviceText.textContent = showText ? line.text : "";
+  climateEls.deviceAdd.hidden = !showAdd;
+  climateEls.deviceAdd.disabled = climatePeopleBusy;
+  climateEls.deviceForm.hidden = !showForm;
+  climateEls.deviceGo.disabled = climatePeopleBusy;
+  if (line.kind !== "add") {
+    climateAdding = false;
+    clearFieldError(climateEls.deviceError);
+  }
+}
+
+// One people write (add or remove): the reply is the full status document.
+async function postPeople(path, bodyText) {
+  climatePeopleBusy = true;
+  renderClimate();
+  try {
+    const { url, init } = apiRequest(path);
+    init.body = bodyText;
+    const response = await fetch(url, init);
+    const text = await response.text();
+    if (!response.ok) {
+      const data = safeJsonParse(text);
+      throw new Error((data && data.error) || `Request failed (${response.status}).`);
+    }
+    const doc = parseClimateText(text);
+    if (!doc) {
+      throw new Error("The list of people did not come back.");
+    }
+    applyClimate(doc);
+    return true;
+  } catch (err) {
+    showFieldError(climateEls.deviceError, err.message || "Couldn't save. Try again.");
+    return false;
+  } finally {
+    climatePeopleBusy = false;
+    renderClimate();
+  }
+}
+
+async function removePerson(id) {
+  clearFieldError(climateEls.deviceError);
+  climateEls.device.hidden = false;
+  const ok = await postPeople("/api/homebody/people/remove", removeBody(id));
+  climateRemoveId = null;
+  if (ok) {
+    haptics.roomOff();
+    await refreshThisDevice();
+  } else {
+    renderClimate();
+  }
+}
+
+async function addThisPhone() {
+  const message = checkName(climateEls.deviceName.value, state.climate ? state.climate.people : []);
+  if (message) {
+    showFieldError(climateEls.deviceError, message);
+    return;
+  }
+  clearFieldError(climateEls.deviceError);
+  const ok = await postPeople("/api/homebody/people/add", addBody(climateEls.deviceName.value));
+  if (ok) {
+    climateAdding = false;
+    climateEls.deviceName.value = "";
+    await refreshThisDevice();
+  }
+}
+
 // The same switch the room rows use: aria-checked carries the state, the text
 // is for screen readers only.
 function setClimateSwitch(on) {
@@ -3791,6 +3942,23 @@ function setClimateSwitch(on) {
 }
 
 function wireClimate() {
+  climateEls.deviceAdd.addEventListener("click", () => {
+    climateAdding = true;
+    clearFieldError(climateEls.deviceError);
+    renderClimate();
+    climateEls.deviceName.focus();
+  });
+  climateEls.deviceCancel.addEventListener("click", () => {
+    climateAdding = false;
+    climateEls.deviceName.value = "";
+    clearFieldError(climateEls.deviceError);
+    renderClimate();
+    climateEls.deviceAdd.focus();
+  });
+  climateEls.deviceForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addThisPhone();
+  });
   climateEls.enabled.addEventListener("click", () => {
     const on = climateEls.enabled.getAttribute("aria-checked") !== "true";
     setClimateSwitch(on);

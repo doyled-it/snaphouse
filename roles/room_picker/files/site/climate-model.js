@@ -35,6 +35,8 @@ function parsePerson(raw) {
     return null;
   }
   return {
+    id: typeof raw.id === "string" ? raw.id : "",
+    removable: raw.removable === true,
     name: raw.name.trim(),
     state: PERSON_STATES.includes(raw.state) ? raw.state : "unknown",
     lastSeenMs: stamp(raw.last_seen),
@@ -132,6 +134,8 @@ export function peopleLines(doc, now, lastKnown = false) {
     name: person.name,
     state: person.state,
     label: STATE_LABELS[person.state],
+    id: person.id,
+    removable: person.removable,
     seen: relativeSeen(person.lastSeenMs, now),
     lastKnown,
   }));
@@ -314,4 +318,72 @@ export function editSetting(draft, refused, name, value, raws) {
     }
   }
   return { draft: nextDraft, refused: nextRefused, accepted };
+}
+
+// ---- Counting this phone as home -------------------------------------------
+
+const DEVICE_REASONS = ["remote", "unknown"];
+
+// The reply of GET /api/homebody/people/this-device, or null for anything else
+// (a 404 from a hub that has not deployed the endpoint yet, a damaged body).
+export function parseThisDevice(raw) {
+  if (!isObject(raw) || typeof raw.can_add !== "boolean") {
+    return null;
+  }
+  if (raw.counted_as !== null && typeof raw.counted_as !== "string") {
+    return null;
+  }
+  if (raw.reason !== null && !DEVICE_REASONS.includes(raw.reason)) {
+    return null;
+  }
+  return { canAdd: raw.can_add, countedAs: raw.counted_as, reason: raw.reason };
+}
+
+// What the people panel says about this phone: the add button, who it already
+// counts as, a hint to use home Wi-Fi, or nothing.
+export function deviceLine(device) {
+  if (!device) {
+    return { kind: "none", text: "" };
+  }
+  if (device.countedAs) {
+    return { kind: "counted", text: `This phone counts as ${device.countedAs}.` };
+  }
+  if (device.canAdd) {
+    return { kind: "add", text: "Count this phone as home" };
+  }
+  if (device.reason === "remote") {
+    return { kind: "remote", text: "To count a phone, open this page on home Wi-Fi." };
+  }
+  return { kind: "none", text: "" };
+}
+
+export const NAME_MAX = 30;
+
+// The same rules as homebody's clean_name: trimmed, 1 to 30 characters, no
+// control characters, not already listed (ignoring case). A sentence or null.
+export function checkName(text, people) {
+  const name = typeof text === "string" ? text.trim() : "";
+  if (name === "") {
+    return "Type a name for this phone.";
+  }
+  if (name.length > NAME_MAX) {
+    return `Use ${NAME_MAX} characters or fewer.`;
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) {
+    return "That name has a character that is not allowed.";
+  }
+  const lower = name.toLowerCase();
+  if (people.some((p) => p.name.trim().toLowerCase() === lower)) {
+    return "Someone is already listed with that name.";
+  }
+  return null;
+}
+
+export function addBody(name) {
+  return JSON.stringify({ name: name.trim() });
+}
+
+export function removeBody(id) {
+  return JSON.stringify({ id });
 }

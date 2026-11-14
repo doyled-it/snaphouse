@@ -2262,6 +2262,36 @@ a.row-title {
   align-content: center;
 }
 
+.cl-person-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+
+.cl-person-q {
+  font-size: 0.95rem;
+}
+
+.cl-device {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.cl-device-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cl-device-row .text {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
 .cl-person-name {
   font-weight: 600;
 }
