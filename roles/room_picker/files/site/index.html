@@ -334,6 +334,19 @@
               <p id="cl-stale" class="cl-stale" role="status" hidden></p>
               <ul id="cl-people" class="cl-people"></ul>
               <p id="cl-people-empty" class="settings-note" hidden></p>
+              <div id="cl-device" class="cl-device" hidden>
+                <p id="cl-device-text" class="settings-note" hidden></p>
+                <button id="cl-device-add" type="button" class="btn-ghost btn-small" hidden>Count this phone as home</button>
+                <form id="cl-device-form" class="cl-device-form" hidden>
+                  <label class="field-label" for="cl-device-name">Name for this phone</label>
+                  <div class="cl-device-row">
+                    <input id="cl-device-name" class="text" type="text" maxlength="30" autocomplete="off" />
+                    <button id="cl-device-go" type="submit" class="btn btn-small">Add</button>
+                    <button id="cl-device-cancel" type="button" class="btn-ghost btn-small">Cancel</button>
+                  </div>
+                </form>
+              </div>
+              <p id="cl-device-error" class="fs-error" role="alert" hidden></p>
             </section>
 
             <section id="cl-thermostat-panel" class="section panel" aria-labelledby="cl-thermo-h">

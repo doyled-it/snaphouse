@@ -245,6 +245,18 @@ thermostat" when it is null, the R4 amendment), the last automatic change with i
 reason, and an override line when `override` is true. UI copy never says homebody,
 Matter or API.
 
+Counting this phone: the page asks `GET /api/homebody/people/this-device` when the tab
+opens and after every add or remove, and `parseThisDevice` returns null for a 404 or a
+malformed reply, so a hub without the endpoint shows no controls. `deviceLine` picks the
+line: "Count this phone as home" (opens a name field; `checkName` mirrors homebody's
+`clean_name` before posting), "This phone counts as <name>.", or "To count a phone, open
+this page on home Wi-Fi." (a tunnel or off-network request). People the owner added carry
+`removable`; their rows get a Remove button that asks inline first. Both POSTs
+(`/api/homebody/people/add` and `/remove`, `X-Snaphouse: 1`) return the full status
+document, which goes through `applyClimate`. The nginx `/api/homebody/` block sets
+`X-Real-IP $remote_addr` so homebody can resolve the phone's Wi-Fi address; adding works
+on the home Wi-Fi only, and the page never shows an address.
+
 The document is polled every 15 s while Climate shows and once a minute from other
 tabs (so the tab can appear), through `page-timers.js`. The automation switch and the
 three numbers (comfort, away, away delay in minutes, steppers with typing) save

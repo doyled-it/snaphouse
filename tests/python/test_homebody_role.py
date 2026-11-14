@@ -501,3 +501,9 @@ def test_role_installs_the_presence_probe_tools():
             name = apt.get("name")
             packages.extend(name if isinstance(name, list) else [name])
     assert "iputils-arping" in packages
+
+
+def test_homebody_api_route_sets_the_client_address():
+    conf = _render_all(NGINX_CONF)
+    block = conf.split("location /api/homebody/ {", 1)[1].split("}", 1)[0]
+    assert "proxy_set_header X-Real-IP $remote_addr;" in block

@@ -3,14 +3,20 @@ import assert from "node:assert/strict";
 import {
   EMPTY_PEOPLE_TEXT,
   SETTING_LIMITS,
+  addBody,
+  checkName,
   checkSettings,
+  deviceLine,
+  nextDevice,
   lastChangeText,
   overrideText,
   parseClimate,
   parseClimateText,
+  parseThisDevice,
   parseWhole,
   peopleLines,
   relativeSeen,
+  removeBody,
   settingsBody,
   thermostatView,
 } from "../../roles/room_picker/files/site/climate-model.js";
@@ -119,9 +125,9 @@ test("peopleLines labels and last seen", () => {
     ],
   }));
   assert.deepEqual(peopleLines(parsed, NOW), [
-    { name: "Person A", state: "home", label: "Home", seen: "seen 3 min ago", lastKnown: false },
-    { name: "Person B", state: "away", label: "Away", seen: "seen 3 hr ago", lastKnown: false },
-    { name: "Person C", state: "unknown", label: "Not sure yet", seen: "", lastKnown: false },
+    { id: "", removable: false, name: "Person A", state: "home", label: "Home", seen: "seen 3 min ago", lastKnown: false },
+    { id: "", removable: false, name: "Person B", state: "away", label: "Away", seen: "seen 3 hr ago", lastKnown: false },
+    { id: "", removable: false, name: "Person C", state: "unknown", label: "Not sure yet", seen: "", lastKnown: false },
   ]);
 });
 
@@ -336,4 +342,74 @@ test("a refused comfort is accepted when raising away makes it valid", () => {
 test("refusals carry the message", () => {
   const out = editSetting({ comfort_f: 72, away_f: 82, away_minutes: 20 }, new Map(), "away_minutes", 1, {});
   assert.match(out.refused.get("away_minutes"), /between 5 and 120/);
+});
+
+test("parseClimate keeps id and removable on each person, removable defaults to false", () => {
+  const parsed = parseClimate(doc({
+    people: [
+      { id: "added-0a1b2c3d", name: "Sam", state: "home", removable: true },
+      { id: "cfg-1", name: "Alex", state: "away" },
+    ],
+  }));
+  assert.equal(parsed.people[0].id, "added-0a1b2c3d");
+  assert.equal(parsed.people[0].removable, true);
+  assert.equal(parsed.people[1].id, "cfg-1");
+  assert.equal(parsed.people[1].removable, false);
+  assert.equal(parseClimate(doc()).people[0].removable, false);
+});
+
+test("parseThisDevice reads a valid document", () => {
+  assert.deepEqual(parseThisDevice({ can_add: true, counted_as: null, reason: null }),
+    { canAdd: true, countedAs: null, reason: null });
+  assert.deepEqual(parseThisDevice({ can_add: false, counted_as: "Alex", reason: null }),
+    { canAdd: false, countedAs: "Alex", reason: null });
+  assert.deepEqual(parseThisDevice({ can_add: false, counted_as: null, reason: "remote" }),
+    { canAdd: false, countedAs: null, reason: "remote" });
+});
+
+test("parseThisDevice returns null for anything malformed", () => {
+  assert.equal(parseThisDevice(null), null);
+  assert.equal(parseThisDevice([]), null);
+  assert.equal(parseThisDevice({}), null);
+  assert.equal(parseThisDevice({ can_add: "yes", counted_as: null, reason: null }), null);
+  assert.equal(parseThisDevice({ can_add: false, counted_as: 5, reason: null }), null);
+  assert.equal(parseThisDevice({ can_add: false, counted_as: null, reason: "mystery" }), null);
+  assert.equal(parseThisDevice({ can_add: false, counted_as: null }), null);
+});
+
+test("deviceLine has the four kinds with exact copy", () => {
+  assert.deepEqual(deviceLine({ canAdd: true, countedAs: null, reason: null }),
+    { kind: "add", text: "Count this phone as home" });
+  assert.deepEqual(deviceLine({ canAdd: false, countedAs: "Alex", reason: null }),
+    { kind: "counted", text: "This phone counts as Alex." });
+  assert.deepEqual(deviceLine({ canAdd: false, countedAs: null, reason: "remote" }),
+    { kind: "remote", text: "To count a phone, open this page on home Wi-Fi." });
+  assert.deepEqual(deviceLine({ canAdd: false, countedAs: null, reason: "unknown" }),
+    { kind: "none", text: "" });
+  assert.deepEqual(deviceLine(null), { kind: "none", text: "" });
+});
+
+test("checkName applies homebody's clean_name rules", () => {
+  const people = [{ name: "Alex" }];
+  assert.ok(checkName("   ", people));
+  assert.ok(checkName("", people));
+  assert.ok(checkName("x".repeat(31), people));
+  assert.ok(checkName("Sa\nm", people));
+  assert.ok(checkName("ALEX", people));
+  assert.equal(checkName(" Sam ", people), null);
+  assert.equal(checkName("x".repeat(30), people), null);
+});
+
+test("addBody and removeBody build the request bodies", () => {
+  assert.equal(addBody("  Sam "), JSON.stringify({ name: "Sam" }));
+  assert.equal(removeBody("added-0a1b2c3d"), JSON.stringify({ id: "added-0a1b2c3d" }));
+});
+
+test("nextDevice keeps the previous device on a failed refresh only while the form or a write is active", () => {
+  const prev = { canAdd: true, countedAs: null, reason: null };
+  const fresh = { canAdd: false, countedAs: "Alex", reason: null };
+  assert.equal(nextDevice(prev, null, true), prev);
+  assert.equal(nextDevice(prev, null, false), null);
+  assert.equal(nextDevice(prev, fresh, true), fresh);
+  assert.equal(nextDevice(null, null, true), null);
 });
