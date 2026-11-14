@@ -12,6 +12,10 @@ import {
   errorLine,
   pollMs,
   afterCommandPoll,
+  intentOutcome,
+  commandOutcome,
+  checkSetting,
+  recentLine,
 } from "../../roles/room_picker/files/site/garage-model.js";
 
 const NOW = Date.parse("2026-11-14T18:02:20Z");
@@ -205,4 +209,64 @@ test("page copy never names the parts and never promises an instant alert", () =
   ].join(" ");
   assert.doesNotMatch(all, /esphome|board|ntfy|api/i);
   assert.equal(all.includes(String.fromCharCode(8212)), false);
+});
+
+test("a 400 for a spent or expired nonce shows the hub's sentence", () => {
+  assert.equal(errorLine(400, { error: "That request expired. Start again." }), "That request expired. Start again.");
+  assert.equal(errorLine(400, null), "That request expired. Start again.");
+});
+
+test("the hub's error text from a refused intent is what the card shows", () => {
+  const out = intentOutcome(409, { error: "The opener reports something in the way." }, "close");
+  assert.deepEqual(out, { kind: "error", text: "The opener reports something in the way." });
+  assert.equal(intentOutcome(423, null, "open").text, "Remote lockout is on at the opener.");
+});
+
+test("an intent with confirm_required false goes straight to the command", () => {
+  const out = intentOutcome(200, { nonce: "abc", expires_in: 30, confirm_required: false }, "open");
+  assert.deepEqual(out, { kind: "send", nonce: "abc" });
+});
+
+test("an intent with confirm_required true waits for a second tap, with the away note", () => {
+  const out = intentOutcome(200, { nonce: "abc", expires_in: 30, confirm_required: true }, "open");
+  assert.equal(out.kind, "confirm");
+  assert.equal(out.nonce, "abc");
+  assert.equal(out.text, "Open the garage door?");
+  assert.equal(out.note, "You are away. This moves the door.");
+  assert.equal(intentOutcome(200, { nonce: "n", confirm_required: true }, "close").text, "Close the garage door?");
+});
+
+test("an intent reply without a nonce is an error, never a send", () => {
+  assert.equal(intentOutcome(200, { confirm_required: false }, "open").kind, "error");
+  assert.equal(intentOutcome(200, null, "open").kind, "error");
+});
+
+test("a command reply: 200 is sent, anything else shows the hub's sentence and never retries", () => {
+  assert.deepEqual(commandOutcome(200, { garage: {} }), { kind: "sent" });
+  assert.deepEqual(commandOutcome(503, { error: "Can't reach the opener right now." }), {
+    kind: "error",
+    text: "Can't reach the opener right now.",
+  });
+  assert.equal(commandOutcome(504, { error: "The garage did not answer in time. Check the card." }).text,
+    "No movement seen yet. Check the card before trying again.");
+});
+
+test("checkSetting refuses a value outside its range, with a plain sentence", () => {
+  assert.equal(checkSetting("left_open_minutes", 15), "");
+  assert.equal(checkSetting("left_open_minutes", 0), "");
+  assert.equal(checkSetting("left_open_minutes", 240), "");
+  assert.match(checkSetting("left_open_minutes", 241), /between 0 and 240/);
+  assert.match(checkSetting("away_open_grace_minutes", 16), /between 0 and 15/);
+  assert.match(checkSetting("away_open_grace_minutes", null), /whole number/);
+  assert.match(checkSetting("left_open_minutes", 1.5), /whole number/);
+});
+
+test("recentLine says what happened and where it came from", () => {
+  const at = (hhmm) => () => hhmm;
+  const home = { atMs: 1, event: "closed", origin: "home", who: null };
+  const away = { atMs: 2, event: "opened", origin: "tunnel", who: null };
+  assert.equal(recentLine(home, at("17:40")), "17:40  Closed (from home)");
+  assert.equal(recentLine(away, at("07:52")), "07:52  Opened (from away)");
+  assert.equal(recentLine({ ...away, who: "Front phone" }, at("07:52")), "07:52  Opened (from away, Front phone)");
+  assert.equal(recentLine({ atMs: null, event: "stopped", origin: null, who: null }, at("")), "Stopped");
 });

@@ -31,3 +31,22 @@ for (const file of ["rooms.js", "pair-controller.js", "devices-controller.js", "
     assert.ok(checked > 0, "found no imports to check");
   });
 }
+
+test("rooms.js wires the Garage card to garage-model.js and the guarded endpoints", () => {
+  const source = readFileSync(path.join(SITE, "rooms.js"), "utf8");
+  assert.match(source, /from "\.\/garage-model\.js"/);
+  assert.match(source, /garageTabVisible/);
+  for (const name of ["intentOutcome", "commandOutcome", "afterCommandPoll", "recentLine", "parseGarageText"]) {
+    assert.match(source, new RegExp(`\\b${name}\\b`), `${name} is not used`);
+  }
+  // Both POSTs go through apiRequest, which adds X-Snaphouse: 1.
+  assert.match(source, /postGarage\("\/api\/homebody\/garage\/intent"/);
+  assert.match(source, /postGarage\("\/api\/homebody\/garage\/command"/);
+  assert.match(source, /const \{ url, init \} = apiRequest\(path, body\);\s*\n\s*const response = await fetch\(url, init\);\s*\n\s*return \{ status/);
+});
+
+test("the Garage command is never retried by the page", () => {
+  const source = readFileSync(path.join(SITE, "rooms.js"), "utf8");
+  const sends = source.match(/postGarage\("\/api\/homebody\/garage\/command"/g) || [];
+  assert.equal(sends.length, 1, "one call site for the command");
+});

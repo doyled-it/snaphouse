@@ -406,6 +406,72 @@
         </div>
       </section>
 
+      <!-- Garage: the door now, one button to move it, the alert settings and
+           the recent list. Hidden with its tab when the hub has no garage block. -->
+      <section class="screen" id="screen-garage" aria-label="Garage" hidden>
+        <section id="ga-panel" class="section panel" aria-labelledby="ga-h">
+          <h2 id="ga-h" class="section-h">Garage door</h2>
+          <p id="ga-word" class="ga-word" aria-live="polite">--</p>
+          <p id="ga-duration" class="ga-duration"></p>
+          <p id="ga-lastseen" class="ga-duration" hidden></p>
+          <p id="ga-line" class="ga-line" role="status" hidden></p>
+          <div id="ga-buttons" class="ga-buttons">
+            <button id="ga-open" type="button" class="btn ga-btn" hidden>Open</button>
+            <button id="ga-close" type="button" class="btn ga-btn" hidden>Close</button>
+          </div>
+          <div id="ga-confirm" class="ga-confirm" hidden>
+            <p id="ga-confirm-note" class="ga-note" hidden></p>
+            <p id="ga-confirm-text" class="ga-confirm-text"></p>
+            <div class="ga-buttons">
+              <button id="ga-confirm-go" type="button" class="btn ga-btn">Open</button>
+              <button id="ga-confirm-cancel" type="button" class="btn-ghost ga-btn">Cancel</button>
+            </div>
+          </div>
+          <p id="ga-sent" class="ga-sent" role="status" hidden></p>
+          <p id="ga-error" class="fs-error" role="alert" hidden></p>
+          <p id="ga-link" class="settings-note"></p>
+        </section>
+
+        <section id="ga-settings-panel" class="section panel" aria-labelledby="ga-set-h">
+          <div class="group-head">
+            <h2 id="ga-set-h" class="section-h">Alerts and remote</h2>
+            <span class="save-status" data-status="garage" role="status"></span>
+          </div>
+          <div class="cl-steppers">
+            <div class="cl-stepper" data-setting="left_open_minutes">
+              <span id="ga-left-l" class="field-label">Alert me if left open for</span>
+              <div class="cl-step-row">
+                <button type="button" class="btn cl-step" data-dir="-1" aria-label="Shorter time">&minus;</button>
+                <input id="ga-left" class="text cl-input" type="text" inputmode="numeric" autocomplete="off" aria-labelledby="ga-left-l" />
+                <span class="cl-unit">min</span>
+                <button type="button" class="btn cl-step" data-dir="1" aria-label="Longer time">+</button>
+              </div>
+            </div>
+            <div class="cl-stepper" data-setting="away_open_grace_minutes">
+              <span id="ga-grace-l" class="field-label">Alert if opened while away, after</span>
+              <div class="cl-step-row">
+                <button type="button" class="btn cl-step" data-dir="-1" aria-label="Shorter wait">&minus;</button>
+                <input id="ga-grace" class="text cl-input" type="text" inputmode="numeric" autocomplete="off" aria-labelledby="ga-grace-l" />
+                <span class="cl-unit">min</span>
+                <button type="button" class="btn cl-step" data-dir="1" aria-label="Longer wait">+</button>
+              </div>
+            </div>
+          </div>
+          <div class="cl-switch-row">
+            <span class="field-label">Allow open and close from away</span>
+            <button id="ga-remote" type="button" class="toggle" role="switch" aria-checked="false" aria-label="Allow open and close from away">Off</button>
+          </div>
+          <p class="settings-note">Zero turns an alert off.</p>
+          <p id="ga-settings-error" class="fs-error" role="alert" hidden></p>
+        </section>
+
+        <section id="ga-recent-panel" class="section panel" aria-labelledby="ga-recent-h">
+          <h2 id="ga-recent-h" class="section-h">Recent</h2>
+          <ul id="ga-recent" class="ga-recent"></ul>
+          <p id="ga-recent-empty" class="settings-note" hidden>Nothing yet.</p>
+        </section>
+      </section>
+
       <section class="screen" id="screen-settings" aria-label="Settings" hidden>
         <!-- Pair a phone: make the hub discoverable for a short window. The hub
              accepts the first phone that asks, so there is no code to read here:
@@ -514,6 +580,10 @@
       <button type="button" class="tab" data-screen="climate" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7l14 10M19 7L5 17"/></svg>
         <span>Climate</span>
+      </button>
+      <button type="button" class="tab" data-screen="garage" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6v10H3z"/><path d="M7 20v-7h10v7M7 15.5h10"/></svg>
+        <span>Garage</span>
       </button>
       <button type="button" class="tab" data-screen="settings">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>

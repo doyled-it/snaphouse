@@ -191,6 +191,7 @@ export function confirmState(intent) {
 }
 
 const ERROR_LINES = {
+  400: "That request expired. Start again.",
   403: "The garage can't be controlled from here right now.",
   409: "The door can't do that right now.",
   423: "Remote lockout is on at the opener.",
@@ -211,6 +212,59 @@ export function errorLine(status, body) {
     return sentence;
   }
   return ERROR_LINES[status] || "Something went wrong. Try again.";
+}
+
+// What the page does with the reply to POST garage/intent. An error shows the
+// hub's own sentence; a nonce with `confirm_required` true waits for a second
+// tap; a nonce with it false goes straight to the command. No nonce is never a
+// send.
+export function intentOutcome(status, body, action) {
+  if (status !== 200 || !isObject(body) || typeof body.nonce !== "string" || body.nonce === "") {
+    return { kind: "error", text: errorLine(status === 200 ? 400 : status, body) };
+  }
+  const confirm = confirmState({ ...body, action });
+  if (confirm.needsConfirm) {
+    return { kind: "confirm", nonce: body.nonce, text: confirm.text, note: confirm.note };
+  }
+  return { kind: "send", nonce: body.nonce };
+}
+
+// What the page does with the reply to POST garage/command: sent, or the error
+// sentence. A command is never retried by the page.
+export function commandOutcome(status, body) {
+  if (status === 200) {
+    return { kind: "sent" };
+  }
+  return { kind: "error", text: errorLine(status, body) };
+}
+
+const SETTING_NAMES = {
+  left_open_minutes: "The time before an alert",
+  away_open_grace_minutes: "The wait",
+};
+
+// "" when the value is a whole number inside the setting's range, else the
+// sentence to show next to the field. Nothing out of range is ever written.
+export function checkSetting(key, value) {
+  const limits = settingLimits[key];
+  if (!limits || !Number.isInteger(value) || value < limits.min || value > limits.max) {
+    return `${SETTING_NAMES[key] || "This"} must be a whole number between ${limits ? limits.min : 0} and ${limits ? limits.max : 0}.`;
+  }
+  return "";
+}
+
+// One Recent row: "17:40  Closed (from home)". `formatTime` turns the timestamp
+// in milliseconds into the clock text, so the rule stays pure.
+export function recentLine(entry, formatTime) {
+  const word = entry.event ? entry.event[0].toUpperCase() + entry.event.slice(1) : "Changed";
+  let from = "";
+  if (entry.origin === "home") {
+    from = " (from home)";
+  } else if (entry.origin === "tunnel") {
+    from = entry.who ? ` (from away, ${entry.who})` : " (from away)";
+  }
+  const when = entry.atMs === null ? "" : formatTime(entry.atMs);
+  return when ? `${when}  ${word}${from}` : `${word}${from}`;
 }
 
 export function pollMs(screenIsGarage) {
