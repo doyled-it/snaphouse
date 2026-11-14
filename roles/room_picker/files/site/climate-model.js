@@ -339,6 +339,13 @@ export function parseThisDevice(raw) {
   return { canAdd: raw.can_add, countedAs: raw.counted_as, reason: raw.reason };
 }
 
+// The device to keep after a this-device refresh. A failed or unreadable reply
+// (null) must not close an open add form or drop the typed name, so while the
+// form is open or a people write is in flight the previous value stands.
+export function nextDevice(previous, fetched, holdOnFailure) {
+  return fetched === null && holdOnFailure ? previous : fetched;
+}
+
 // What the people panel says about this phone: the add button, who it already
 // counts as, a hint to use home Wi-Fi, or nothing.
 export function deviceLine(device) {

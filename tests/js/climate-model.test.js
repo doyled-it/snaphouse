@@ -7,6 +7,7 @@ import {
   checkName,
   checkSettings,
   deviceLine,
+  nextDevice,
   lastChangeText,
   overrideText,
   parseClimate,
@@ -402,4 +403,13 @@ test("checkName applies homebody's clean_name rules", () => {
 test("addBody and removeBody build the request bodies", () => {
   assert.equal(addBody("  Sam "), JSON.stringify({ name: "Sam" }));
   assert.equal(removeBody("added-0a1b2c3d"), JSON.stringify({ id: "added-0a1b2c3d" }));
+});
+
+test("nextDevice keeps the previous device on a failed refresh only while the form or a write is active", () => {
+  const prev = { canAdd: true, countedAs: null, reason: null };
+  const fresh = { canAdd: false, countedAs: "Alex", reason: null };
+  assert.equal(nextDevice(prev, null, true), prev);
+  assert.equal(nextDevice(prev, null, false), null);
+  assert.equal(nextDevice(prev, fresh, true), fresh);
+  assert.equal(nextDevice(null, null, true), null);
 });

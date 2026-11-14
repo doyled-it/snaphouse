@@ -94,6 +94,7 @@ import {
   addBody,
   checkName,
   deviceLine,
+  nextDevice,
   removeBody,
   parseWhole,
   peopleLines,
@@ -3716,7 +3717,7 @@ async function refreshThisDevice() {
   } catch (_) {
     device = null;
   }
-  climateDevice = device;
+  climateDevice = nextDevice(climateDevice, device, climateAdding || climatePeopleBusy);
   renderClimate();
 }
 
@@ -3874,7 +3875,6 @@ function renderDevice(doc) {
   climateEls.deviceGo.disabled = climatePeopleBusy;
   if (line.kind !== "add") {
     climateAdding = false;
-    clearFieldError(climateEls.deviceError);
   }
 }
 
@@ -3908,7 +3908,6 @@ async function postPeople(path, bodyText) {
 
 async function removePerson(id) {
   clearFieldError(climateEls.deviceError);
-  climateEls.device.hidden = false;
   const ok = await postPeople("/api/homebody/people/remove", removeBody(id));
   climateRemoveId = null;
   if (ok) {
