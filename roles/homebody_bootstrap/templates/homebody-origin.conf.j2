@@ -1,0 +1,13 @@
+# Managed by snaphouse (homebody_bootstrap role). Do not edit by hand.
+#
+# Classifies each request as coming from the home LAN or through the tunnel, for
+# the garage API. This file is included at http level (Debian's nginx.conf includes
+# conf.d/*.conf there); geo and map are not allowed inside the server block that
+# snaphouse.d/homebody.conf drops into. The location block sets the result as
+# X-Snaphouse-Origin, overwriting anything a client sent.
+#
+# A request is "home" only when it has no Cf-Connecting-Ip header and its source
+# is a private range. Loopback is deliberately not listed, so the tunnel daemon
+# (which connects from loopback) is never treated as home.
+geo $remote_addr $snaphouse_lan { default 0; 10.0.0.0/8 1; 172.16.0.0/12 1; 192.168.0.0/16 1; fc00::/7 1; fe80::/10 1; }
+map "$http_cf_connecting_ip:$snaphouse_lan" $snaphouse_origin { default tunnel; ":1" home; }

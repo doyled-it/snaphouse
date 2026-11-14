@@ -501,6 +501,21 @@ JSON body with any subset of `enabled` (bool), `comfort_f` (int 60 to 85), `away
   (paced, no override flagged for its own change), unless a hand-change override is active, which
   holds until the next transition.
 
+*Request origin.* nginx sets `X-Snaphouse-Origin` on every `/api/homebody/` request with
+`proxy_set_header`, so a client-supplied value is always overwritten. The value is `home` or
+`tunnel`. A request is `home` only when it carries no `Cf-Connecting-Ip` header and its source
+address is in `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7` or `fe80::/10`;
+anything else is `tunnel`. Loopback is not LAN, so the tunnel daemon's own connections are
+`tunnel`. homebody reads only this header, and a missing header means `tunnel`. The `geo` and
+`map` live at http level in `/etc/nginx/conf.d/homebody-origin.conf` (the `homebody_bootstrap`
+role installs it); the location block only forwards the result. The Cloudflare Access headers
+(`Cf-Access-Authenticated-User-Email`, `Cf-Connecting-Ip`) pass through to homebody untouched.
+Tunnel requests are gated by this header only; a person at home is never asked to prove it.
+
+*Garage door status additions.* `door.last_known_state` (string or null, additive; the status
+`version` stays 1) holds the last state seen before the link dropped, so the page can show
+"Last seen N min ago (was closed)" while `door.state` is `unknown`.
+
 With no enabled people in `local.toml`, occupancy stays unknown and nothing is ever commanded. The
 hub's `homebody-update` path restarts `homebody-matter homebody`, the same unit names the role
 installs. The on-device check `homebody_status.sh` needs the unit active and `/homebody.json` served

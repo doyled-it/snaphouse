@@ -130,6 +130,17 @@
     mode: "0644"
   notify: Reload nginx for homebody_bootstrap
 
+- name: Install the homebody request-origin marker
+  # http-level geo and map, so it goes in conf.d (Debian's nginx.conf includes
+  # conf.d/*.conf at http level), not the server-level snaphouse.d dir.
+  ansible.builtin.template:
+    src: homebody-origin.conf.j2
+    dest: /etc/nginx/conf.d/homebody-origin.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx for homebody_bootstrap
+
 - name: Ensure the verify.d dir exists for on-device check scripts
   ansible.builtin.file:
     path: /etc/snaphouse/verify.d

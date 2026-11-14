@@ -23,8 +23,14 @@ the last-good commit if the apply or verify fails.
   not put the household's details into them. `tests/python/test_hosts.py`
   enforces the no-MAC, no-private-IP part on `vars/` and `local.example.yml`.
 - **No em dashes** in code, comments, docs, commit messages, or UI text.
-- **No inbound access from the internet.** No tunnels, port forwards, or
-  cloud-hosted control. Outbound is limited per machine (GitHub, OS mirrors,
+- **No inbound access from the internet, except one tunnel.** No port forwards
+  and no cloud-hosted control. The single exception is one Cloudflare Tunnel
+  behind Cloudflare Access (email one-time PIN, the two household users only). It
+  may reach only the web server on the hub, never another port or machine. What a
+  tunnel request may do is decided by the `X-Snaphouse-Origin` header (`home` or
+  `tunnel`) that nginx sets on `/api/homebody/` and always overwrites; a missing
+  header means tunnel (`roles/homebody_bootstrap`, contract in
+  `docs/cross-repo-features.md`). Outbound is limited per machine (GitHub, OS mirrors,
   NTP; the hub (`house`) also reaches the now-playing cover-lookup catalogues:
   `itunes.apple.com` and the `*.mzstatic.com` artwork CDN, `musicbrainz.org`,
   `coverartarchive.org` and the `archive.org` hosts it and Open Library covers
@@ -36,6 +42,8 @@ the last-good commit if the apply or verify fails.
   `raw.githubusercontent.com`, the project-chip development certificates);
   the hub also pulls its pinned AirPlay 2 receiver image from Docker Hub
   (`registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com`);
+  the hub also reaches the garage door board on the LAN (TCP 6053) and
+  the ntfy server (named only in local config);
   plus nightstand's list on the `nightstand` host). Lookup requests carry only
   track, show, book, artist, or typed place names and a User-Agent naming the
   public repo.
