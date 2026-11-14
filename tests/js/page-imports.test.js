@@ -50,3 +50,12 @@ test("the Garage command is never retried by the page", () => {
   const sends = source.match(/postGarage\("\/api\/homebody\/garage\/command"/g) || [];
   assert.equal(sends.length, 1, "one call site for the command");
 });
+
+test("a refused garage settings write puts the remote switch back to the server's value at once", () => {
+  const source = readFileSync(path.join(SITE, "rooms.js"), "utf8");
+  const body = source.match(/async function writeGarage\([\s\S]*?\n\}\n/)[0];
+  const refused = body.slice(body.indexOf("if (!response.ok)"), body.indexOf("const doc = parseGarageText"));
+  const reset = refused.indexOf("setGarageSwitch(garageWritten.remote === true)");
+  assert.ok(reset >= 0, "the refused branch resets the switch");
+  assert.ok(reset < refused.indexOf("throw"), "and does so before it throws");
+});

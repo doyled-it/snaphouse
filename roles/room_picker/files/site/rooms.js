@@ -4388,6 +4388,8 @@ async function writeGarage(obj) {
     const data = safeJsonParse(text);
     const message = (data && data.error) || `Request failed (${response.status}).`;
     showFieldError(garageEls.settingsError, message);
+    // The switch was set optimistically; show what the hub still holds.
+    setGarageSwitch(garageWritten.remote === true);
     throw new Error(message);
   }
   const doc = parseGarageText(text);

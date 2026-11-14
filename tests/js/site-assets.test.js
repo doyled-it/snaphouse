@@ -170,3 +170,19 @@ test("six tabs fit a 360 px bar: the labels may shorten but never wrap", () => {
   assert.match(css, /\.tab span\s*\{[^}]*white-space:\s*nowrap/);
   assert.match(css, /\.tab span\s*\{[^}]*text-overflow:\s*ellipsis/);
 });
+
+test("the Garage settings notes say what zero does for each setting", () => {
+  const section = html.slice(html.indexOf('id="screen-garage"'));
+  const left = section.indexOf('data-setting="left_open_minutes"');
+  const grace = section.indexOf('data-setting="away_open_grace_minutes"');
+  const off = section.indexOf("Zero turns this alert off.");
+  const now = section.indexOf("Zero alerts right away.");
+  assert.ok(left >= 0 && grace > left, "both settings exist");
+  assert.ok(off > left && off < grace, "the off note sits under the left-open setting");
+  assert.ok(now > grace, "the right-away note sits under the grace setting");
+  assert.doesNotMatch(section, /Zero turns an alert off\./);
+});
+
+test("the Recent list has no dead .ga-when rule", () => {
+  assert.doesNotMatch(css, /\.ga-when/);
+});
