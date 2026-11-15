@@ -507,3 +507,125 @@ def test_homebody_api_route_sets_the_client_address():
     conf = _render_all(NGINX_CONF)
     block = conf.split("location /api/homebody/ {", 1)[1].split("}", 1)[0]
     assert "proxy_set_header X-Real-IP $remote_addr;" in block
+
+
+# --------------------------------------------------------------------------- #
+# the request origin marker for the garage API (Task 8 of the garage plan)
+# --------------------------------------------------------------------------- #
+
+ORIGIN_CONF = "roles/homebody_bootstrap/templates/homebody-origin.conf.j2"
+AGENTS_MD = REPO / "AGENTS.md"
+
+GEO_LINE = (
+    "geo $remote_addr $snaphouse_lan { default 0; 10.0.0.0/8 1; 172.16.0.0/12 1; "
+    "192.168.0.0/16 1; fc00::/7 1; fe80::/10 1; }"
+)
+MAP_LINE = (
+    'map "$http_cf_connecting_ip$http_cf_ray$http_cf_access_authenticated_user_email'
+    '$http_cf_access_jwt_assertion:$snaphouse_lan" $snaphouse_origin '
+    '{ default tunnel; ":1" home; }'
+)
+
+CLOUDFLARE_HEADER_VARS = (
+    "$http_cf_connecting_ip",
+    "$http_cf_ray",
+    "$http_cf_access_authenticated_user_email",
+    "$http_cf_access_jwt_assertion",
+)
+
+
+def _origin_conf() -> str:
+    return _render_all(ORIGIN_CONF)
+
+
+def _conf_lines(text: str) -> list[str]:
+    return [
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+
+
+def test_origin_conf_defines_geo_and_map_exactly():
+    assert _conf_lines(_origin_conf()) == [GEO_LINE, MAP_LINE]
+
+
+def test_api_location_overwrites_the_origin_header():
+    conf = _render_all(NGINX_CONF)
+    block = conf.split("location /api/homebody/ {", 1)[1].split("}", 1)[0]
+    assert "proxy_set_header X-Snaphouse-Origin $snaphouse_origin;" in block
+
+
+def test_origin_conf_installed_in_conf_d_and_reloads_nginx():
+    tmpl = _installs_template("homebody-origin.conf")
+    assert tmpl["src"] == "homebody-origin.conf.j2"
+    assert tmpl["dest"] == "/etc/nginx/conf.d/homebody-origin.conf"
+    route = next(
+        t for t in _tasks() if "snaphouse.d/homebody.conf" in str(_module(t)[1].get("dest"))
+    )
+    task = next(
+        t for t in _tasks() if "homebody-origin.conf" in str(_module(t)[1].get("dest"))
+    )
+    assert task["notify"] == route["notify"]
+
+
+def test_no_directive_hides_cloudflare_headers():
+    for template in (NGINX_CONF, ORIGIN_CONF):
+        conf = _render_all(template)
+        assert "proxy_set_header Cf-" not in conf
+        assert "proxy_set_header cf-" not in conf
+        assert "proxy_pass_request_headers off" not in conf
+
+
+def test_loopback_and_unmarked_requests_are_not_lan():
+    geo = _origin_conf().split("geo $remote_addr $snaphouse_lan {", 1)[1].split("}", 1)[0]
+    assert "127.0.0.0/8" not in geo
+    assert "::1" not in geo
+    assert "default 0;" in geo
+    # A request is home only with no Cloudflare header and a LAN source.
+    assert 'default tunnel;' in _origin_conf()
+    assert '":1" home;' in _origin_conf() or '":1" home' in _origin_conf()
+
+
+def test_agents_md_no_longer_says_no_tunnels():
+    text = AGENTS_MD.read_text()
+    assert "No tunnels, port forwards, or cloud-hosted control" not in text
+    assert "Cloudflare Tunnel" in text
+    assert "Cloudflare Access" in text
+    assert "X-Snaphouse-Origin" in text
+    assert "ntfy server" in text
+    assert "6053" in text
+
+
+def _classify(cf_values: list[str], lan: int) -> str:
+    """Evaluate the rendered map the way nginx does: the concatenated key."""
+    key = "".join(cf_values) + f":{lan}"
+    return "home" if key == ":1" else "tunnel"
+
+
+def test_origin_map_key_covers_every_cloudflare_header():
+    conf = _origin_conf()
+    key = conf.split('map "', 1)[1].split('"', 1)[0]
+    for var in CLOUDFLARE_HEADER_VARS:
+        assert var in key.split(":$snaphouse_lan")[0]
+
+
+def test_origin_case_table():
+    empty = ["", "", "", ""]
+    cases = [
+        (empty, 1, "home"),
+        (empty, 0, "tunnel"),
+        (["x", "", "", ""], 1, "tunnel"),
+        (["", "x", "", ""], 1, "tunnel"),
+        (["", "", "x", ""], 1, "tunnel"),
+        (["", "", "", "x"], 1, "tunnel"),
+        (["x", "x", "x", "x"], 0, "tunnel"),
+    ]
+    for values, lan, expected in cases:
+        assert _classify(values, lan) == expected, (values, lan)
+
+
+def test_origin_comment_states_the_lan_connector_model():
+    text = _origin_conf()
+    assert "loopback" not in text.lower()
+    assert "connector" in text

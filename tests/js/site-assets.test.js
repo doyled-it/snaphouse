@@ -137,3 +137,52 @@ test("the climate automation control is the shared switch, not a checkbox", () =
   assert.match(tag[0], /aria-label="Change the thermostat for me"/);
   assert.doesNotMatch(html, /<input[^>]*id="cl-enabled"/);
 });
+
+test("the Garage screen and tab exist, the tab hidden until the hub has a garage block", () => {
+  assert.match(html, /<section[^>]*id="screen-garage"[^>]*hidden/);
+  assert.match(html, /<button[^>]*class="tab"[^>]*data-screen="garage"[^>]*hidden/);
+  const tabs = [...html.matchAll(/class="tab"[^>]*data-screen="([a-z]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(tabs, ["listen", "frame", "gallery", "climate", "garage", "settings"]);
+});
+
+test("remote control is the shared switch, not a checkbox", () => {
+  const tag = html.match(/<button[^>]*id="ga-remote"[^>]*>/);
+  assert.ok(tag, "ga-remote is a button");
+  assert.match(tag[0], /class="toggle"/);
+  assert.match(tag[0], /role="switch"/);
+  assert.match(tag[0], /aria-label="Allow open and close from away"/);
+  assert.doesNotMatch(html, /<input[^>]*id="ga-remote"/);
+});
+
+test("the Garage card has the state word, the command button, the link line and Recent", () => {
+  for (const id of ["ga-word", "ga-duration", "ga-open", "ga-close", "ga-link", "ga-recent", "ga-left", "ga-grace", "ga-confirm"]) {
+    assert.match(html, new RegExp(`id="${id}"`), `${id} is missing`);
+  }
+});
+
+test("the Garage copy never names the parts", () => {
+  const section = html.match(/<section[^>]*id="screen-garage"[\s\S]*?<\/section>\s*\n\s*(?:<!--|<section)/);
+  assert.ok(section, "found the garage section");
+  assert.doesNotMatch(section[0], /esphome|board|ntfy|api\b|homebody/i);
+});
+
+test("six tabs fit a 360 px bar: the labels may shorten but never wrap", () => {
+  assert.match(css, /\.tab span\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(css, /\.tab span\s*\{[^}]*text-overflow:\s*ellipsis/);
+});
+
+test("the Garage settings notes say what zero does for each setting", () => {
+  const section = html.slice(html.indexOf('id="screen-garage"'));
+  const left = section.indexOf('data-setting="left_open_minutes"');
+  const grace = section.indexOf('data-setting="away_open_grace_minutes"');
+  const off = section.indexOf("Zero turns this alert off.");
+  const now = section.indexOf("Zero alerts right away.");
+  assert.ok(left >= 0 && grace > left, "both settings exist");
+  assert.ok(off > left && off < grace, "the off note sits under the left-open setting");
+  assert.ok(now > grace, "the right-away note sits under the grace setting");
+  assert.doesNotMatch(section, /Zero turns an alert off\./);
+});
+
+test("the Recent list has no dead .ga-when rule", () => {
+  assert.doesNotMatch(css, /\.ga-when/);
+});

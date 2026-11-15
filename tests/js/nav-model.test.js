@@ -31,7 +31,7 @@ test("visible tabs in bar order", () => {
   assert.deepEqual(visibleTabs({ frame: true, climate: true }), ["listen", "frame", "gallery", "climate", "settings"]);
 });
 test("every tab has a label", () => {
-  assert.deepEqual(TAB_LABELS, { listen: "Listen", frame: "Frame", gallery: "Gallery", climate: "Climate", settings: "Settings" });
+  assert.deepEqual(TAB_LABELS, { listen: "Listen", frame: "Frame", gallery: "Gallery", climate: "Climate", garage: "Garage", settings: "Settings" });
 });
 test("climate resolves to itself once it is visible", () => {
   assert.deepEqual(resolveScreen("#climate", { frame: false, climate: true }), { screen: "climate", hash: "#climate" });
@@ -61,7 +61,7 @@ test("#gallery/<id> keeps the piece, and #art/<id> aliases to it", () => {
   assert.deepEqual(resolveScreen("#gallery/", none), { screen: "gallery", hash: "#gallery" });
 });
 
-import { climateTabVisible } from "../../roles/room_picker/files/site/nav-model.js";
+import { climateTabVisible, garageTabVisible } from "../../roles/room_picker/files/site/nav-model.js";
 
 test("climate tab shows until the first read finishes", () => {
   assert.equal(climateTabVisible(null, false), true);
@@ -72,4 +72,30 @@ test("climate tab shows when homebody.json parsed", () => {
 test("climate tab hides when homebody.json is missing or malformed", () => {
   assert.equal(climateTabVisible(null, true), false);
   assert.equal(climateTabVisible(undefined, true), false);
+});
+
+test("six tabs in bar order when everything is visible", () => {
+  assert.deepEqual(visibleTabs({ frame: true, climate: true, garage: true }), [
+    "listen", "frame", "gallery", "climate", "garage", "settings",
+  ]);
+});
+test("garage is hidden unless visible.garage is true", () => {
+  assert.deepEqual(visibleTabs({ frame: false, climate: true }), ["listen", "gallery", "climate", "settings"]);
+  assert.equal(visibleTabs({ garage: false }).includes("garage"), false);
+});
+test("hidden garage falls back to listen", () => {
+  assert.deepEqual(resolveScreen("#garage", none), { screen: "listen", hash: "#listen" });
+});
+test("garage resolves to itself once it is visible", () => {
+  assert.deepEqual(resolveScreen("#garage", { garage: true }), { screen: "garage", hash: "#garage" });
+});
+test("garage tab shows until the first read finishes", () => {
+  assert.equal(garageTabVisible(null, false), true);
+});
+test("garage tab shows when the garage block parsed", () => {
+  assert.equal(garageTabVisible({ state: "closed" }, true), true);
+});
+test("garage tab hides when the block is null or missing", () => {
+  assert.equal(garageTabVisible(null, true), false);
+  assert.equal(garageTabVisible(undefined, true), false);
 });

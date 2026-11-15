@@ -81,7 +81,19 @@ import {
   forgetReminder,
 } from "./rooms-model.js";
 import { createAutosave, changedKeys, saveStatus } from "./autosave-queue.js";
-import { climateTabVisible, frameTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
+import { climateTabVisible, frameTabVisible, garageTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
+import {
+  afterCommandPoll,
+  checkSetting as checkGarageSetting,
+  commandOutcome,
+  garageView,
+  intentOutcome,
+  parseGarageText,
+  pollMs as garagePollMs,
+  recentLine,
+  settingLimits as garageLimits,
+  settingsBody as garageSettingsBody,
+} from "./garage-model.js";
 import {
   EMPTY_PEOPLE_TEXT,
   SETTING_LIMITS,
@@ -155,6 +167,10 @@ const DEVICES_MS = 5000;
 // minute from the other tabs, so the tab appears and disappears with the file.
 const CLIMATE_MS = 15000;
 const CLIMATE_IDLE_EVERY = 4;
+// The garage block of the same document: every 5 s while the Garage tab shows,
+// once a minute from the other tabs (garage-model.js pollMs).
+const GARAGE_MS = 5000;
+const GARAGE_IDLE_EVERY = garagePollMs(false) / GARAGE_MS;
 
 // Shown on the connection line when a status reply will not parse. The page
 // keeps its last good render and says so quietly rather than breaking.
@@ -170,6 +186,7 @@ const els = {
     frame: document.getElementById("screen-frame"),
     gallery: document.getElementById("screen-gallery"),
     climate: document.getElementById("screen-climate"),
+    garage: document.getElementById("screen-garage"),
     settings: document.getElementById("screen-settings"),
   },
 
@@ -332,6 +349,10 @@ const state = {
   // first read has finished, which the Climate tab's visibility waits on.
   climate: null,
   climateProbed: false,
+  // The parsed garage block (null: module off or unreadable) and whether the
+  // first read has finished, which the Garage tab's visibility waits on.
+  garage: null,
+  garageProbed: false,
   config: { rooms: [] },
   cards: new Map(), // room id -> { card, toggle, slider }
   rooms: new Map(), // room id -> latest row from roomsFromStatus
@@ -444,12 +465,14 @@ async function start() {
   wirePairing();
   wireDevices();
   wireClimate();
+  wireGarage();
   renderDevices();
   resolveSelectedFrame();
   applyHash();
   renderPairing();
   refreshHealth();
   refreshClimate();
+  refreshGarage();
   // Read the frame-control document first (it sets the legacy flag and the frame
   // list), then fetch the mirror and history with the right per-frame URLs. The
   // control load kicks its own frame/art refresh when the context first resolves,
@@ -480,6 +503,7 @@ async function start() {
   timers.add(pairTick, PAIR_MS);
   timers.add(devicesTick, DEVICES_MS);
   timers.add(climateTick, CLIMATE_MS);
+  timers.add(garageTick, GARAGE_MS);
   timers.start();
 
   // The URL hash is the screen and the chosen frame: Back, forward, and a shared
@@ -560,6 +584,7 @@ function navVisible() {
   return {
     frame: frameTabVisible(state.frameControl, state.mirrors, state.framesProbed),
     climate: climateTabVisible(state.climate, state.climateProbed),
+    garage: garageTabVisible(state.garage, state.garageProbed),
   };
 }
 
@@ -584,6 +609,9 @@ function showScreen(name) {
   maybePollDevices();
   if (screen === "climate" && changed) {
     refreshClimate();
+  }
+  if (screen === "garage" && changed) {
+    refreshGarage();
   }
 }
 
@@ -1298,6 +1326,7 @@ function flushSettings() {
   sharedQueue.flush();
   rotationQueue.flush();
   climateQueue.flush();
+  garageQueue.flush();
   for (const queue of frameQuietQueues.values()) {
     queue.flush();
   }
@@ -4033,4 +4062,340 @@ async function writeClimate(obj) {
     throw new Error("The thermostat settings did not come back.");
   }
   applyClimate(doc);
+}
+
+// --------------------------------------------------------------------------- //
+// Garage: the door now, one button to move it, the alert settings and the
+// recent list. The rules are in garage-model.js; this part reads the garage
+// block of the hub's homebody.json, draws it, runs the intent and command
+// flow, and saves the settings through one autosave queue.
+// --------------------------------------------------------------------------- //
+
+const garageEls = {
+  panel: document.getElementById("ga-panel"),
+  word: document.getElementById("ga-word"),
+  duration: document.getElementById("ga-duration"),
+  lastSeen: document.getElementById("ga-lastseen"),
+  line: document.getElementById("ga-line"),
+  open: document.getElementById("ga-open"),
+  close: document.getElementById("ga-close"),
+  confirm: document.getElementById("ga-confirm"),
+  confirmNote: document.getElementById("ga-confirm-note"),
+  confirmText: document.getElementById("ga-confirm-text"),
+  confirmGo: document.getElementById("ga-confirm-go"),
+  confirmCancel: document.getElementById("ga-confirm-cancel"),
+  sent: document.getElementById("ga-sent"),
+  error: document.getElementById("ga-error"),
+  link: document.getElementById("ga-link"),
+  remote: document.getElementById("ga-remote"),
+  settingsError: document.getElementById("ga-settings-error"),
+  recent: document.getElementById("ga-recent"),
+  recentEmpty: document.getElementById("ga-recent-empty"),
+  inputs: {
+    left_open_minutes: document.getElementById("ga-left"),
+    away_open_grace_minutes: document.getElementById("ga-grace"),
+  },
+};
+
+let garageWritten = {};
+let garageRefused = new Map();
+let garageState = "idle";
+let garageTicks = 0;
+let garageRecentKey = "";
+// The tapped action and its nonce while the second tap is awaited, whether a
+// request is in flight, and the post-command poll (a timer id, or null).
+let garagePending = null;
+let garageBusy = false;
+let garagePoll = null;
+
+const garageQueue = createAutosave({
+  write: writeGarage,
+  onState: (next) => {
+    garageState = next;
+    showSaveStatus("garage", next, () => garageQueue.retry());
+    if (settled(next)) {
+      renderGarage();
+    }
+  },
+});
+
+async function refreshGarage() {
+  let doc = null;
+  try {
+    const response = await fetch("homebody.json", { cache: "no-store" });
+    if (response.ok) {
+      doc = parseGarageText(await response.text());
+    }
+  } catch (_) {
+    doc = null;
+  }
+  applyGarage(doc);
+}
+
+// Take a new garage block (a poll, or the reply to a write) and draw it. A
+// missing one hides the tab, and leaves the screen if it was showing.
+function applyGarage(doc) {
+  state.garage = doc;
+  state.garageProbed = true;
+  if (doc) {
+    garageWritten = { ...doc.settings };
+    garageQueue.seed(garageWritten);
+    renderGarage();
+  }
+  if (state.screen === "garage" && !navVisible().garage) {
+    applyHash();
+  } else {
+    syncTabs();
+  }
+}
+
+function garageTick() {
+  garageTicks += 1;
+  if (state.screen === "garage" || garageTicks % GARAGE_IDLE_EVERY === 0) {
+    refreshGarage();
+  }
+}
+
+function clockText(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function renderGarage() {
+  const doc = state.garage;
+  if (!doc) {
+    return;
+  }
+  const view = garageView(doc, Date.now());
+  garageEls.panel.dataset.state = view.word.toLowerCase();
+  garageEls.word.textContent = view.word;
+  garageEls.duration.hidden = !view.duration;
+  garageEls.duration.textContent = view.duration || "";
+  garageEls.lastSeen.hidden = !view.lastSeen;
+  garageEls.lastSeen.textContent = view.lastSeen || "";
+  garageEls.line.hidden = !view.line;
+  garageEls.line.textContent = view.line || "";
+  garageEls.link.textContent = view.linkLine;
+
+  const confirming = garagePending !== null;
+  garageEls.open.hidden = !view.buttons.open || confirming;
+  garageEls.close.hidden = !view.buttons.close || confirming;
+  garageEls.open.disabled = view.disabled.open || garageBusy;
+  garageEls.close.disabled = view.disabled.close || garageBusy;
+
+  if (settled(garageState) && garageRefused.size === 0) {
+    for (const [name, input] of Object.entries(garageEls.inputs)) {
+      if (doc.settings[name] !== null) {
+        setFieldValue(input, String(doc.settings[name]));
+      }
+    }
+    setGarageSwitch(doc.settings.remote === true);
+  }
+
+  const lines = doc.recent.map((entry) => recentLine(entry, clockText));
+  const key = JSON.stringify(lines);
+  if (key !== garageRecentKey) {
+    garageRecentKey = key;
+    garageEls.recent.replaceChildren(
+      ...lines.map((text) => {
+        const item = document.createElement("li");
+        item.textContent = text;
+        return item;
+      }),
+    );
+  }
+  garageEls.recent.hidden = lines.length === 0;
+  garageEls.recentEmpty.hidden = lines.length > 0;
+}
+
+function setGarageSwitch(on) {
+  garageEls.remote.setAttribute("aria-checked", on ? "true" : "false");
+  garageEls.remote.textContent = on ? "On" : "Off";
+}
+
+function showGarageSent(text) {
+  garageEls.sent.hidden = text === "";
+  garageEls.sent.textContent = text;
+}
+
+function endGaragePoll() {
+  if (garagePoll !== null) {
+    clearInterval(garagePoll);
+    garagePoll = null;
+  }
+  showGarageSent("");
+}
+
+// After a command, read the document every 2 s for up to 15 s, then fall back to
+// the normal poll. It stops early once the door is moving or has arrived.
+function startGaragePoll(action) {
+  endGaragePoll();
+  const { everyMs, forMs } = afterCommandPoll();
+  const stopAt = Date.now() + forMs;
+  const target = action === "open" ? "open" : "closed";
+  showGarageSent("Sent. Waiting for the door.");
+  garagePoll = setInterval(async () => {
+    await refreshGarage();
+    const now = state.garage ? state.garage.state : null;
+    if (Date.now() >= stopAt || now === "opening" || now === "closing" || now === target) {
+      endGaragePoll();
+    }
+  }, everyMs);
+}
+
+function clearGaragePending() {
+  garagePending = null;
+  garageEls.confirm.hidden = true;
+  garageEls.confirmNote.hidden = true;
+}
+
+async function postGarage(path, body) {
+  const { url, init } = apiRequest(path, body);
+  const response = await fetch(url, init);
+  return { status: response.status, body: safeJsonParse(await response.text()) };
+}
+
+// A tap on Open or Close: ask the hub for a nonce, then either send the command
+// straight away or wait for the second tap, as the intent reply says.
+async function onGarageTap(action) {
+  if (garageBusy) {
+    return;
+  }
+  garageBusy = true;
+  clearFieldError(garageEls.error);
+  clearGaragePending();
+  endGaragePoll();
+  renderGarage();
+  try {
+    const reply = await postGarage("/api/homebody/garage/intent", { action });
+    const out = intentOutcome(reply.status, reply.body, action);
+    if (out.kind === "error") {
+      showFieldError(garageEls.error, out.text);
+    } else if (out.kind === "confirm") {
+      garagePending = { action, nonce: out.nonce };
+      garageEls.confirmText.textContent = out.text;
+      garageEls.confirmNote.textContent = out.note || "";
+      garageEls.confirmNote.hidden = !out.note;
+      garageEls.confirmGo.textContent = action === "close" ? "Close" : "Open";
+      garageEls.confirm.hidden = false;
+      garageEls.confirmGo.focus();
+    } else {
+      await sendGarageCommand(action, out.nonce);
+    }
+  } catch (_) {
+    showFieldError(garageEls.error, "Can't reach the house right now. Try again.");
+  } finally {
+    garageBusy = false;
+    renderGarage();
+  }
+}
+
+// The command goes out once. A failure shows the hub's sentence and nothing
+// retries it.
+async function sendGarageCommand(action, nonce) {
+  const reply = await postGarage("/api/homebody/garage/command", { action, nonce });
+  const out = commandOutcome(reply.status, reply.body);
+  if (out.kind === "error") {
+    showFieldError(garageEls.error, out.text);
+    return;
+  }
+  const doc = parseGarageText(JSON.stringify(reply.body));
+  if (doc) {
+    applyGarage(doc);
+  }
+  startGaragePoll(action);
+}
+
+async function onGarageConfirm() {
+  if (garageBusy || !garagePending) {
+    return;
+  }
+  const { action, nonce } = garagePending;
+  garageBusy = true;
+  clearGaragePending();
+  clearFieldError(garageEls.error);
+  renderGarage();
+  try {
+    await sendGarageCommand(action, nonce);
+  } catch (_) {
+    showFieldError(garageEls.error, "Can't reach the house right now. Try again.");
+  } finally {
+    garageBusy = false;
+    renderGarage();
+  }
+}
+
+function wireGarage() {
+  garageEls.open.addEventListener("click", () => onGarageTap("open"));
+  garageEls.close.addEventListener("click", () => onGarageTap("close"));
+  garageEls.confirmGo.addEventListener("click", onGarageConfirm);
+  garageEls.confirmCancel.addEventListener("click", () => {
+    clearGaragePending();
+    renderGarage();
+  });
+  garageEls.remote.addEventListener("click", () => {
+    const on = garageEls.remote.getAttribute("aria-checked") !== "true";
+    setGarageSwitch(on);
+    haptics.step();
+    garageQueue.edit({ remote: on }, { delayMs: 0 });
+  });
+  for (const [name, input] of Object.entries(garageEls.inputs)) {
+    input.addEventListener("input", () => editGarageNumber(name, parseWhole(input.value)));
+    input.addEventListener("blur", () => garageQueue.flush());
+    const row = input.closest(".cl-stepper");
+    for (const button of row.querySelectorAll(".cl-step")) {
+      button.addEventListener("click", () => {
+        const { min, max } = garageLimits[name];
+        const current = parseWhole(input.value) ?? (state.garage ? state.garage.settings[name] : null) ?? min;
+        const next = Math.min(max, Math.max(min, current + Number(button.dataset.dir)));
+        haptics.step();
+        input.value = String(next);
+        editGarageNumber(name, next);
+      });
+    }
+  }
+}
+
+// One number changed. Refuse a bad value inline without writing; otherwise
+// queue it (saved 600 ms after the last change, or on blur).
+function editGarageNumber(name, value) {
+  const message = checkGarageSetting(name, value);
+  if (message) {
+    garageRefused.set(name, message);
+    garageEls.inputs[name].setAttribute("aria-invalid", "true");
+    showFieldError(garageEls.settingsError, message);
+    return;
+  }
+  garageRefused.delete(name);
+  garageEls.inputs[name].removeAttribute("aria-invalid");
+  const [first] = garageRefused.values();
+  if (first) {
+    showFieldError(garageEls.settingsError, first);
+  } else {
+    clearFieldError(garageEls.settingsError);
+  }
+  garageQueue.edit({ [name]: value });
+}
+
+async function writeGarage(obj) {
+  const body = garageSettingsBody(garageWritten, obj);
+  if (Object.keys(body).length === 0) {
+    return;
+  }
+  const { url, init } = apiRequest("/api/homebody/settings", body);
+  const response = await fetch(url, init);
+  const text = await response.text();
+  if (!response.ok) {
+    const data = safeJsonParse(text);
+    const message = (data && data.error) || `Request failed (${response.status}).`;
+    showFieldError(garageEls.settingsError, message);
+    // The switch was set optimistically; show what the hub still holds.
+    setGarageSwitch(garageWritten.remote === true);
+    throw new Error(message);
+  }
+  const doc = parseGarageText(text);
+  if (!doc) {
+    throw new Error("The garage settings did not come back.");
+  }
+  clearFieldError(garageEls.settingsError);
+  applyGarage(doc);
 }

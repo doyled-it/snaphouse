@@ -23,8 +23,14 @@ the last-good commit if the apply or verify fails.
   not put the household's details into them. `tests/python/test_hosts.py`
   enforces the no-MAC, no-private-IP part on `vars/` and `local.example.yml`.
 - **No em dashes** in code, comments, docs, commit messages, or UI text.
-- **No inbound access from the internet.** No tunnels, port forwards, or
-  cloud-hosted control. Outbound is limited per machine (GitHub, OS mirrors,
+- **No inbound access from the internet, except one tunnel.** No port forwards
+  and no cloud-hosted control. The single exception is one Cloudflare Tunnel
+  behind Cloudflare Access (email one-time PIN, the two household users only). It
+  may reach only the web server on the hub, never another port or machine. What a
+  tunnel request may do is decided by the `X-Snaphouse-Origin` header (`home` or
+  `tunnel`) that nginx sets on `/api/homebody/` and always overwrites; a missing
+  header means tunnel (`roles/homebody_bootstrap`, contract in
+  `docs/cross-repo-features.md`). Outbound is limited per machine (GitHub, OS mirrors,
   NTP; the hub (`house`) also reaches the now-playing cover-lookup catalogues:
   `itunes.apple.com` and the `*.mzstatic.com` artwork CDN, `musicbrainz.org`,
   `coverartarchive.org` and the `archive.org` hosts it and Open Library covers
@@ -36,6 +42,8 @@ the last-good commit if the apply or verify fails.
   `raw.githubusercontent.com`, the project-chip development certificates);
   the hub also pulls its pinned AirPlay 2 receiver image from Docker Hub
   (`registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com`);
+  the hub also reaches the garage door board on the LAN (TCP 6053) and
+  the ntfy server (named only in local config);
   plus nightstand's list on the `nightstand` host). Lookup requests carry only
   track, show, book, artist, or typed place names and a User-Agent naming the
   public repo.
@@ -201,10 +209,10 @@ Settings.
 ## Page navigation
 
 The room-picker page has no drawer. A `<nav aria-label="Pages">` of tabs
-(Listen, Frame, Gallery, Climate, Settings) is fixed to the bottom on a phone
+(Listen, Frame, Gallery, Climate, Garage, Settings) is fixed to the bottom on a phone
 and becomes a vertical left rail in the 800x480 kiosk media query. The URL hash
 is the screen: `#listen` (home), `#frame` and `#frame/<id>`, `#gallery`,
-`#climate`, `#settings`. `#art` and `#art/...` are aliases of `#gallery`. The
+`#climate`, `#garage`, `#settings`. `#art` and `#art/...` are aliases of `#gallery`. The
 rules are pure in `nav-model.js` (`resolveScreen`, `visibleTabs`,
 `frameTabVisible`, tests in `tests/js/nav-model.test.js`); `rooms.js` applies
 them on load and on `hashchange`, and rewrites the hash with `replaceState`
@@ -266,6 +274,29 @@ The 200 reply is the full status document and is rendered. A value out of range,
 comfort at or above away, is refused inline before any write and its field is left
 alone by polls until fixed. Rendering never overwrites a field the queue holds
 pending, saving or failed.
+
+## Garage tab
+
+Garage is the page half of homebody's garage module (contract in
+`docs/cross-repo-features.md`, garage sections). The rules are pure in `garage-model.js`
+(`parseGarageText` returns null for a missing or unusable `garage` block, which hides the tab;
+`garageView`, `intentOutcome`, `commandOutcome`, `errorLine`, `checkSetting`, `settingsBody`,
+`recentLine`, `pollMs`, `afterCommandPoll`; tests in `tests/js/garage-model.test.js`, against a
+byte copy of homebody's sample in `tests/js/fixtures/homebody-garage.json`); `rooms.js` only draws
+and wires. `garageTabVisible` in `nav-model.js` mirrors `climateTabVisible`, and `#garage` falls
+back to Listen while the tab is hidden. The tab order is Listen, Frame, Gallery, Climate, Garage,
+Settings, and on a 360 px phone the labels shorten with an ellipsis rather than wrap.
+
+The card shows the door word with how long, one Open or Close button, the link line, the alert
+settings (the two minute values through one `autosave-queue.js` queue, refused inline outside their
+range; "Allow open and close from away" is the shared switch) and the Recent list. UNKNOWN is shown
+whenever the link is down, with "Last seen N min ago (was closed)"; the page never shows closed unless
+the link is live. A tap posts `garage/intent`; only the reply's `confirm_required` decides whether a
+second tap (an inline "Open the garage door? Open / Cancel", with "You are away. This moves the door."
+above it) is needed before `garage/command`. The command is sent once, never retried. A refused or
+failed request shows the hub's own error sentence (`errorLine`); a timeout always shows "No movement
+seen yet. Check the card before trying again." After a command the page polls every 2 s for up to 15 s.
+Both POSTs carry `X-Snaphouse: 1`. UI copy never says ESPHome, board, ntfy, API or homebody.
 
 ## The Bluetooth name is published as a static file
 

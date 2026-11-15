@@ -501,6 +501,88 @@ JSON body with any subset of `enabled` (bool), `comfort_f` (int 60 to 85), `away
   (paced, no override flagged for its own change), unless a hand-change override is active, which
   holds until the next transition.
 
+*Request origin.* nginx sets `X-Snaphouse-Origin` on every `/api/homebody/` request with
+`proxy_set_header`, so a client-supplied value is always overwritten. The value is `home` or
+`tunnel`. A request is `home` only when all four Cloudflare headers (`Cf-Connecting-Ip`,
+`Cf-Ray`, `Cf-Access-Authenticated-User-Email`, `Cf-Access-Jwt-Assertion`) are empty and its
+source address is in `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7` or
+`fe80::/10`; anything else is `tunnel`. The tunnel connector sits on the LAN (a separate
+machine), not on loopback, so its requests arrive from a private address exactly like a phone
+at home; the source address alone cannot tell them apart, and the Cloudflare headers are the
+discriminator. Any one of them present means `tunnel`, which fails closed. homebody reads only
+this header, and a missing header means `tunnel`. The `geo` and `map` live at http level in
+`/etc/nginx/conf.d/homebody-origin.conf` (the `homebody_bootstrap` role installs it); the
+location block only forwards the result. The Cloudflare Access headers pass through to homebody
+untouched. A request marked `tunnel` must also carry the Access marker to command the door.
+
+*Garage door status additions.* `door.last_known_state` (string or null, additive; the status
+`version` stays 1) holds the last state seen before the link dropped, so the page can show
+"Last seen N min ago (was closed)" while `door.state` is `unknown`.
+
+*Garage door (the `garage` key).* `homebody.json` carries one extra key, `garage`, which is
+`null` when the garage module is off (the page then hides the Garage tab). Every key is always
+present, null when unknown; timestamps are UTC whole seconds; `door.state` is `unknown` whenever
+`link.connected` is false, and the page never shows `closed` unless the link is live. `status.version`
+stays 1. The shape:
+
+```json
+"garage": {
+  "link": {"connected": true, "last_seen": "2026-11-14T18:02:11Z"},
+  "door": {
+    "state": "closed",
+    "since": "2026-11-14T17:40:03Z",
+    "since_approximate": false,
+    "position": 0,
+    "last_known_state": "closed"
+  },
+  "obstruction": false,
+  "lockout": false,
+  "light": false,
+  "settings": {"left_open_minutes": 15, "away_open_grace_minutes": 5, "alerts": true, "remote": true},
+  "recent": [
+    {"at": "2026-11-14T17:40:03Z", "event": "closed", "origin": "home", "who": null}
+  ]
+}
+```
+
+`door.state` is one of `closed`, `open`, `opening`, `closing`, `stopped`, `unknown`. `position` is
+0 to 100 or null. `recent` holds the last 10 door changes; `who` is null for a home command and, for a
+tunnel command, a label from local config or a short tag, never an email or address.
+
+*Garage endpoints.* All POST, JSON bodies, 64 KB cap, `X-Snaphouse: 1` required, served by the same
+loopback API:
+
+- `POST /api/homebody/garage/intent` takes `{"action": "open" | "close"}` and returns
+  `{"nonce", "expires_in", "confirm_required"}` (the nonce lives 30 s and is single use). The page
+  decides whether a second tap is needed from `confirm_required` alone, never from its own guess about
+  where it is.
+- `POST /api/homebody/garage/command` takes `{"action", "nonce"}` and returns the full status document.
+  A command is a request for an end state, not a toggle: `open` when already open is a 200 no-op. It is
+  never retried, by the hub or the page; nothing moves a door without a person's tap.
+- `POST /api/homebody/settings` takes `garage_left_open_minutes` (0 to 240, 0 turns the alert off),
+  `garage_away_open_grace_minutes` (0 to 15), `garage_alerts` (bool) and `garage_remote` (bool, default
+  off; turning it on is refused from the tunnel, turning it off is allowed from anywhere).
+
+Errors carry a plain `{"error": "<sentence>"}` the page shows as written:
+
+| Status | Meaning |
+|---|---|
+| 400 | bad action, or a nonce that is spent, expired or unknown ("That request expired. Start again.") |
+| 403 | missing guard header, remote control off, tunnel request without the Access marker, or remote enabling of remote control |
+| 409 | obstruction reported, state unknown, or the door already moving the other way |
+| 423 | the opener's remote lockout is on |
+| 429 | rate limit |
+| 503 | the opener link is down |
+| 504 | the opener did not confirm movement ("No movement seen yet. Check the card before trying again.") |
+
+After a command the page shows "Sent. Waiting for the door." and reads `homebody.json` every 2 s for up
+to 15 s. The page reads the document every 5 s while the Garage tab shows and once a minute elsewhere.
+
+*Garage sample fixture.* The sample document lives in homebody's `tests/fixtures/garage_status_sample.json`,
+with a byte copy at `tests/js/fixtures/homebody-garage.json` in this repo. The two must change together:
+homebody's test builds the document from the real code and compares it with its sample, and this
+repo's `garage-model.test.js` and `site-assets.test.js` read the copy.
+
 With no enabled people in `local.toml`, occupancy stays unknown and nothing is ever commanded. The
 hub's `homebody-update` path restarts `homebody-matter homebody`, the same unit names the role
 installs. The on-device check `homebody_status.sh` needs the unit active and `/homebody.json` served

@@ -190,6 +190,14 @@ a {
   cursor: pointer;
 }
 
+/* Six tabs on a 360 px bar: a label shortens with an ellipsis, never wraps. */
+.tab span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tab svg {
   width: 24px;
   height: 24px;
@@ -2520,5 +2528,91 @@ a.row-title {
   .cl-stepper {
     grid-template-columns: 1fr auto;
     align-items: center;
+  }
+}
+
+/* --- Garage ---------------------------------------------------------------- */
+
+.ga-word {
+  margin: 0;
+  font-size: 2.6rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+}
+
+.ga-duration {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+}
+
+.ga-line {
+  margin: 10px 0 0;
+  color: var(--yellow);
+  font-weight: 600;
+}
+
+.ga-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0 8px;
+}
+
+.ga-btn {
+  min-height: 48px;
+  min-width: 110px;
+}
+
+.ga-btn:disabled {
+  opacity: 0.45;
+}
+
+.ga-confirm {
+  margin-top: 8px;
+}
+
+.ga-note {
+  margin: 0 0 6px;
+  color: var(--yellow);
+  font-weight: 600;
+}
+
+.ga-confirm-text {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.ga-sent {
+  margin: 8px 0 0;
+  color: var(--ink-2);
+}
+
+#ga-panel[data-state="unknown"] .ga-word {
+  color: var(--yellow);
+}
+
+.ga-recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.ga-recent li {
+  display: flex;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 720px) and (max-height: 540px) {
+  #screen-garage .panel {
+    padding: 10px 16px;
+  }
+
+  .ga-word {
+    font-size: 2.2rem;
   }
 }
