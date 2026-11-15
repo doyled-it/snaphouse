@@ -106,6 +106,7 @@ import {
   addBody,
   checkName,
   deviceLine,
+  REMOTE_LINK_TEXT,
   nextDevice,
   removeBody,
   parseWhole,
@@ -3890,6 +3891,24 @@ function personRemoveControl(line) {
   return box;
 }
 
+// Fills the hint. The remote hint carries a real link to the local page; any
+// other kind is plain text, and a re-render always clears a previous link.
+function renderDeviceText(el, line) {
+  el.replaceChildren();
+  if (!line) {
+    return;
+  }
+  const at = line.href ? line.text.indexOf(REMOTE_LINK_TEXT) : -1;
+  if (at < 0) {
+    el.textContent = line.text;
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = line.href;
+  a.textContent = REMOTE_LINK_TEXT;
+  el.append(line.text.slice(0, at), a, line.text.slice(at + REMOTE_LINK_TEXT.length));
+}
+
 function renderDevice(doc) {
   const line = deviceLine(climateDevice);
   const showAdd = line.kind === "add" && !climateAdding;
@@ -3897,7 +3916,7 @@ function renderDevice(doc) {
   const showText = line.kind === "counted" || line.kind === "remote";
   climateEls.device.hidden = line.kind === "none";
   climateEls.deviceText.hidden = !showText;
-  climateEls.deviceText.textContent = showText ? line.text : "";
+  renderDeviceText(climateEls.deviceText, showText ? line : null);
   climateEls.deviceAdd.hidden = !showAdd;
   climateEls.deviceAdd.disabled = climatePeopleBusy;
   climateEls.deviceForm.hidden = !showForm;

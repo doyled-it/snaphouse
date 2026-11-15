@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   EMPTY_PEOPLE_TEXT,
+  LOCAL_CLIMATE_URL,
   SETTING_LIMITS,
   addBody,
   checkName,
@@ -383,7 +384,8 @@ test("deviceLine has the four kinds with exact copy", () => {
   assert.deepEqual(deviceLine({ canAdd: false, countedAs: "Alex", reason: null }),
     { kind: "counted", text: "This phone counts as Alex." });
   assert.deepEqual(deviceLine({ canAdd: false, countedAs: null, reason: "remote" }),
-    { kind: "remote", text: "To count a phone, open this page on home Wi-Fi." });
+    { kind: "remote", text: "On home Wi-Fi? Open the local page to count this phone.", href: LOCAL_CLIMATE_URL });
+  assert.equal(LOCAL_CLIMATE_URL, "http://house.local/#climate");
   assert.deepEqual(deviceLine({ canAdd: false, countedAs: null, reason: "unknown" }),
     { kind: "none", text: "" });
   assert.deepEqual(deviceLine(null), { kind: "none", text: "" });
