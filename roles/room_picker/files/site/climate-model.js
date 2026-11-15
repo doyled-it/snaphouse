@@ -346,8 +346,14 @@ export function nextDevice(previous, fetched, holdOnFailure) {
   return fetched === null && holdOnFailure ? previous : fetched;
 }
 
+// The local copy of this page. Through the external address the hub cannot read
+// the phone's Wi-Fi address, so the remote hint links here.
+export const LOCAL_CLIMATE_URL = "http://house.local/#climate";
+export const REMOTE_HINT = "On home Wi-Fi? Open the local page to count this phone.";
+export const REMOTE_LINK_TEXT = "Open the local page";
+
 // What the people panel says about this phone: the add button, who it already
-// counts as, a hint to use home Wi-Fi, or nothing.
+// counts as, a link to the local page, or nothing.
 export function deviceLine(device) {
   if (!device) {
     return { kind: "none", text: "" };
@@ -359,7 +365,7 @@ export function deviceLine(device) {
     return { kind: "add", text: "Count this phone as home" };
   }
   if (device.reason === "remote") {
-    return { kind: "remote", text: "To count a phone, open this page on home Wi-Fi." };
+    return { kind: "remote", text: REMOTE_HINT, href: LOCAL_CLIMATE_URL };
   }
   return { kind: "none", text: "" };
 }
