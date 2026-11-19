@@ -25,6 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 hub = [
     "pillow>=10",
+    "pillow-heif>=0.16",
 ]
 
 # This project is not built or installed as a package. The CLI lives in bin/
