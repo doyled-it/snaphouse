@@ -29,6 +29,10 @@
     name: art
     groups: ente
     append: true
+  # A running service keeps the groups it started with, so artadmin must restart
+  # to read the 0750 mirror. The handler is defined in art_share (names are
+  # play-global) and runs at the end of the play, after this change.
+  notify: Restart the art admin service
 
 - name: Create the ente directories
   ansible.builtin.file:
@@ -52,7 +56,7 @@
 
 - name: Download the pinned Ente CLI
   ansible.builtin.get_url:
-    url: "https://github.com/ente-io/ente/releases/download/cli-v{{ ente_cli_version }}/ente-cli-v{{ ente_cli_version }}-linux-amd64.tar.gz"
+    url: "https://github.com/ente-io/ente/releases/download/ente-cli-v{{ ente_cli_version }}/ente-cli-v{{ ente_cli_version }}-linux-amd64.tar.gz"
     dest: "/opt/snaphouse/ente/ente-cli-v{{ ente_cli_version }}-linux-amd64.tar.gz"
     # Verified against the digest pinned in vars/all.yml.
     checksum: "sha256:{{ ente_cli_sha256 }}"

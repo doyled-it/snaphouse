@@ -45,7 +45,10 @@ def test_role_pins_cli_0_4_4_with_sha256_and_downloads_the_linux_amd64_asset():
     downloads = _find("get_url")
     assert len(downloads) == 1
     args = downloads[0]["ansible.builtin.get_url"]
-    assert "ente-cli-v{{ ente_cli_version }}-linux-amd64.tar.gz" in args["url"]
+    assert args["url"] == (
+        "https://github.com/ente-io/ente/releases/download/"
+        "ente-cli-v{{ ente_cli_version }}/ente-cli-v{{ ente_cli_version }}-linux-amd64.tar.gz"
+    )
     assert args["checksum"] == "sha256:{{ ente_cli_sha256 }}"
 
 
@@ -179,3 +182,14 @@ def test_verify_check_passes_when_not_set_up():
     assert "snaphouse-managed-check" in text
     assert "snaphouse-ente-sync.timer" in text
     assert "jq -e '.state'" in text
+
+
+def test_group_add_restarts_artadmin_so_it_picks_up_the_ente_group():
+    tasks = _tasks()
+    adds = [
+        t for t in tasks
+        if t.get("ansible.builtin.user", {}).get("name") == "art"
+    ]
+    assert len(adds) == 1
+    notify = adds[0]["notify"]
+    assert "Restart the art admin service" in ([notify] if isinstance(notify, str) else notify)
