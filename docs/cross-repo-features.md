@@ -314,9 +314,12 @@ background and the index is republished as they land. Shape:
 ```json
 {
   "generated_at": "2026-11-09T07:00:00-08:00",
+  "ente_sync": {"state": "ok", "last_success": "2026-11-09T06:30:00-08:00", "error": null},
   "folders": [
     {"name": "Collection", "count": 172, "enabled": true, "builtin": true},
-    {"name": "Photos", "count": 12, "enabled": false, "builtin": false}
+    {"name": "Photos", "count": 12, "enabled": false, "builtin": false},
+    {"name": "ente-a1B2c3", "count": 40, "enabled": true, "builtin": false,
+     "source": "ente", "title": "Album One"}
   ],
   "pieces": [
     {
@@ -325,6 +328,14 @@ background and the index is republished as they land. Shape:
       "width": 4032, "height": 3024, "landscape": true,
       "size": 2481234, "mtime": 1794125000,
       "thumb": "/art-thumbs/3f2a....jpg", "url": "/art/Photos/beach.jpg"
+    },
+    {
+      "id": "ente-a1B2c3/9f8e7d.jpg", "folder": "ente-a1B2c3", "file": "9f8e7d.jpg",
+      "title": "Album One", "artist": null, "source_url": null,
+      "width": 1600, "height": 1067, "landscape": true,
+      "size": 412345, "mtime": 1794125000,
+      "thumb": "/art-thumbs/7c1d....jpg", "url": "/art/ente-a1B2c3/9f8e7d.jpg",
+      "source": "ente"
     }
   ],
   "trash": [
@@ -340,6 +351,20 @@ root, at most one folder deep; `url` and `thumb` are percent-encoded per path se
 `id` is raw. `landscape` is true when the aspect is at least `settings.min_aspect` from the
 "Art control file" (default 1.1, the frame's landscape rule); pieces below the cutoff stay
 listed but do not rotate. `trash` entries are restorable for 30 days.
+
+Ente albums are additive and optional. A folder whose `name` starts with `ente-` (the reserved
+prefix, matched case-insensitively) is an Ente Photos album mirrored read-only by the hub: its
+`name` is `ente-` plus the album id, `source` is `"ente"` and `title` is the album's display
+name (art folders carry neither key). Its pieces carry `"source": "ente"`, a `file` of
+`<fileId>.jpg`, the album title as `title`, and a `url` under `/art/` that nginx serves from the
+downscaled JPEG renditions (up to 1600 px on the long side), not the originals. Ente folders sort
+after art folders, are never `builtin`, and a user-made art folder with the `ente-` prefix is
+ignored by the scan. A metadata-only pass lists an Ente piece only once its rendition exists.
+Top-level `ente_sync` is `{"state", "last_success", "error"}` with `state` one of `ok`,
+`failing`, `not_set_up` or `unknown`; it is present only on a hub that has the Ente source
+configured, and a consumer must tolerate its absence. The frame exempts `ente-` folders from
+`min_aspect`: an Ente piece rotates and can be shown whatever its shape, with `landscape` still
+reported as measured.
 `thumb` (on a piece or a trash entry) is `null` until the background pass has generated that
 thumbnail, so the index can be published before the thumbnails exist; a consumer must tolerate
 a null `thumb` (show a placeholder and re-read later). Thumbnails are served by the same nginx
@@ -353,7 +378,8 @@ too, to show the current settings). The same service writes
 
 ```json
 {
-  "settings": {"rotate_minutes": 60, "folders_enabled": ["Collection"], "min_aspect": 1.1},
+  "settings": {"rotate_minutes": 60, "folders_enabled": ["Collection"], "min_aspect": 1.1,
+               "ente_seen": []},
   "command": {"seq": 7, "action": "next", "piece": null, "frame": null,
               "issued_at": "2026-11-09T06:59:10-08:00"}
 }
@@ -364,7 +390,12 @@ too, to show the current settings). The same service writes
 enabled state. `settings.min_aspect` is the landscape cutoff (a positive number, default 1.1):
 a piece rotates only when its width/height reaches it, and the hub's `landscape` flag in the
 "Art index file" uses the same value, so the hub is the single source of truth and the frame
-follows it (its local config is only the fallback). `command` is `null` until the first
+follows it (its local config is only the fallback). `settings.ente_seen`
+lists the `ente-` folder ids the hub has already seen: an `ente-` folder in the "Art index file"
+that is not in `ente_seen` is appended to both `ente_seen` and `folders_enabled` once (a new
+album starts on), and an id in `ente_seen` that the owner switched off stays off across rescans
+and renames in Ente. The frame should treat `ente-` folders as exempt from `min_aspect`.
+`command` is `null` until the first
 command; `action` is `next`, `previous`, or
 `show` (`piece` is the id for `show`, otherwise `null`). `frame` scopes the command: a frame id
 means only that frame acts on it, and `null` means every frame (the compatible default). A frame

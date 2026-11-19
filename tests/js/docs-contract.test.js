@@ -38,6 +38,24 @@ test("the contract names the two fixture copies that must change together", () =
   assert.match(doc, /homebody-garage\.json/);
 });
 
+function section(heading) {
+  const start = doc.indexOf(heading);
+  assert.ok(start >= 0, `${heading} section is missing`);
+  const next = doc.indexOf("\n**", start + heading.length);
+  return doc.slice(start, next < 0 ? undefined : next);
+}
+
+test("the contract documents the Ente fields in the art index and control sections", () => {
+  const index = section("**Art index file.**");
+  const control = section("**Art control file.**");
+  for (const phrase of ['"source": "ente"', "ente_sync", "ente-"]) {
+    assert.ok(index.includes(phrase), `${phrase} is missing from the Art index file section`);
+  }
+  for (const phrase of ["ente_seen", "ente-"]) {
+    assert.ok(control.includes(phrase), `${phrase} is missing from the Art control file section`);
+  }
+});
+
 test("the contract has no em dash", () => {
   assert.ok(!doc.includes("\u2014"));
 });

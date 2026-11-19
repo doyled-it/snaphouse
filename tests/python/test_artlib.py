@@ -898,6 +898,13 @@ def _piece(index: dict, piece_id: str) -> dict:
     raise AssertionError(f"piece {piece_id!r} not in index")
 
 
+def _switch_off(library: Library, name: str) -> None:
+    """Turn a folder off the way the owner's toggle does, by editing the state file."""
+    data = json.loads(library.state.read_text(encoding="utf-8"))
+    data["settings"]["folders_enabled"].remove(name)
+    library.state.write_text(json.dumps(data), encoding="utf-8")
+
+
 def _folder(index: dict, name: str) -> dict:
     for folder in index["folders"]:
         if folder["name"] == name:
@@ -1017,3 +1024,215 @@ def test_ensure_thumbnails_covers_trash(tmp_path):
     entry = _trash_entry(library.scan(ensure_thumbnails=False), trash_id)
     assert entry is not None
     assert entry["thumb"] is not None
+
+
+# --------------------------------------------------------------------------- #
+# Ente albums as read-only folders
+# --------------------------------------------------------------------------- #
+
+
+def _ente_album(mirror: Path, album_id: str, title: str, files: dict) -> None:
+    """Write a mirror album: ``files`` maps file id to (width, height)."""
+    album_dir = mirror / album_id
+    album_dir.mkdir(parents=True, exist_ok=True)
+    record = {"title": title, "updated_at": 1, "files": {}}
+    for file_id, dims in files.items():
+        _write_image(album_dir / f"{file_id}.jpg", size=dims)
+        record["files"][file_id] = {"updated_at": 1, "hash": "h", "ext": "jpg"}
+    (album_dir / "album.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+def _ente_library(tmp_path: Path, *, with_status: bool = False) -> Library:
+    root = tmp_path / "art"
+    root.mkdir(parents=True, exist_ok=True)
+    return Library(
+        root,
+        tmp_path / "public" / "art-thumbs",
+        tmp_path / "state" / "art-control.json",
+        ente_root=tmp_path / "mirror",
+        ente_cache=tmp_path / "public" / "art-ente",
+        ente_status=(tmp_path / "ente-status.json") if with_status else None,
+    )
+
+
+def _switch_off(library: Library, name: str) -> None:
+    """Turn a folder off the way the owner's toggle does, by editing the state file."""
+    data = json.loads(library.state.read_text(encoding="utf-8"))
+    data["settings"]["folders_enabled"].remove(name)
+    library.state.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _folder(index: dict, name: str) -> dict:
+    return next(f for f in index["folders"] if f["name"] == name)
+
+
+def test_scan_without_ente_root_is_unchanged(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library.root / "a.jpg")
+    index = library.scan()
+    assert "ente_sync" not in index
+    assert all("source" not in f for f in index["folders"])
+    assert all("source" not in p for p in index["pieces"])
+    assert library.control()["settings"]["ente_seen"] == []
+
+
+def test_ente_sync_unknown_when_status_given_but_missing(tmp_path):
+    library = _ente_library(tmp_path, with_status=True)
+    index = library.scan()
+    assert index["ente_sync"] == {"state": "unknown", "last_success": None, "error": None}
+
+
+def test_ente_album_listed_as_folder_with_source_and_title(tmp_path):
+    library = _ente_library(tmp_path)
+    _write_image(library.root / "a.jpg")
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (400, 200)})
+    index = library.scan()
+    names = [f["name"] for f in index["folders"]]
+    assert names == ["Collection", "ente-alb1"]
+    folder = _folder(index, "ente-alb1")
+    assert folder["source"] == "ente"
+    assert folder["title"] == "Album One"
+    assert folder["count"] == 1
+    assert folder["builtin"] is False
+    piece = next(p for p in index["pieces"] if p["folder"] == "ente-alb1")
+    assert piece["source"] == "ente"
+    assert piece["title"] == "Album One"
+    assert piece["artist"] is None and piece["source_url"] is None
+    assert piece["file"] == "f1.jpg"
+    assert (piece["width"], piece["height"]) == (400, 200)
+    assert piece["landscape"] is True
+    assert piece["thumb"].startswith("/art-thumbs/")
+    rendition = tmp_path / "public" / "art-ente" / "ente-alb1" / "f1.jpg"
+    assert piece["size"] == rendition.stat().st_size
+    assert piece["mtime"] == int(rendition.stat().st_mtime)
+
+
+def test_ente_piece_url_is_under_art_and_id_matches_validators(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (400, 200)})
+    piece = library.scan()["pieces"][0]
+    assert piece["id"] == "ente-alb1/f1.jpg"
+    assert piece["url"] == "/art/ente-alb1/f1.jpg"
+    assert artlib._FOLDER_NAME_RE.match(piece["folder"])
+    assert artlib._FILE_NAME_RE.match(piece["file"])
+
+
+def test_ente_pieces_counted_and_tall_piece_still_listed(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (400, 200), "f2": (200, 400)})
+    index = library.scan()
+    assert _folder(index, "ente-alb1")["count"] == 2
+    tall = next(p for p in index["pieces"] if p["file"] == "f2.jpg")
+    assert tall["landscape"] is False
+
+
+def test_new_album_appended_to_enabled_and_seen(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (400, 200)})
+    index = library.scan()
+    assert _folder(index, "ente-alb1")["enabled"] is True
+    settings = library.control()["settings"]
+    assert "ente-alb1" in settings["folders_enabled"]
+    assert settings["ente_seen"] == ["ente-alb1"]
+
+
+def test_album_switched_off_stays_off_after_rescan(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (400, 200)})
+    library.scan()
+    _switch_off(library, "ente-alb1")
+    index = library.scan()
+    assert _folder(index, "ente-alb1")["enabled"] is False
+    assert "ente-alb1" not in library.control()["settings"]["folders_enabled"]
+
+
+def test_renamed_album_keeps_switch_state(tmp_path):
+    library = _ente_library(tmp_path)
+    mirror = tmp_path / "mirror"
+    _ente_album(mirror, "alb1", "Album One", {"f1": (400, 200)})
+    library.scan()
+    _switch_off(library, "ente-alb1")
+    _ente_album(mirror, "alb1", "Album Uno", {"f1": (400, 200)})
+    folder = _folder(library.scan(), "ente-alb1")
+    assert folder["title"] == "Album Uno"
+    assert folder["enabled"] is False
+
+
+def test_removed_picture_leaves_index_and_rendition_pruned(tmp_path):
+    library = _ente_library(tmp_path)
+    mirror = tmp_path / "mirror"
+    _ente_album(mirror, "alb1", "Album One", {"f1": (400, 200), "f2": (400, 200)})
+    library.scan()
+    cache = tmp_path / "public" / "art-ente" / "ente-alb1"
+    assert (cache / "f2.jpg").is_file()
+    _ente_album(mirror, "alb1", "Album One", {"f1": (400, 200)})
+    (mirror / "alb1" / "f2.jpg").unlink()
+    index = library.scan()
+    assert [p["file"] for p in index["pieces"]] == ["f1.jpg"]
+    assert not (cache / "f2.jpg").exists()
+    assert (cache / "f1.jpg").is_file()
+
+
+def test_metadata_only_scan_omits_pieces_without_rendition(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (400, 200)})
+    index = library.scan(ensure_thumbnails=False)
+    assert index["pieces"] == []
+    assert not list((tmp_path / "public").rglob("f1.jpg"))
+    generated = library.ensure_thumbnails()
+    assert generated == 2  # one rendition plus one thumbnail
+    index = library.scan(ensure_thumbnails=False)
+    assert [p["id"] for p in index["pieces"]] == ["ente-alb1/f1.jpg"]
+    assert index["pieces"][0]["thumb"].startswith("/art-thumbs/")
+
+
+def test_art_folder_named_ente_prefix_is_ignored_on_scan(tmp_path):
+    library = _ente_library(tmp_path)
+    _write_image(library.root / "ente-0123456789ab" / "x.jpg")
+    _write_image(library.root / "ENTE-Other" / "y.jpg")
+    _write_image(library.root / "Fine" / "z.jpg")
+    index = library.scan(ensure_thumbnails=False)
+    assert [f["name"] for f in index["folders"]] == ["Collection", "Fine"]
+    assert [p["id"] for p in index["pieces"]] == ["Fine/z.jpg"]
+    assert library.ensure_thumbnails() == 1  # only Fine/z.jpg
+
+
+def test_corrupt_ente_file_skipped_others_listed(tmp_path):
+    library = _ente_library(tmp_path)
+    mirror = tmp_path / "mirror"
+    _ente_album(mirror, "alb1", "Album One", {"f1": (400, 200), "f2": (400, 200)})
+    (mirror / "alb1" / "f2.jpg").write_bytes(b"not an image")
+    index = library.scan()
+    assert [p["file"] for p in index["pieces"]] == ["f1.jpg"]
+    assert _folder(index, "ente-alb1")["count"] == 1
+
+
+def test_missing_export_root_gives_no_ente_folders_and_keeps_art(tmp_path):
+    library = _ente_library(tmp_path)
+    _write_image(library.root / "a.jpg")
+    index = library.scan()
+    assert [f["name"] for f in index["folders"]] == ["Collection"]
+    assert [p["id"] for p in index["pieces"]] == ["a.jpg"]
+
+
+def test_command_show_accepts_tall_ente_piece_but_rejects_tall_art_piece(tmp_path):
+    library = _ente_library(tmp_path)
+    _write_image(library.root / "Tall" / "t.jpg", size=(200, 400))
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (200, 400)})
+    library.scan()
+    assert library.command("show", "ente-alb1/f1.jpg")["piece"] == "ente-alb1/f1.jpg"
+    with pytest.raises(ArtError) as excinfo:
+        library.command("show", "Tall/t.jpg")
+    assert excinfo.value.status == 409
+
+
+def test_ente_seen_survives_state_normalisation(tmp_path):
+    library = _ente_library(tmp_path)
+    library.state.parent.mkdir(parents=True, exist_ok=True)
+    library.state.write_text(
+        json.dumps({"settings": {"ente_seen": ["ente-a", 5, None, "ente-b"]}}),
+        encoding="utf-8",
+    )
+    assert library.control()["settings"]["ente_seen"] == ["ente-a", "ente-b"]
+    library.state.write_text(json.dumps({"settings": {"ente_seen": "bad"}}), encoding="utf-8")
+    assert library.control()["settings"]["ente_seen"] == []

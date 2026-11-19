@@ -38,6 +38,10 @@ from typing import Callable, Optional
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from snaphouse.enteexport import ENTE_ID_RE, ENTE_PREFIX, EnteAlbum, EntePicture, scan_export
+from snaphouse.enterender import ensure_rendition, prune_renditions, rendition_path
+from snaphouse.enterun import read_status
+
 
 # --------------------------------------------------------------------------- #
 # Constants (the binding settings from the spec and global constraints)
@@ -84,6 +88,14 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 #: Pillow format names accepted on upload.
 _UPLOAD_FORMATS = {"JPEG", "PNG", "WEBP"}
 
+ENTE_SOURCE = "ente"
+
+
+def _is_ente_name(name: str) -> bool:
+    """True for a name under the reserved Ente prefix, in any letter case."""
+    return name.casefold().startswith(ENTE_PREFIX)
+
+
 _FOLDER_NAME_RE = re.compile(r"^[A-Za-z0-9 _-]{1,40}$")
 _FILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _TRASH_STAMP_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}(-[0-9]+)?$")
@@ -125,11 +137,20 @@ class Library:
         thumbs: Path,
         state: Path,
         *,
+        ente_root: Optional[Path] = None,
+        ente_cache: Optional[Path] = None,
+        ente_status: Optional[Path] = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.root = Path(root)
         self.thumbs = Path(thumbs)
         self.state = Path(state)
+        # Ente albums are an optional, read-only source: the mirror the sync
+        # writes, the renditions cache nginx serves, and the sync status record.
+        # Without a root and a cache the library behaves exactly as before.
+        self.ente_root = Path(ente_root) if ente_root is not None else None
+        self.ente_cache = Path(ente_cache) if ente_cache is not None else None
+        self.ente_status = Path(ente_status) if ente_status is not None else None
         self._clock = clock
 
     # -- scan / index ------------------------------------------------------ #
@@ -169,7 +190,7 @@ class Library:
                 # level, so a later delete or move would hit the wrong file. The
                 # API refuses to create the name (`create_folder`); a hand-made
                 # one over SMB is skipped here so it never emits colliding ids.
-                if entry.name in (TRASH_DIR, BUILTIN_FOLDER):
+                if entry.name in (TRASH_DIR, BUILTIN_FOLDER) or _is_ente_name(entry.name):
                     continue
                 folder_counts.setdefault(entry.name, 0)
                 for child in self._iter_dir(entry):
@@ -188,17 +209,177 @@ class Library:
                     pieces.append(piece)
                     folder_counts[BUILTIN_FOLDER] += 1
 
+        albums = self._ente_albums()
+        ente_pieces, ente_keep = self._build_ente_pieces(
+            albums, referenced, ensure_thumbnails, min_aspect
+        )
+        if self._reconcile_ente(control, [a.folder for a in albums]):
+            self._save_state(control)
+        enabled = set(control["settings"]["folders_enabled"])
+
         pieces.sort(key=lambda piece: piece["id"])
+        pieces.extend(sorted(ente_pieces, key=lambda piece: piece["id"]))
         folders = self._build_folders(folder_counts, enabled)
+        folders.extend(self._build_ente_folders(albums, ente_pieces, enabled))
         trash = self._build_trash(referenced, ensure_thumbnails)
         self._prune_thumbnails(referenced)
+        self._prune_ente(ente_keep)
 
-        return {
+        index = {
             "generated_at": self._now_iso(),
             "folders": folders,
             "pieces": pieces,
             "trash": trash,
         }
+        if self.ente_status is not None:
+            index["ente_sync"] = read_status(self.ente_status, now=self._clock())
+        return index
+
+    # -- Ente albums ------------------------------------------------------- #
+
+    def _ente_albums(self) -> list[EnteAlbum]:
+        if self.ente_root is None or self.ente_cache is None:
+            return []
+        return scan_export(self.ente_root)
+
+    def _build_ente_pieces(
+        self,
+        albums: list[EnteAlbum],
+        referenced: set[str],
+        ensure_thumbnails: bool,
+        min_aspect: float,
+    ) -> tuple[list[dict], set[Path]]:
+        """Index pieces for every album picture that has a rendition.
+
+        With ``ensure_thumbnails`` a missing rendition is made first; without
+        it a picture whose rendition does not exist yet is left out, like a
+        thumbnail the metadata-only scan has not generated. Returns the pieces
+        and the rendition paths that must be kept on disk.
+        """
+        pieces: list[dict] = []
+        keep: set[Path] = set()
+        for album in albums:
+            for picture in album.pictures:
+                dest = rendition_path(self.ente_cache, album.folder, picture)
+                if ensure_thumbnails:
+                    dest = ensure_rendition(
+                        self.ente_cache, album.folder, picture, max_pixels=MAX_IMAGE_PIXELS
+                    )
+                    if dest is None:
+                        continue
+                elif not dest.is_file():
+                    continue
+                keep.add(dest)
+                piece = self._build_ente_piece(
+                    album, picture, dest, referenced, ensure_thumbnails, min_aspect
+                )
+                if piece is not None:
+                    pieces.append(piece)
+        return pieces, keep
+
+    def _build_ente_piece(
+        self,
+        album: EnteAlbum,
+        picture: EntePicture,
+        dest: Path,
+        referenced: set[str],
+        ensure_thumbnails: bool,
+        min_aspect: float,
+    ) -> Optional[dict]:
+        piece_id = f"{album.folder}/{picture.file_id}.jpg"
+        try:
+            stat = dest.stat()
+            width, height = self._dimensions(dest)
+            thumb_name = self._thumbnail_name(piece_id, stat.st_size, int(stat.st_mtime))
+            if ensure_thumbnails:
+                self._ensure_thumbnail(dest, piece_id, stat.st_size, int(stat.st_mtime))
+        except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
+            return None
+        referenced.add(thumb_name)
+        return {
+            "id": piece_id,
+            "folder": album.folder,
+            "file": f"{picture.file_id}.jpg",
+            "title": album.title,
+            "artist": None,
+            "source_url": None,
+            "width": width,
+            "height": height,
+            "landscape": self._is_landscape(width, height, min_aspect),
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "thumb": self._thumb_url_if_present(thumb_name),
+            "url": self._art_url(piece_id),
+            "source": ENTE_SOURCE,
+        }
+
+    @staticmethod
+    def _build_ente_folders(
+        albums: list[EnteAlbum], pieces: list[dict], enabled: set[str]
+    ) -> list[dict]:
+        counts: dict[str, int] = {}
+        for piece in pieces:
+            counts[piece["folder"]] = counts.get(piece["folder"], 0) + 1
+        return [
+            {
+                "name": album.folder,
+                "count": counts.get(album.folder, 0),
+                "enabled": album.folder in enabled,
+                "builtin": False,
+                "source": ENTE_SOURCE,
+                "title": album.title,
+            }
+            for album in albums
+        ]
+
+    @staticmethod
+    def _reconcile_ente(control: dict, folders: list[str]) -> bool:
+        """Switch a newly seen Ente folder on once; return True if state changed.
+
+        An id already in ``ente_seen`` is never touched, so an album the owner
+        switched off stays off across rescans and renames in Ente.
+        """
+        settings = control["settings"]
+        new = [f for f in folders if f not in settings["ente_seen"]]
+        if not new:
+            return False
+        settings["ente_seen"] = settings["ente_seen"] + new
+        settings["folders_enabled"] = settings["folders_enabled"] + [
+            f for f in new if f not in settings["folders_enabled"]
+        ]
+        return True
+
+    def _prune_ente(self, keep: set[Path]) -> None:
+        """Remove renditions nothing lists. Skipped while the mirror root is
+        unreadable, so an unmounted export never wipes the cache."""
+        if self.ente_cache is None or self.ente_root is None or not self.ente_root.is_dir():
+            return
+        prune_renditions(self.ente_cache, keep)
+
+    def _resolve_ente_piece(self, piece_id) -> Optional[Path]:
+        """The rendition path for an Ente piece id, or ``None`` for an art piece.
+
+        Any id under the reserved prefix is an Ente id: one that names no
+        rendition is a 404, never a fall-through to an art folder.
+        """
+        if not isinstance(piece_id, str) or "/" not in piece_id:
+            return None
+        folder, _, name = piece_id.partition("/")
+        if not _is_ente_name(folder):
+            return None
+        stem, dot, ext = name.rpartition(".")
+        if (
+            self.ente_cache is None
+            or not folder.startswith(ENTE_PREFIX)
+            or not ENTE_ID_RE.fullmatch(folder[len(ENTE_PREFIX):])
+            or not ENTE_ID_RE.fullmatch(stem)
+            or (dot, ext) != (".", "jpg")
+        ):
+            raise ArtError(404, "That piece is no longer in the library.")
+        path = self.ente_cache / folder / name
+        if not path.is_file():
+            raise ArtError(404, "That piece is no longer in the library.")
+        return path
 
     def _build_folders(self, counts: dict[str, int], enabled: set[str]) -> list[dict]:
         folders = [
@@ -319,9 +500,16 @@ class Library:
         fails to decode mid-pass is skipped.
         """
         generated = 0
+
+        def counted() -> None:
+            nonlocal generated
+            generated += 1
+            if on_batch is not None and batch_size > 0 and generated % batch_size == 0:
+                on_batch()
+
         for path, piece_id in self._thumbnail_targets():
             if should_stop is not None and should_stop():
-                break
+                return generated
             try:
                 stat = path.stat()
                 name = self._thumbnail_name(piece_id, stat.st_size, int(stat.st_mtime))
@@ -330,9 +518,30 @@ class Library:
                 self._ensure_thumbnail(path, piece_id, stat.st_size, int(stat.st_mtime))
             except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
                 continue
-            generated += 1
-            if on_batch is not None and batch_size > 0 and generated % batch_size == 0:
-                on_batch()
+            counted()
+        for album in self._ente_albums():
+            for picture in album.pictures:
+                if should_stop is not None and should_stop():
+                    return generated
+                dest = rendition_path(self.ente_cache, album.folder, picture)
+                made = not dest.is_file()
+                dest = ensure_rendition(
+                    self.ente_cache, album.folder, picture, max_pixels=MAX_IMAGE_PIXELS
+                )
+                if dest is None:
+                    continue
+                if made:
+                    counted()
+                try:
+                    stat = dest.stat()
+                    piece_id = f"{album.folder}/{picture.file_id}.jpg"
+                    name = self._thumbnail_name(piece_id, stat.st_size, int(stat.st_mtime))
+                    if (self.thumbs / name).is_file():
+                        continue
+                    self._ensure_thumbnail(dest, piece_id, stat.st_size, int(stat.st_mtime))
+                except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
+                    continue
+                counted()
         return generated
 
     def _thumbnail_targets(self):
@@ -347,7 +556,7 @@ class Library:
                         for child in self._iter_dir(stamp_dir):
                             if child.is_file() and child.suffix.lower() in IMAGE_EXTENSIONS:
                                 yield child, f"{TRASH_DIR}/{stamp_dir.name}/{child.name}"
-                elif entry.name == BUILTIN_FOLDER:
+                elif entry.name == BUILTIN_FOLDER or _is_ente_name(entry.name):
                     continue
                 else:
                     for child in self._iter_dir(entry):
@@ -626,10 +835,13 @@ class Library:
         if action == "show":
             if not piece:
                 raise ArtError(400, "No piece was given to show.")
-            path = self._resolve_piece(piece)
-            width, height = self._dimensions(path)
-            if not self._is_landscape(width, height, control["settings"]["min_aspect"]):
-                raise ArtError(409, "That piece is too tall for the frame.")
+            # An Ente piece is shown whatever its shape: the frame exempts the
+            # reserved folders from the landscape rule.
+            if self._resolve_ente_piece(piece) is None:
+                path = self._resolve_piece(piece)
+                width, height = self._dimensions(path)
+                if not self._is_landscape(width, height, control["settings"]["min_aspect"]):
+                    raise ArtError(409, "That piece is too tall for the frame.")
         else:
             piece = None
 
@@ -859,6 +1071,7 @@ class Library:
                 "rotate_minutes": DEFAULT_INTERVAL,
                 "folders_enabled": [BUILTIN_FOLDER],
                 "min_aspect": MIN_ASPECT,
+                "ente_seen": [],
             },
             "command": None,
         }
@@ -883,6 +1096,9 @@ class Library:
             folders = settings.get("folders_enabled")
             if isinstance(folders, list):
                 state["settings"]["folders_enabled"] = [f for f in folders if isinstance(f, str)]
+            seen = settings.get("ente_seen")
+            if isinstance(seen, list):
+                state["settings"]["ente_seen"] = [f for f in seen if isinstance(f, str)]
             min_aspect = settings.get("min_aspect")
             if (
                 isinstance(min_aspect, (int, float))
