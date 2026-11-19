@@ -37,7 +37,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
-from snaphouse.artlib import THUMBNAIL_BATCH, ArtError, Library
+from snaphouse.artlib import (
+    ENTE_RESERVED_MESSAGE,
+    THUMBNAIL_BATCH,
+    ArtError,
+    Library,
+    _is_ente_name,
+)
 from snaphouse.framecontrol import DEFAULT_LEGACY_FRAME, FrameControl, urllib_geocode
 from snaphouse.paths import DEFAULT_PUBLIC_ROOT, frames_root
 
@@ -513,6 +519,8 @@ def _reject_reserved_name(name: str) -> None:
     """
     if name.strip().casefold() == _RESERVED_FOLDER:
         raise ArtError(409, "A folder named Collection already exists.")
+    if _is_ente_name(name.strip()):
+        raise ArtError(409, ENTE_RESERVED_MESSAGE)
 
 
 def _drain(rfile, length: int) -> None:
@@ -651,6 +659,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     # The frame the pre-per-frame state migrates into: the old single top-level pin
     # becomes this frame's on first load under the new shape.
     parser.add_argument("--legacy-frame", default=DEFAULT_LEGACY_FRAME)
+    # Ente albums as read-only folders: the sync's mirror, the renditions cache
+    # nginx serves, and the sync status record. All optional; unset means off.
+    parser.add_argument("--ente-root", type=Path, default=None)
+    parser.add_argument("--ente-cache", type=Path, default=None)
+    parser.add_argument("--ente-status", type=Path, default=None)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args(argv)
@@ -663,6 +676,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         root=Path(args.root),
         thumbs=public_root / "art-thumbs",
         state=Path(args.state),
+        ente_root=args.ente_root,
+        ente_cache=args.ente_cache,
+        ente_status=args.ente_status,
     )
     # The frame list comes from the inventory (one --frame per frame host); fall
     # back to the single original frame if none was passed. Each frame reads its

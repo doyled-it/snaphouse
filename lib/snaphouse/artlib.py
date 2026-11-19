@@ -90,10 +90,34 @@ _UPLOAD_FORMATS = {"JPEG", "PNG", "WEBP"}
 
 ENTE_SOURCE = "ente"
 
+#: Shown when a write touches an Ente album or one of its pictures.
+ENTE_READONLY_MESSAGE = "This picture comes from Ente; change it in Ente."
+
+#: Shown when a new or renamed folder would take the reserved Ente prefix.
+ENTE_RESERVED_MESSAGE = "That folder name is reserved."
+
 
 def _is_ente_name(name: str) -> bool:
     """True for a name under the reserved Ente prefix, in any letter case."""
     return name.casefold().startswith(ENTE_PREFIX)
+
+
+def _refuse_if_ente(value, *, creating: bool = False, piece: bool = False) -> None:
+    """Refuse a write that touches an Ente folder or piece with a 409.
+
+    ``value`` is a folder name, or with ``piece=True`` a piece id (only the
+    folder part counts, so a Collection piece called ``Ente-sunset.jpg`` is
+    fine). ``creating`` is for a name being made or renamed to: that is the
+    reserved-name message; every other write says the picture lives in Ente.
+    """
+    if not isinstance(value, str):
+        return
+    if piece:
+        if "/" not in value:
+            return
+        value = value.partition("/")[0]
+    if _is_ente_name(value):
+        raise ArtError(409, ENTE_RESERVED_MESSAGE if creating else ENTE_READONLY_MESSAGE)
 
 
 _FOLDER_NAME_RE = re.compile(r"^[A-Za-z0-9 _-]{1,40}$")
@@ -595,6 +619,7 @@ class Library:
         stored name is sanitised from the original, with a numeric suffix on a
         collision. A title or artist, when given, is written to a sidecar.
         """
+        _refuse_if_ente(folder)
         target_dir = self._resolve_folder_dir(folder)
 
         if len(data) > MAX_UPLOAD_BYTES:
@@ -679,6 +704,7 @@ class Library:
         """Move a piece and its sidecar into ``.trash/<timestamp>/``; return the
         trash id. The original location and the delete time are recorded so
         ``restore`` can put it back."""
+        _refuse_if_ente(piece_id, piece=True)
         source = self._resolve_piece(piece_id)
         stamp = self._trash_stamp()
         trash_dir = self._unique_dir(self.root / TRASH_DIR, stamp)
@@ -708,6 +734,7 @@ class Library:
         trash_dir = trash_file.parent
         meta = self._read_trash_meta(trash_dir)
         original = meta.get("original", trash_file.name)
+        _refuse_if_ente(original, piece=True)
 
         folder, _ = self._split_id(original)
         target_dir = self.root if folder == BUILTIN_FOLDER else self.root / folder
@@ -727,6 +754,8 @@ class Library:
     def move(self, piece_id: str, folder: str) -> str:
         """Move a piece and its sidecar into ``folder`` (``Collection`` is the
         top level); return the new id, suffixed on a name collision."""
+        _refuse_if_ente(piece_id, piece=True)
+        _refuse_if_ente(folder)
         source = self._resolve_piece(piece_id)
         target_dir = self._resolve_folder_dir(folder)
 
@@ -743,6 +772,7 @@ class Library:
     def create_folder(self, name: str) -> str:
         """Create an empty user folder. ``Collection`` and an existing folder are
         both a 409."""
+        _refuse_if_ente(name, creating=True)
         folder = self._validate_folder_name(name)
         if folder == BUILTIN_FOLDER:
             raise ArtError(409, "A folder named Collection already exists.")
@@ -756,6 +786,8 @@ class Library:
     def rename_folder(self, old: str, new: str) -> str:
         """Rename a user folder, carrying its rotation-enabled state. Collection
         cannot be renamed; renaming onto an existing name is a 409."""
+        _refuse_if_ente(old)
+        _refuse_if_ente(new, creating=True)
         old_name = self._validate_folder_name(old)
         new_name = self._validate_folder_name(new)
         if old_name == BUILTIN_FOLDER:
@@ -781,6 +813,7 @@ class Library:
     def delete_folder(self, name: str) -> str:
         """Remove an empty user folder and drop its enabled state. A non-empty
         folder is a 409; Collection cannot be removed."""
+        _refuse_if_ente(name)
         folder = self._validate_folder_name(name)
         if folder == BUILTIN_FOLDER:
             raise ArtError(400, "The Collection folder cannot be removed.")

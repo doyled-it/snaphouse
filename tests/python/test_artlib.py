@@ -1244,3 +1244,117 @@ def test_set_folder_enabled_ente_name_without_ente_root_is_404(tmp_path):
     with pytest.raises(ArtError) as excinfo:
         library.set_folder_enabled("ente-alb1", False)
     assert excinfo.value.status == 404
+
+
+# --------------------------------------------------------------------------- #
+# Ente albums are read-only
+# --------------------------------------------------------------------------- #
+
+READONLY = "This picture comes from Ente; change it in Ente."
+RESERVED = "That folder name is reserved."
+
+
+def _ente_library_with_album(tmp_path: Path) -> Library:
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (400, 200)})
+    library.scan()
+    return library
+
+
+def _mirror_snapshot(tmp_path: Path) -> list[str]:
+    return sorted(str(p.relative_to(tmp_path / "mirror")) for p in (tmp_path / "mirror").rglob("*"))
+
+
+def test_delete_ente_piece_refused_409_with_message(tmp_path):
+    library = _ente_library_with_album(tmp_path)
+    before = _mirror_snapshot(tmp_path)
+    with pytest.raises(ArtError) as excinfo:
+        library.delete("ente-alb1/f1.jpg")
+    assert excinfo.value.status == 409
+    assert excinfo.value.message == READONLY
+    assert artlib.ENTE_READONLY_MESSAGE == READONLY
+    assert _mirror_snapshot(tmp_path) == before
+
+
+def test_restore_move_upload_into_ente_folder_refused(tmp_path):
+    library = _ente_library_with_album(tmp_path)
+    _write_image(library.root / "met-1.jpg")
+    # A trash entry whose recorded original place is an Ente folder.
+    stamp_dir = library.root / ".trash" / "2026-01-01T00-00-00"
+    stamp_dir.mkdir(parents=True)
+    _write_image(stamp_dir / "f9.jpg")
+    (stamp_dir / "meta.json").write_text(
+        json.dumps({"original": "ente-alb1/f9.jpg", "deleted_ts": 1}), encoding="utf-8"
+    )
+    with pytest.raises(ArtError) as restore_error:
+        library.restore(".trash/2026-01-01T00-00-00/f9.jpg")
+    with pytest.raises(ArtError) as move_error:
+        library.move("met-1.jpg", "ente-alb1")
+    with pytest.raises(ArtError) as upload_error:
+        library.upload("new.jpg", _image_bytes(), "ente-alb1", None, None)
+    for error in (restore_error, move_error, upload_error):
+        assert error.value.status == 409
+        assert error.value.message == READONLY
+    assert (stamp_dir / "f9.jpg").is_file()
+    assert not (tmp_path / "mirror" / "alb1" / "new.jpg").exists()
+    assert not (library.root / "ente-alb1").exists()
+
+
+def test_move_ente_piece_out_refused(tmp_path):
+    library = _ente_library_with_album(tmp_path)
+    before = _mirror_snapshot(tmp_path)
+    with pytest.raises(ArtError) as excinfo:
+        library.move("ente-alb1/f1.jpg", "Collection")
+    assert excinfo.value.status == 409
+    assert excinfo.value.message == READONLY
+    assert _mirror_snapshot(tmp_path) == before
+
+
+def test_rename_and_delete_ente_folder_refused(tmp_path):
+    library = _ente_library_with_album(tmp_path)
+    library.create_folder("Photos")
+    with pytest.raises(ArtError) as rename_error:
+        library.rename_folder("ente-alb1", "Elsewhere")
+    with pytest.raises(ArtError) as delete_error:
+        library.delete_folder("ente-alb1")
+    for error in (rename_error, delete_error):
+        assert error.value.status == 409
+        assert error.value.message == READONLY
+    assert (tmp_path / "mirror" / "alb1").is_dir()
+
+
+@pytest.mark.parametrize("name", ["ente-new", "Ente-new", "ENTE-NEW", "eNtE-x"])
+def test_create_and_rename_to_ente_prefix_refused_any_case(tmp_path, name):
+    library = _ente_library_with_album(tmp_path)
+    library.create_folder("Photos")
+    with pytest.raises(ArtError) as create_error:
+        library.create_folder(name)
+    with pytest.raises(ArtError) as rename_error:
+        library.rename_folder("Photos", name)
+    for error in (create_error, rename_error):
+        assert error.value.status == 409
+        assert error.value.message == RESERVED
+    assert not (library.root / name).exists()
+    assert (library.root / "Photos").is_dir()
+
+
+def test_enable_disable_ente_folder_works_and_persists(tmp_path):
+    library = _ente_library_with_album(tmp_path)
+    assert library.set_folder_enabled("ente-alb1", False) is False
+    reloaded = Library(
+        library.root, library.thumbs, library.state,
+        ente_root=library.ente_root, ente_cache=library.ente_cache,
+    )
+    assert "ente-alb1" not in reloaded.control()["settings"]["folders_enabled"]
+    assert _folder(reloaded.scan(), "ente-alb1")["enabled"] is False
+    assert reloaded.set_folder_enabled("ente-alb1", True) is True
+    assert "ente-alb1" in reloaded.control()["settings"]["folders_enabled"]
+
+
+def test_collection_piece_named_like_ente_prefix_is_not_refused(tmp_path):
+    library = _ente_library_with_album(tmp_path)
+    _write_image(library.root / "Ente-sunset.jpg")
+    library.create_folder("Photos")
+    new_id = library.move("Ente-sunset.jpg", "Photos")
+    assert new_id == "Photos/Ente-sunset.jpg"
+    assert library.delete(new_id).startswith(".trash/")
