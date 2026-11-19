@@ -41,6 +41,9 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Run the Python tests
         run: uv run pytest tests/python
+      - name: Run the HEIC rendition test with the hub extra
+        # The hub extra carries pillow-heif; without it the HEIC test is skipped.
+        run: uv run --extra hub pytest tests/python/test_enterender.py -v
 
   node-test:
     runs-on: ubuntu-latest

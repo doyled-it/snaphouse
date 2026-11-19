@@ -9,6 +9,8 @@ import {
   pieceIdFromHash,
   viewerSource,
   idAfterRemoval,
+  historyViewerItem,
+  viewerControls,
 } from "../../roles/room_picker/files/site/gallery-viewer.js";
 
 const items = (n) =>
@@ -112,4 +114,38 @@ test("history items step and clamp like grid items", () => {
   assert.equal(v.position, "3 of 3");
   assert.equal(v.canNext, false);
   assert.equal(v.canPrev, true);
+});
+
+test("a tall ente piece is not blocked from showing on the frame", () => {
+  const list = [{ id: "ente-a/f.jpg", landscape: false, source: "ente" }];
+  assert.equal(viewerState(list, 0, "grid").showBlockedReason, null);
+});
+
+test("the history viewer hides Move and Move to trash for an ente piece", () => {
+  const known = { id: "ente-a/f.jpg", folder: "ente-a", url: "/art/ente-a/f.jpg", source: "ente" };
+  const item = historyViewerItem({
+    piece: { file: "f.jpg", title: "f", artist: null, source_url: null },
+    id: known.id,
+    origId: known.id,
+    known,
+    fallbackUrl: "/art/f.jpg",
+  });
+  assert.equal(item.source, "ente");
+  assert.deepEqual(viewerControls(item), { showMove: false, showTrash: false });
+});
+
+test("the history viewer keeps Move and Move to trash for an art piece", () => {
+  const known = { id: "Photos/a.jpg", folder: "Photos", url: "/art/Photos/a.jpg" };
+  const item = historyViewerItem({
+    piece: { file: "a.jpg", title: "a", artist: null, source_url: null },
+    id: known.id,
+    origId: known.id,
+    known,
+    fallbackUrl: "/art/a.jpg",
+  });
+  assert.equal(item.source, undefined);
+  assert.deepEqual(viewerControls(item), { showMove: true, showTrash: true });
+  const unknown = historyViewerItem({ piece: { file: "a.jpg", title: "a" }, id: "a.jpg", origId: "a.jpg", known: null, fallbackUrl: "/art/a.jpg" });
+  assert.equal(unknown.url, "/art/a.jpg");
+  assert.equal(unknown.folder, "");
 });

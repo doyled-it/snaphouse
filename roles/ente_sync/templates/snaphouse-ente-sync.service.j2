@@ -1,0 +1,25 @@
+# snaphouse Ente sync, managed by Ansible (roles/ente_sync). Do not edit on the
+# host; change the template and let self-update roll it out.
+#
+# Mirrors the Ente albums to the hub, read-only, as the ente account. The vault
+# key is a path the runner reads itself; it never appears on a command line. It
+# exits cleanly as "not set up" until the owner has logged in once.
+[Unit]
+Description=snaphouse Ente album sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ente
+Group=ente
+Environment=PYTHONPATH=/opt/snaphouse/lib
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.enterun --cli /usr/local/bin/ente --mirror-root /var/lib/snaphouse/ente/mirror --home /var/lib/snaphouse/ente/home --vault-key /var/lib/snaphouse/ente/vault.key --status /var/lib/snaphouse/ente/status.json
+
+# Hardening: the rest of the filesystem is read-only, private /tmp, no privilege
+# escalation, writes only under the ente directory.
+ProtectSystem=strict
+NoNewPrivileges=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/snaphouse/ente

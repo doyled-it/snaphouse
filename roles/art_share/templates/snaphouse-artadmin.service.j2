@@ -38,7 +38,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 # changed=0). Each frame reads its own republished art history under
 # /frames/<id>/ for its art pin; the old single top-level pin migrates into the
 # nightstand (--legacy-frame).
-ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.artadmin --root /srv/snaphouse/art --public-root /var/lib/snaphouse/public --state /var/lib/snaphouse/artadmin/art-control.json --frame-state /var/lib/snaphouse/artadmin/frame-control.json {% for fid in frame_ids | sort %}--frame {{ fid }} {% endfor %}--legacy-frame nightstand --port 8781 --host 127.0.0.1
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.artadmin --root /srv/snaphouse/art --public-root /var/lib/snaphouse/public --state /var/lib/snaphouse/artadmin/art-control.json --frame-state /var/lib/snaphouse/artadmin/frame-control.json {% for fid in frame_ids | sort %}--frame {{ fid }} {% endfor %}--legacy-frame nightstand --ente-root /var/lib/snaphouse/ente/mirror --ente-cache /var/lib/snaphouse/public/art-ente --ente-status /var/lib/snaphouse/ente/status.json --port 8781 --host 127.0.0.1
 Restart=always
 RestartSec=5
 
@@ -49,7 +49,7 @@ RestartSec=5
 ProtectSystem=strict
 NoNewPrivileges=yes
 PrivateTmp=yes
-ReadWritePaths=/srv/snaphouse/art /var/lib/snaphouse/public/art /var/lib/snaphouse/public/art-thumbs /var/lib/snaphouse/artadmin
+ReadWritePaths=/srv/snaphouse/art /var/lib/snaphouse/public/art /var/lib/snaphouse/public/art-thumbs /var/lib/snaphouse/public/art-ente /var/lib/snaphouse/artadmin
 
 [Install]
 WantedBy=multi-user.target

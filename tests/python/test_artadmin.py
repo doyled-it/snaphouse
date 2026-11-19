@@ -58,6 +58,7 @@ def _make_app(
     art_history: Path = None,
     geocode=None,
     frames=(FRAME, OTHER),
+    ente: bool = False,
 ) -> artadmin.ArtAdmin:
     root = tmp_path / "art"
     thumbs = tmp_path / "public" / "art-thumbs"
@@ -67,7 +68,14 @@ def _make_app(
     frame_state = tmp_path / "state" / "frame-control.json"
     frame_control_path = tmp_path / "public" / "art" / "frame-control.json"
     root.mkdir(parents=True, exist_ok=True)
-    library = Library(root, thumbs, state)
+    if ente:
+        library = Library(
+            root, thumbs, state,
+            ente_root=tmp_path / "mirror",
+            ente_cache=tmp_path / "public" / "art-ente",
+        )
+    else:
+        library = Library(root, thumbs, state)
     # art_history is accepted as a single path (the nightstand's, the common case
     # in these tests) or a per-frame mapping.
     if art_history is not None and not isinstance(art_history, dict):
@@ -953,3 +961,101 @@ def test_frame_settings_unknown_frame_is_a_404(client):
 
 def test_frame_doc_lists_every_frame(client):
     assert set(_frame_doc(client.app)["frames"]) == {FRAME, OTHER}
+
+
+# --------------------------------------------------------------------------- #
+# Ente albums are read-only over HTTP
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def ente_client(tmp_path):
+    album = tmp_path / "mirror" / "alb1"
+    album.mkdir(parents=True)
+    _write_image(album / "f1.jpg")
+    (album / "album.json").write_text(
+        json.dumps(
+            {"title": "Album One", "updated_at": 1,
+             "files": {"f1": {"updated_at": 1, "hash": "h", "ext": "jpg"}}}
+        ),
+        encoding="utf-8",
+    )
+    app = _make_app(tmp_path, ente=True)
+    app.publish()
+    started = Client(app)
+    yield started
+    started.close()
+
+
+def test_http_delete_ente_piece_returns_409_json_error(ente_client):
+    status, body = ente_client.post_json("/api/art/delete", {"id": "ente-alb1/f1.jpg"})
+    assert status == 409
+    assert body == {"error": "This picture comes from Ente; change it in Ente."}
+
+
+def test_http_create_ente_prefix_folder_returns_reserved_409(ente_client):
+    status, body = ente_client.post_json("/api/art/folder/create", {"name": "ENTE-x"})
+    assert status == 409
+    assert body["error"] == "That folder name is reserved."
+    status, body = ente_client.post_json(
+        "/api/art/folder/rename", {"from": "ente-alb1", "to": "ente-other"}
+    )
+    assert status == 409
+    assert body["error"] == "That folder name is reserved."
+
+
+def test_http_enable_disable_ente_folder(ente_client):
+    status, _ = ente_client.post_json(
+        "/api/art/folder/enable", {"name": "ente-alb1", "enabled": False}
+    )
+    assert status == 200
+    assert "ente-alb1" not in _control(ente_client.app)["settings"]["folders_enabled"]
+    status, _ = ente_client.post_json(
+        "/api/art/folder/enable", {"name": "ente-alb1", "enabled": True}
+    )
+    assert status == 200
+    assert "ente-alb1" in _control(ente_client.app)["settings"]["folders_enabled"]
+
+
+def test_main_accepts_ente_arguments(tmp_path, monkeypatch):
+    captured = {}
+
+    class Stop(Exception):
+        pass
+
+    def fake_library(*args, **kwargs):
+        captured.update(kwargs)
+        raise Stop
+
+    monkeypatch.setattr(artadmin, "Library", fake_library)
+    with pytest.raises(Stop):
+        artadmin.main([
+            "--root", str(tmp_path / "art"),
+            "--public-root", str(tmp_path / "public"),
+            "--state", str(tmp_path / "state.json"),
+            "--ente-root", str(tmp_path / "mirror"),
+            "--ente-cache", str(tmp_path / "cache"),
+            "--ente-status", str(tmp_path / "status.json"),
+        ])
+    assert captured["ente_root"] == tmp_path / "mirror"
+    assert captured["ente_cache"] == tmp_path / "cache"
+    assert captured["ente_status"] == tmp_path / "status.json"
+
+
+def test_main_ente_arguments_default_to_none(tmp_path, monkeypatch):
+    captured = {}
+
+    class Stop(Exception):
+        pass
+
+    def fake_library(*args, **kwargs):
+        captured.update(kwargs)
+        raise Stop
+
+    monkeypatch.setattr(artadmin, "Library", fake_library)
+    with pytest.raises(Stop):
+        artadmin.main(["--root", str(tmp_path / "art"), "--public-root", str(tmp_path / "p"),
+                       "--state", str(tmp_path / "s.json")])
+    assert captured["ente_root"] is None
+    assert captured["ente_cache"] is None
+    assert captured["ente_status"] is None

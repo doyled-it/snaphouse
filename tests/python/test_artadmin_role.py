@@ -133,12 +133,13 @@ def test_unit_read_write_paths_cover_only_what_it_writes():
     rwp_lines = [ln for ln in unit.splitlines() if ln.startswith("ReadWritePaths=")]
     assert rwp_lines, "the unit sets no ReadWritePaths"
     paths = rwp_lines[0].split("=", 1)[1].split()
-    # The library, the public docs dir, the thumbs dir, and the state dir: the
-    # four places it must write, and nothing else.
+    # The library, the public docs dir, the thumbs dir, the Ente renditions dir,
+    # and the state dir: the five places it must write, and nothing else.
     assert set(paths) == {
         "/srv/snaphouse/art",
         PUBLIC_DOCS_DIR,
         THUMBS_DIR,
+        "/var/lib/snaphouse/public/art-ente",
         STATE_DIR,
     }
 

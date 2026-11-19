@@ -5,12 +5,36 @@
 const GRID_ACTIONS = ["show", "pin", "move", "trash"];
 
 // Why a piece cannot be shown on the frame, or null. Today's orientation rule:
-// only a landscape piece rotates, so a portrait one is too tall.
+// only a landscape art piece rotates, so a portrait one is too tall. An Ente
+// piece rotates at any shape.
 function blockedReason(piece) {
-  if (piece && piece.landscape === false) {
+  if (piece && piece.landscape === false && piece.source !== "ente") {
     return "Too tall to show on the frame.";
   }
   return null;
+}
+
+// A frame-history entry as a viewer item. `known` is the library piece with the
+// same id (or null): it supplies the folder, the reachable url and the source, so
+// an Ente piece opened from history is as read-only as one opened from the grid.
+export function historyViewerItem({ piece, id, origId, known, fallbackUrl }) {
+  return {
+    id,
+    file: piece.file,
+    title: piece.title,
+    artist: piece.artist,
+    source_url: piece.source_url,
+    origId,
+    folder: known ? known.folder : "",
+    url: known ? known.url : fallbackUrl,
+    ...(known && known.source === "ente" ? { source: "ente" } : {}),
+  };
+}
+
+// Which per-piece write controls the viewer offers. An Ente piece is read-only.
+export function viewerControls(piece) {
+  const writable = !(piece && piece.source === "ente");
+  return { showMove: writable, showTrash: writable };
 }
 
 // source is "grid" or "history". History adds removeFromHistory.
