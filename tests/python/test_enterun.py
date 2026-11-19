@@ -88,8 +88,12 @@ class FakeCli:
         return subprocess.CompletedProcess([], 0, json.dumps(data), "")
 
 
+KEY = "dGVzdC1rZXktbm90LXJlYWwtdGVzdC1rZXktbm90LXJlYWw="
+
+
 @pytest.fixture
 def env(tmp_path):
+    (tmp_path / "vault.key").write_text(KEY + "\n")
     return {
         "cli": Path("/opt/ente"),
         "root": tmp_path / "mirror",
@@ -135,7 +139,18 @@ def test_every_cli_call_has_no_input_json_and_env(env):
         assert argv[:3] == ["/opt/ente", "--no-input", "--json"]
     for e in cli.envs:
         assert e["ENTE_CLI_HOME"] == str(env["home"])
-        assert e["ENTE_CLI_VAULT_KEY"] == str(env["key"])
+        assert e["ENTE_CLI_VAULT_KEY"] == KEY
+
+
+def test_missing_vault_key_fails_in_plain_words_without_calling_the_cli(env):
+    env["key"].unlink()
+    cli = FakeCli()
+    assert run(env, cli) == 1
+    assert cli.calls == []
+    st = status(env)
+    assert st["state"] == "failing"
+    assert st["error"] == "Could not read the Ente key."
+    assert str(env["key"]) not in env["status"].read_text()
 
 
 def test_file_list_asks_for_image_and_livephoto_only_with_all(env):

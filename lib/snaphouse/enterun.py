@@ -32,6 +32,7 @@ _ALBUM_JSON = "album.json"
 _ISO = "%Y-%m-%dT%H:%M:%SZ"
 
 STALE_MESSAGE = "Ente sync has not run recently."
+ERR_KEY = "Could not read the Ente key."
 ERR_ACCOUNT = "Could not check the Ente account."
 ERR_ALBUMS = "Could not list the shared albums."
 ERR_FILES = "Could not list the pictures in some albums."
@@ -190,12 +191,12 @@ def extract_still(zip_path: Path, dest: Path, *, max_bytes: int) -> bool:
 
 
 class _Cli:
-    def __init__(self, cli: Path, home: Path, vault_key: Path, runner) -> None:
+    def __init__(self, cli: Path, home: Path, vault_key: str, runner) -> None:
         self.cli = str(cli)
         self.runner = runner
         self.env = dict(os.environ)
         self.env["ENTE_CLI_HOME"] = str(home)
-        self.env["ENTE_CLI_VAULT_KEY"] = str(vault_key)
+        self.env["ENTE_CLI_VAULT_KEY"] = vault_key
 
     def call(self, *args: str):
         """Return the completed process, or None when it could not run."""
@@ -370,11 +371,18 @@ def run_export(
     root = Path(mirror_root)
     previous = read_status(status, now=clock(), stale_after=float("inf"))
     last_success = previous["last_success"]
-    ente = _Cli(cli, home, vault_key, runner)
 
     def fail(message: str) -> int:
         write_status(status, "failing", last_success=last_success, error=message)
         return 1
+
+    try:
+        key = Path(vault_key).read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        key = ""
+    if not key:
+        return fail(ERR_KEY)
+    ente = _Cli(cli, home, key, runner)
 
     _sweep_temps(root)
     accounts = ente.json("account", "list")
