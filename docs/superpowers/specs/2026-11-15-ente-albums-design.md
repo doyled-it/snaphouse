@@ -15,8 +15,8 @@ Removing it from the album takes it off the frame.
 
 ## Goals
 
-- A hub service keeps a local export of the Ente albums shared with a dedicated house account.
-- The hub's art library reads that export directly (no second copy of each original) and lists
+- A hub service keeps a local mirror of the images in the Ente albums shared with a dedicated house account.
+- The hub's art library reads that export directly (no second copy of each original beyond the mirror itself) and lists
   each album as a folder in the Gallery, with the existing on/off switch.
 - Album pictures rotate on the frame from the same pool as the art, every enabled picture equally
   likely (the current picker's behaviour), cropped to fill the 800x480 panel like the art.
@@ -60,53 +60,65 @@ Removing it from the album takes it off the frame.
    JPEG, videos skipped) into read-only library folders. Downstream code unchanged; a second copy
    of every photo. Recommended by the controller, not chosen.
 2. **Read the export directly (chosen).** The library learns a second, read-only source: the
-   Ente export root. No second copy of originals; the library, the `/art/` serving path and the
+   Ente mirror root. No second copy of originals; the library, the `/art/` serving path and the
    name rules learn Ente's layout.
 3. **Run Ente on the frame.** Rejected: credentials on another device, and it bypasses the
    Gallery and the hub as the single source of truth.
 
 ## How it works
 
-### Ente export service (hub, snaphouse)
+### Ente sync service (hub, snaphouse)
 
-- The official Ente CLI (`ente photos export`), Linux amd64 release, pinned version, verified
-  against the release's `SHA256SUMS`, installed by Ansible.
-- A dedicated system user owns the CLI home (`ENTE_CLI_HOME`) and the export root. The CLI
-  vault key is a root-generated file readable only by that user, outside the repo
-  (`ENTE_CLI_VAULT_KEY`, per Ente's headless setup). Exact paths: builder's call, following the
-  repo's existing `/srv/snaphouse` and `/var/lib/snaphouse` conventions.
-- Login is a one-time manual step on the hub (`ente account login` as that user, interactive,
-  owner types the house account's password). Nothing about the account goes in the repo or in
-  Ansible variables. Until the account is logged in, the timer runs and exits cleanly as
-  "not set up" (same pattern as the garage module being off until configured).
-- A systemd timer runs the export every 15 minutes (controller's call: new pictures appear
-  within about 15 minutes plus the frame's own art sync interval). Shared albums are included by
-  default; hidden albums are excluded (`--exclude-hidden`).
-- Ente's export layout: one folder per album (`<root>/<Album>/<file>`), a per-album
-  `metadata.json` and `metadata/` directory, `export.json` at the root, removed items moved to
-  `Trash/`. Re-runs add new files and move removed ones to `Trash/`.
-- The service writes a small status record (last successful export time, last error in plain
-  words, no account details) that the art admin publishes so the Gallery can show
-  "Synced from Ente 5 min ago" or "Ente sync is failing: ..." on album folders.
+- The official Ente CLI (version 0.4.4, Linux amd64 release `ente-cli-v0.4.4-linux-amd64.tar.gz`,
+  verified against its pinned SHA-256), installed by Ansible. The hub does not use
+  `ente photos export`, which downloads videos too. Its own sync is built on three CLI calls, all
+  run with `--no-input`: `ente photos album list --json`, `ente photos file list --album <id>
+  --type image --type livephoto --all --json` (`--all` is required, the default limit is 100), and
+  `ente photos file download <fileId> --album <albumId> --output <new path>` (the output must not
+  exist, so the sync writes a temp name and renames). Videos are never listed or downloaded.
+- A dedicated system user owns the CLI home (`ENTE_CLI_HOME`) and the mirror. The CLI vault key is
+  made once on the hub with `ente vault key generate`, kept in a file readable only by that user,
+  outside the repo (`ENTE_CLI_VAULT_KEY`). Paths follow the repo's `/var/lib/snaphouse`
+  conventions.
+- Login is a one-time manual step on the hub (`ente account login --app photos --account house`,
+  interactive, owner types the house account's password). Nothing about the account goes in the
+  repo or in Ansible variables. Until `ente account list --json` shows the account logged in for
+  photos, the timer runs and exits cleanly as "not set up" (same pattern as the garage module
+  being off until configured).
+- A systemd timer runs the sync every 15 minutes (new pictures appear within about 15 minutes plus
+  the frame's own art sync interval). Albums shared with the house account appear in the album
+  list (their `ownerId` differs from the account's own id). Hidden albums (by `visibility`) are
+  skipped.
+- Local mirror layout: `<root>/<albumId>/<fileId>.<ext>` plus one small record per album
+  (`album.json`: album title, album `updatedAt`, and for each file its `updatedAt`, `hash` and
+  extension). A file whose listed `updatedAt` or `hash` changed is downloaded again. A file no
+  longer listed is deleted on the next run; an album no longer in the list (unshared) disappears
+  with its folder. Ente album and file ids are stable, so renames never change a folder or piece
+  id.
+- An image downloads as the original. A Live Photo downloads as a ZIP holding the still plus a
+  video member; the sync keeps only the image member and never extracts the video.
+- Every download goes to a temp name and is renamed into place, and records are replaced
+  atomically, so a run that fails partway leaves the mirror consistent. The error is recorded in
+  the status record.
+- The service writes a small status record (last successful sync time, last error in plain words,
+  no account details) that the art admin publishes so the Gallery can show "Synced from Ente 5 min
+  ago" or "Ente sync is failing: ..." on album folders.
 
 ### Library: Ente albums as read-only folders (snaphouse `artlib.py`, `artadmin.py`)
 
-- The library gains an optional second root, the Ente export root. Each album directory under it
+- The library gains an optional second root, the Ente mirror root. Each album directory under it
   becomes a folder in `art-index.json`, marked as coming from Ente (e.g. a `source: "ente"` field;
   exact contract is the builder's call, and the contract docs must be updated).
-- Inside an album, only images count: `.jpg .jpeg .png .webp .heic .heif` (case-insensitive).
-  Ignored: videos (including the `.mov` half of a Live Photo), `metadata.json`, `metadata/`,
-  `export.json`, `Trash/`, hidden files.
-- Names: Ente album and file names will not always pass today's rules (`_FOLDER_NAME_RE` allows
-  only letters, digits, space, `_`, `-`, up to 40 characters; `_FILE_NAME_RE` allows no spaces, and
-  screenshots are named like `Screenshot 2026-01-02 at 10.00.00.png`). Ente folder names and piece
-  ids must be derived safely (sanitised and made unique, or an opaque stable id) so that they pass
-  the existing validators in the hub, the page (`rooms-model.js`) and the frame (`artsync.py`,
-  `art.py`), and can never collide with an art folder (e.g. an art folder with the same name as an
-  album). The display title can keep the album's real name. The approach is the builder's call;
-  the constraint is that no existing validator is loosened for the art folders.
+- Inside an album, only the images the sync downloaded count (the sync lists only `image` and
+  `livephoto` files; the library also ignores `album.json`, temp names and hidden files).
+- Names: Ente album and file ids are stable, so folder ids are derived directly from them:
+  `ente-<albumId>` for the folder and `<fileId>.jpg` for the piece (ids are validated to be short
+  alphanumeric strings so they pass the existing validators in the hub, the page
+  (`rooms-model.js`) and the frame (`artsync.py`, `art.py`)). The `ente-` prefix is reserved so an
+  art folder can never collide with an album. The display title is the album's real name
+  (from `album.json`). No existing validator is loosened for the art folders.
 - Serving: album pictures must be served same-origin under the `/art/` path family the page and
-  the frame already accept (nginx `location` for the export root, read-only, no directory listing
+  the frame already accept (nginx `location` for the mirror root, read-only, no directory listing
   of the export's metadata). Exact URL scheme is the builder's call within that constraint.
 - Renditions: the owner expects 200 to 1,000 album pictures in a year. The frame mirrors every
   enabled piece to its SD card and only needs 800x480, and browsers other than Safari cannot show
@@ -124,13 +136,10 @@ Removing it from the album takes it off the frame.
   by themselves), and an album the owner switched off stays off. `folders_enabled` is an
   allow-list, so the control state gains a record of the Ente albums already seen; a migration of
   the control file is acceptable. The switch state persists by folder identity, so a renamed
-  album in Ente keeps its state if the derived id is stable across renames (Ente gives each album
-  a stable `albumID` in `metadata.json`; prefer it).
-- Removal: the success criterion needs a picture removed from a shared album to leave the
-  export. Ente documents removed items moving to `Trash/`, but not explicitly for albums shared
-  with the account. The plan starts with a short verification against the real house account
-  (share a test album, export, remove a picture, export again). If the CLI does not drop it, the
-  service reconciles each album folder against the CLI's own file listing for that album.
+  album in Ente keeps its state because the folder id derives from Ente's stable album id.
+- Removal: the sync itself reconciles. A file no longer in the album's file list is deleted from
+  the mirror, so removing a picture from a shared album takes it off the hub and the frame, and
+  unsharing an album removes its folder. A failed listing never deletes anything.
 
 ### Landscape rule exemption (snaphouse index + nightstand picker)
 
@@ -153,7 +162,7 @@ signed-in people see them. No extra access work.
 
 ## Repos touched
 
-- snaphouse: new Ente export role (CLI install, user, timer, status), artlib/artadmin changes,
+- snaphouse: new Ente sync role (CLI install, user, timer, status), artlib/artadmin changes,
   nginx location, Gallery UI (read-only Ente folders, sync status line), contract docs, tests.
 - nightstand: picker exemption for Ente pieces, art sync keeps the new flag, tests.
 - No homebody changes.
@@ -162,9 +171,10 @@ signed-in people see them. No extra access work.
 
 1. Create a free Ente account for the house (its own email).
 2. In the main Ente account, share the memes album and the friends-and-family album with it.
-3. On the hub, log the CLI in as the service user (controller walks through it; the password is
-   typed by the owner, never stored outside the CLI vault).
-4. Run the export once by hand, check the Gallery shows both albums, switch them on.
+3. On the hub, log the CLI in as the service user with `ente account login --app photos --account
+   house` (controller walks through it; the password is typed by the owner, never stored outside
+   the CLI vault).
+4. Run the sync once by hand, check the Gallery shows both albums, switch them on.
 
 ## Left to the builder
 
