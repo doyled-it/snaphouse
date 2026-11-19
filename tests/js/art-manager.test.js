@@ -24,6 +24,7 @@ import {
   isReadOnlyPiece,
   enteSyncLabel,
   folderDisplayName,
+  enteSyncView,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // A full art-index.json body: the built-in Collection folder, a user folder, a
@@ -552,4 +553,22 @@ test("an ente folder with an unsafe name is still dropped", () => {
   const doc = enteDoc();
   doc.folders.push({ name: "", source: "ente", title: "x", count: 0, enabled: true });
   assert.equal(parseArtIndex(doc).folders.length, 2);
+});
+
+test("enteSyncView shows a failing sync even with no ente folder yet", () => {
+  const doc = enteDoc();
+  doc.folders = [doc.folders[0]];
+  doc.ente_sync = { state: "failing", last_success: null, error: "login expired" };
+  assert.deepEqual(enteSyncView(parseArtIndex(doc), NOW), {
+    hidden: false,
+    text: "Ente sync is failing: login expired",
+  });
+});
+
+test("enteSyncView shows nothing when not set up or absent", () => {
+  const doc = enteDoc();
+  doc.ente_sync = { state: "not_set_up", last_success: null, error: null };
+  assert.deepEqual(enteSyncView(parseArtIndex(doc), NOW), { hidden: true, text: "" });
+  delete doc.ente_sync;
+  assert.deepEqual(enteSyncView(parseArtIndex(doc), NOW), { hidden: true, text: "" });
 });

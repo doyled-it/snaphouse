@@ -34,7 +34,7 @@ import {
   parseArtIndex,
   isReadOnlyFolder,
   isReadOnlyPiece,
-  enteSyncLabel,
+  enteSyncView,
   folderDisplayName,
   parseArtControl,
   piecesInFolder,
@@ -124,7 +124,17 @@ import { createVolumeSlider } from "./volume-slider.js";
 import { createHaptics } from "./haptics.js";
 import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
-import { galleryHash, idAfterRemoval, pieceIdFromHash, stepIndex, swipeDirection, viewerSource, viewerState } from "./gallery-viewer.js";
+import {
+  galleryHash,
+  historyViewerItem,
+  idAfterRemoval,
+  pieceIdFromHash,
+  stepIndex,
+  swipeDirection,
+  viewerControls,
+  viewerSource,
+  viewerState,
+} from "./gallery-viewer.js";
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
 import { classifyMachines, healthMessage, reasonLabel, speakerBanner } from "./health-model.js";
 import { applyPlan, everythingOffPlan, heldStatus, howToText, loadBluetoothName, onlyHerePlan, playbackControls, playbackRequest, roomState } from "./listen-model.js";
@@ -2509,9 +2519,9 @@ function renderLibrary() {
 
   const folderNames = index.folders.map((f) => f.name);
   const writableNames = index.folders.filter((f) => !isReadOnlyFolder(f)).map((f) => f.name);
-  const syncText = enteSyncLabel(index.enteSync, Date.now());
-  els.enteSync.hidden = syncText === null || !index.folders.some(isReadOnlyFolder);
-  els.enteSync.textContent = syncText ?? "";
+  const syncView = enteSyncView(index, Date.now());
+  els.enteSync.hidden = syncView.hidden;
+  els.enteSync.textContent = syncView.text;
   if (state.artFilter !== ALL_FOLDERS && !folderNames.includes(state.artFilter)) {
     state.artFilter = ALL_FOLDERS;
     state.libPage = 0;
@@ -2957,16 +2967,9 @@ function historyViewerItems() {
     }
     seen.add(id);
     const known = state.artIndex ? state.artIndex.pieces.find((p) => p.id === id) : null;
-    items.push({
-      id,
-      file: piece.file,
-      title: piece.title,
-      artist: piece.artist,
-      source_url: piece.source_url,
-      origId: historyDeleteTarget(piece),
-      folder: known ? known.folder : "",
-      url: known ? known.url : artUrl(piece.file),
-    });
+    items.push(
+      historyViewerItem({ piece, id, origId: historyDeleteTarget(piece), known, fallbackUrl: artUrl(piece.file) })
+    );
   }
   return items;
 }
@@ -3053,9 +3056,9 @@ function renderViewer(list, idx) {
   els.viewerNote.textContent = view.showBlockedReason || "";
 
   const others = !state.artIndex || !piece.folder ? [] : state.artIndex.folders.filter((f) => !isReadOnlyFolder(f)).map((f) => f.name).filter((n) => n !== piece.folder);
-  const readOnly = isReadOnlyPiece(piece);
-  els.viewerMove.closest("label").hidden = readOnly;
-  els.viewerTrash.hidden = readOnly;
+  const controls = viewerControls(piece);
+  els.viewerMove.closest("label").hidden = !controls.showMove;
+  els.viewerTrash.hidden = !controls.showTrash;
   const sig = JSON.stringify(others);
   if (els.viewerMove.dataset.sig !== sig) {
     els.viewerMove.dataset.sig = sig;

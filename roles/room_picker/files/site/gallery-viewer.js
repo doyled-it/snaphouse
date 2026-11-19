@@ -14,6 +14,29 @@ function blockedReason(piece) {
   return null;
 }
 
+// A frame-history entry as a viewer item. `known` is the library piece with the
+// same id (or null): it supplies the folder, the reachable url and the source, so
+// an Ente piece opened from history is as read-only as one opened from the grid.
+export function historyViewerItem({ piece, id, origId, known, fallbackUrl }) {
+  return {
+    id,
+    file: piece.file,
+    title: piece.title,
+    artist: piece.artist,
+    source_url: piece.source_url,
+    origId,
+    folder: known ? known.folder : "",
+    url: known ? known.url : fallbackUrl,
+    ...(known && known.source === "ente" ? { source: "ente" } : {}),
+  };
+}
+
+// Which per-piece write controls the viewer offers. An Ente piece is read-only.
+export function viewerControls(piece) {
+  const writable = !(piece && piece.source === "ente");
+  return { showMove: writable, showTrash: writable };
+}
+
 // source is "grid" or "history". History adds removeFromHistory.
 export function viewerState(items, index, source) {
   const list = Array.isArray(items) ? items : [];

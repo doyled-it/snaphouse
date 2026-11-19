@@ -608,6 +608,13 @@ export function enteSyncLabel(sync, nowMs) {
   return `Synced from Ente ${Math.floor(hours / 24)} d ago`;
 }
 
+// The sync line's visibility and text. It shows whenever there is a label, even
+// before the first album lands, so a failing first sync is visible.
+export function enteSyncView(index, nowMs) {
+  const text = enteSyncLabel(index?.enteSync ?? null, nowMs);
+  return { hidden: text === null, text: text ?? "" };
+}
+
 function validateFolder(raw) {
   if (!raw || typeof raw !== "object") {
     return null;
