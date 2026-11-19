@@ -349,6 +349,16 @@ class Library:
         ]
         return True
 
+    def _ente_album_exists(self, folder: str) -> bool:
+        """True if ``folder`` is ``ente-<albumId>`` with a mirror directory."""
+        if self.ente_root is None or not folder.startswith(ENTE_PREFIX):
+            return False
+        album_id = folder[len(ENTE_PREFIX):]
+        if not ENTE_ID_RE.fullmatch(album_id):
+            return False
+        album_dir = self.ente_root / album_id
+        return album_dir.is_dir() and not album_dir.is_symlink()
+
     def _prune_ente(self, keep: set[Path]) -> None:
         """Remove renditions nothing lists. Skipped while the mirror root is
         unreadable, so an unmounted export never wipes the cache."""
@@ -791,7 +801,11 @@ class Library:
     def set_folder_enabled(self, name: str, enabled: bool) -> bool:
         """Turn rotation on or off for a folder (stored by name)."""
         folder = self._validate_folder_name(name)
-        if folder != BUILTIN_FOLDER and not (self.root / folder).is_dir():
+        if _is_ente_name(folder):
+            # The reserved prefix is never an art folder: only a mirrored album.
+            if not self._ente_album_exists(folder):
+                raise ArtError(404, "That folder does not exist.")
+        elif folder != BUILTIN_FOLDER and not (self.root / folder).is_dir():
             raise ArtError(404, "That folder does not exist.")
         control = self._load_state()
         folders = list(control["settings"]["folders_enabled"])

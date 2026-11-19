@@ -898,13 +898,6 @@ def _piece(index: dict, piece_id: str) -> dict:
     raise AssertionError(f"piece {piece_id!r} not in index")
 
 
-def _switch_off(library: Library, name: str) -> None:
-    """Turn a folder off the way the owner's toggle does, by editing the state file."""
-    data = json.loads(library.state.read_text(encoding="utf-8"))
-    data["settings"]["folders_enabled"].remove(name)
-    library.state.write_text(json.dumps(data), encoding="utf-8")
-
-
 def _folder(index: dict, name: str) -> dict:
     for folder in index["folders"]:
         if folder["name"] == name:
@@ -1055,17 +1048,6 @@ def _ente_library(tmp_path: Path, *, with_status: bool = False) -> Library:
     )
 
 
-def _switch_off(library: Library, name: str) -> None:
-    """Turn a folder off the way the owner's toggle does, by editing the state file."""
-    data = json.loads(library.state.read_text(encoding="utf-8"))
-    data["settings"]["folders_enabled"].remove(name)
-    library.state.write_text(json.dumps(data), encoding="utf-8")
-
-
-def _folder(index: dict, name: str) -> dict:
-    return next(f for f in index["folders"] if f["name"] == name)
-
-
 def test_scan_without_ente_root_is_unchanged(tmp_path):
     library = _make_library(tmp_path)
     _write_image(library.root / "a.jpg")
@@ -1140,7 +1122,7 @@ def test_album_switched_off_stays_off_after_rescan(tmp_path):
     library = _ente_library(tmp_path)
     _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (400, 200)})
     library.scan()
-    _switch_off(library, "ente-alb1")
+    library.set_folder_enabled("ente-alb1", False)
     index = library.scan()
     assert _folder(index, "ente-alb1")["enabled"] is False
     assert "ente-alb1" not in library.control()["settings"]["folders_enabled"]
@@ -1151,7 +1133,7 @@ def test_renamed_album_keeps_switch_state(tmp_path):
     mirror = tmp_path / "mirror"
     _ente_album(mirror, "alb1", "Album One", {"f1": (400, 200)})
     library.scan()
-    _switch_off(library, "ente-alb1")
+    library.set_folder_enabled("ente-alb1", False)
     _ente_album(mirror, "alb1", "Album Uno", {"f1": (400, 200)})
     folder = _folder(library.scan(), "ente-alb1")
     assert folder["title"] == "Album Uno"
@@ -1236,3 +1218,29 @@ def test_ente_seen_survives_state_normalisation(tmp_path):
     assert library.control()["settings"]["ente_seen"] == ["ente-a", "ente-b"]
     library.state.write_text(json.dumps({"settings": {"ente_seen": "bad"}}), encoding="utf-8")
     assert library.control()["settings"]["ente_seen"] == []
+
+
+def test_set_folder_enabled_switches_ente_folder_off_and_on(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (400, 200)})
+    library.scan()
+    assert library.set_folder_enabled("ente-alb1", False) is False
+    assert _folder(library.scan(), "ente-alb1")["enabled"] is False
+    assert library.set_folder_enabled("ente-alb1", True) is True
+    assert _folder(library.scan(), "ente-alb1")["enabled"] is True
+
+
+def test_set_folder_enabled_ente_name_without_mirror_dir_is_404(tmp_path):
+    library = _ente_library(tmp_path)
+    (tmp_path / "mirror").mkdir()
+    with pytest.raises(ArtError) as excinfo:
+        library.set_folder_enabled("ente-nope", False)
+    assert excinfo.value.status == 404
+
+
+def test_set_folder_enabled_ente_name_without_ente_root_is_404(tmp_path):
+    library = _make_library(tmp_path)
+    (library.root / "ente-alb1").mkdir()  # a hand-made art dir is not an Ente album
+    with pytest.raises(ArtError) as excinfo:
+        library.set_folder_enabled("ente-alb1", False)
+    assert excinfo.value.status == 404
