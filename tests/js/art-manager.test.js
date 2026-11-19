@@ -20,6 +20,10 @@ import {
   trashRestoreId,
   movedPieceId,
   ALLOWED_INTERVALS,
+  isReadOnlyFolder,
+  isReadOnlyPiece,
+  enteSyncLabel,
+  folderDisplayName,
 } from "../../roles/room_picker/files/site/rooms-model.js";
 
 // A full art-index.json body: the built-in Collection folder, a user folder, a
@@ -448,4 +452,104 @@ test("movedPieceId finds a moved piece in its new folder by file name", () => {
   assert.equal(movedPieceId(index, "Collection", { file: "beach.jpg" }), null);
   assert.equal(movedPieceId(null, "Photos", { file: "beach.jpg" }), null);
   assert.equal(movedPieceId(index, "Photos", null), null);
+});
+
+// ---- Ente albums: read-only folders and sync status ----
+
+const NOW = Date.parse("2026-11-15T12:00:00Z");
+const ago = (ms) => new Date(NOW - ms).toISOString();
+
+function enteDoc() {
+  return {
+    generated_at: "2026-11-15T12:00:00Z",
+    ente_sync: { state: "ok", last_success: ago(5 * 60000), error: null },
+    folders: [
+      { name: "Collection", count: 1, enabled: true, builtin: true },
+      { name: "ente-abc123", title: "Album One \u{1F338}", source: "ente", count: 1, enabled: true, builtin: false },
+    ],
+    pieces: [
+      {
+        id: "ente-abc123/f1.jpg", folder: "ente-abc123", file: "f1.jpg", title: "f1",
+        source: "ente", landscape: false, width: 1000, height: 2000,
+        thumb: null, url: "/art/ente-abc123/f1.jpg",
+      },
+      {
+        id: "Collection/tall.jpg", folder: "Collection", file: "tall.jpg", title: "Tall",
+        landscape: false, thumb: null, url: "/art/Collection/tall.jpg",
+      },
+    ],
+    trash: [],
+  };
+}
+
+test("isReadOnlyFolder and isReadOnlyPiece are true only for source ente", () => {
+  assert.equal(isReadOnlyFolder({ source: "ente" }), true);
+  assert.equal(isReadOnlyFolder({}), false);
+  assert.equal(isReadOnlyFolder({ source: "other" }), false);
+  assert.equal(isReadOnlyPiece({ source: "ente" }), true);
+  assert.equal(isReadOnlyPiece({}), false);
+});
+
+test("enteSyncLabel hides when absent or not set up", () => {
+  assert.equal(enteSyncLabel(null, NOW), null);
+  assert.equal(enteSyncLabel({ state: "not_set_up", last_success: null, error: null }, NOW), null);
+});
+
+test("enteSyncLabel words each state", () => {
+  const ok = (ms) => ({ state: "ok", last_success: ago(ms), error: null });
+  assert.equal(enteSyncLabel(ok(20000), NOW), "Synced from Ente just now");
+  assert.equal(enteSyncLabel(ok(5 * 60000), NOW), "Synced from Ente 5 min ago");
+  assert.equal(enteSyncLabel(ok(3 * 3600000), NOW), "Synced from Ente 3 h ago");
+  assert.equal(enteSyncLabel(ok(2 * 86400000), NOW), "Synced from Ente 2 d ago");
+  assert.equal(
+    enteSyncLabel({ state: "failing", last_success: null, error: "login expired" }, NOW),
+    "Ente sync is failing: login expired",
+  );
+  assert.equal(enteSyncLabel({ state: "unknown", last_success: null, error: null }, NOW), "Ente sync status unknown");
+});
+
+test("folderDisplayName prefers the title over the name", () => {
+  assert.equal(folderDisplayName({ name: "ente-abc123", title: "Album One" }), "Album One");
+  assert.equal(folderDisplayName({ name: "Photos" }), "Photos");
+});
+
+test("parseArtIndex keeps source and title and drops a non-string source", () => {
+  const index = parseArtIndex(enteDoc());
+  assert.equal(index.folders[1].source, "ente");
+  assert.equal(index.folders[1].title, "Album One \u{1F338}");
+  assert.equal(index.pieces[0].source, "ente");
+  assert.equal(index.folders[0].source, undefined);
+  const bad = enteDoc();
+  bad.folders[1].source = 7;
+  bad.pieces[0].source = { x: 1 };
+  const parsed = parseArtIndex(bad);
+  assert.equal(isReadOnlyFolder(parsed.folders[1]), false);
+  assert.equal(isReadOnlyPiece(parsed.pieces[0]), false);
+});
+
+test("parseArtIndex exposes enteSync and drops malformed values without throwing", () => {
+  assert.deepEqual(parseArtIndex(enteDoc()).enteSync, {
+    state: "ok", last_success: ago(5 * 60000), error: null,
+  });
+  for (const bad of [undefined, null, 5, "ok", [], { state: "weird" }, { state: 3 }]) {
+    const doc = enteDoc();
+    doc.ente_sync = bad;
+    assert.equal(parseArtIndex(doc).enteSync, null);
+  }
+});
+
+test("rotation summary counts a tall ente piece but not a tall art piece", () => {
+  const index = parseArtIndex(enteDoc());
+  const both = rotationSummary(index, { foldersEnabled: ["ente-abc123", "Collection"] });
+  assert.equal(both.count, 1);
+  const artOnly = rotationSummary(index, { foldersEnabled: ["Collection"] });
+  assert.equal(artOnly.count, 0);
+  const off = rotationSummary(index, { foldersEnabled: [] });
+  assert.equal(off.count, 0);
+});
+
+test("an ente folder with an unsafe name is still dropped", () => {
+  const doc = enteDoc();
+  doc.folders.push({ name: "", source: "ente", title: "x", count: 0, enabled: true });
+  assert.equal(parseArtIndex(doc).folders.length, 2);
 });

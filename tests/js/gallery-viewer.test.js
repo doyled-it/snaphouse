@@ -113,3 +113,8 @@ test("history items step and clamp like grid items", () => {
   assert.equal(v.canNext, false);
   assert.equal(v.canPrev, true);
 });
+
+test("a tall ente piece is not blocked from showing on the frame", () => {
+  const list = [{ id: "ente-a/f.jpg", landscape: false, source: "ente" }];
+  assert.equal(viewerState(list, 0, "grid").showBlockedReason, null);
+});

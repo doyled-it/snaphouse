@@ -346,6 +346,11 @@ advance the frame first when it is showing the piece, and give an Undo toast).
 There is no hub API to empty the trash, so there is no "Empty trash" button; the
 hub purges after 30 days. Deleting a folder that still has pictures asks inline,
 then moves each picture to the trash before removing the (now empty) folder.
+Folders with `source: "ente"` (Ente albums, read-only on the hub) show their `title`, a
+sync line from the index's `ente_sync` (`enteSyncLabel`), and keep the rotation switch.
+The page hides Rename, Remove, upload, per-piece Move and Move to trash for them
+(`isReadOnlyFolder`, `isReadOnlyPiece`); the hub's 409 is the real guard. A tall Ente
+piece rotates and can be shown, unlike a tall art piece.
 
 ## Polling sleeps while hidden, lists patch in place
 

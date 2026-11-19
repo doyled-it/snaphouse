@@ -543,7 +543,69 @@ export function parseArtIndex(raw) {
     folders,
     pieces,
     trash,
+    enteSync: validateEnteSync(raw.ente_sync),
   };
+}
+
+const ENTE_SYNC_STATES = ["ok", "failing", "not_set_up", "unknown"];
+
+function validateEnteSync(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  if (!ENTE_SYNC_STATES.includes(raw.state)) {
+    return null;
+  }
+  return {
+    state: raw.state,
+    last_success: nonEmptyStringOrNull(raw.last_success),
+    error: nonEmptyStringOrNull(raw.error),
+  };
+}
+
+// Only the string "ente" marks a read-only source; anything else is an art
+// folder or piece. The hub refuses writes to these too (409); hiding the actions
+// is a convenience.
+export function isReadOnlyFolder(folder) {
+  return folder?.source === "ente";
+}
+
+export function isReadOnlyPiece(piece) {
+  return piece?.source === "ente";
+}
+
+export function folderDisplayName(folder) {
+  return isNonEmptyString(folder?.title) ? folder.title : folder.name;
+}
+
+// The one status line shown above the folder list for Ente folders, or null
+// when there is nothing to say (no document, or Ente not set up).
+export function enteSyncLabel(sync, nowMs) {
+  if (!sync || sync.state === "not_set_up") {
+    return null;
+  }
+  if (sync.state === "failing") {
+    return sync.error ? `Ente sync is failing: ${sync.error}` : "Ente sync is failing";
+  }
+  if (sync.state !== "ok") {
+    return "Ente sync status unknown";
+  }
+  const then = Date.parse(sync.last_success ?? "");
+  if (Number.isNaN(then)) {
+    return "Ente sync status unknown";
+  }
+  const minutes = Math.max(0, Math.floor((nowMs - then) / 60000));
+  if (minutes < 1) {
+    return "Synced from Ente just now";
+  }
+  if (minutes < 60) {
+    return `Synced from Ente ${minutes} min ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `Synced from Ente ${hours} h ago`;
+  }
+  return `Synced from Ente ${Math.floor(hours / 24)} d ago`;
 }
 
 function validateFolder(raw) {
@@ -553,12 +615,19 @@ function validateFolder(raw) {
   if (typeof raw.name !== "string" || raw.name.length === 0) {
     return null;
   }
-  return {
+  const folder = {
     name: raw.name,
     count: nonNegativeNumberOrNull(raw.count) ?? 0,
     enabled: raw.enabled === true,
     builtin: raw.builtin === true,
   };
+  if (isNonEmptyString(raw.title)) {
+    folder.title = raw.title;
+  }
+  if (raw.source === "ente") {
+    folder.source = "ente";
+  }
+  return folder;
 }
 
 // One library piece, validated to the contract, or null if it is unusable. id,
@@ -604,6 +673,7 @@ function validateArtPiece(raw) {
     mtime: nonNegativeNumberOrNull(raw.mtime),
     thumb,
     url,
+    ...(raw.source === "ente" ? { source: "ente" } : {}),
   };
 }
 
@@ -691,7 +761,7 @@ export function piecesInFolder(index, folder) {
 export function rotationSummary(index, control) {
   const enabled = new Set(control?.foldersEnabled ?? []);
   const pieces = index?.pieces ?? [];
-  const count = pieces.filter((piece) => enabled.has(piece.folder) && piece.landscape).length;
+  const count = pieces.filter((piece) => enabled.has(piece.folder) && (piece.landscape || piece.source === "ente")).length;
   if (count === 0) {
     return { count: 0, empty: true, text: "No pictures will be shown. Turn on a folder." };
   }

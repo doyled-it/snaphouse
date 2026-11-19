@@ -32,6 +32,10 @@ import {
   interpretControlResponse,
   safeJsonParse,
   parseArtIndex,
+  isReadOnlyFolder,
+  isReadOnlyPiece,
+  enteSyncLabel,
+  folderDisplayName,
   parseArtControl,
   piecesInFolder,
   rotationSummary,
@@ -306,6 +310,7 @@ const els = {
   viewerNote: document.getElementById("viewer-note"),
   libraryCount: document.getElementById("library-count"),
   artFolderFilter: document.getElementById("art-folder-filter"),
+  enteSync: document.getElementById("ente-sync"),
   artGrid: document.getElementById("art-grid"),
   artGridEmpty: document.getElementById("art-grid-empty"),
   libraryPager: document.getElementById("library-pager"),
@@ -2503,16 +2508,20 @@ function renderLibrary() {
   }
 
   const folderNames = index.folders.map((f) => f.name);
+  const writableNames = index.folders.filter((f) => !isReadOnlyFolder(f)).map((f) => f.name);
+  const syncText = enteSyncLabel(index.enteSync, Date.now());
+  els.enteSync.hidden = syncText === null || !index.folders.some(isReadOnlyFolder);
+  els.enteSync.textContent = syncText ?? "";
   if (state.artFilter !== ALL_FOLDERS && !folderNames.includes(state.artFilter)) {
     state.artFilter = ALL_FOLDERS;
     state.libPage = 0;
   }
   fillSelect(
     els.artFolderFilter,
-    [{ value: ALL_FOLDERS, label: "All folders" }, ...folderNames.map((n) => ({ value: n, label: n }))],
+    [{ value: ALL_FOLDERS, label: "All folders" }, ...index.folders.map((f) => ({ value: f.name, label: folderDisplayName(f) }))],
     state.artFilter
   );
-  fillSelect(els.artUploadFolder, folderNames.map((n) => ({ value: n, label: n })), els.artUploadFolder.value);
+  fillSelect(els.artUploadFolder, writableNames.map((n) => ({ value: n, label: n })), els.artUploadFolder.value);
 
   renderLibraryGrid();
   renderFolderList(index);
@@ -2534,7 +2543,7 @@ function renderFolderChips(index, control) {
     const on = enabled.has(folder.name);
     chip.setAttribute("aria-pressed", on ? "true" : "false");
     chip.classList.toggle("on", on);
-    chip.textContent = `${folder.name} (${folder.count})`;
+    chip.textContent = `${folderDisplayName(folder)} (${folder.count})`;
     chip.addEventListener("click", () => {
       const next = chip.getAttribute("aria-pressed") !== "true";
       chip.setAttribute("aria-pressed", next ? "true" : "false");
@@ -2559,7 +2568,7 @@ function renderLibraryGrid() {
   patchKeyed(els.artGrid, slice, {
     key: (piece) => String(piece.id),
     sig: (piece) =>
-      JSON.stringify([piece.title, piece.artist, piece.thumb, piece.landscape, piece.folder, folderNames]),
+      JSON.stringify([piece.title, piece.artist, piece.thumb, piece.landscape, piece.source, piece.folder, folderNames]),
     create: (piece) => libraryTile(piece),
   });
   els.artGridEmpty.hidden = pieces.length > 0;
@@ -2584,7 +2593,7 @@ function libraryTile(piece) {
   const wrap = document.createElement("div");
   wrap.className = "tile-thumb-wrap";
   wrap.append(thumbNode(piece.thumb, piece.title, "row-thumb tile-thumb"));
-  if (!piece.landscape) {
+  if (!piece.landscape && !isReadOnlyPiece(piece)) {
     const badge = document.createElement("span");
     badge.className = "badge";
     badge.textContent = "Too tall";
@@ -2612,7 +2621,7 @@ function libraryTile(piece) {
 function renderFolderList(index) {
   // Rebuild only when something visible changed, so a name being typed into a
   // rename field survives a refresh that changes nothing.
-  const folders = index.folders.filter((f) => !f.builtin);
+  const folders = index.folders.filter((f) => !f.builtin && !isReadOnlyFolder(f));
   const sig = JSON.stringify([folders.map((f) => [f.name, f.count]), state.folderConfirm]);
   if (sig === state.folderSig) {
     return;
@@ -3034,7 +3043,8 @@ function renderViewer(list, idx) {
   }
   els.viewerImage.alt = piece.title;
   renderViewerTitle(piece);
-  els.viewerSub.textContent = [piece.artist, piece.folder].filter(Boolean).join(", ");
+  const pieceFolder = state.artIndex ? state.artIndex.folders.find((f) => f.name === piece.folder) : null;
+  els.viewerSub.textContent = [piece.artist, pieceFolder ? folderDisplayName(pieceFolder) : piece.folder].filter(Boolean).join(", ");
   els.viewerPrev.disabled = !view.canPrev;
   els.viewerNext.disabled = !view.canNext;
   els.viewerShow.disabled = view.showBlockedReason !== null;
@@ -3042,7 +3052,10 @@ function renderViewer(list, idx) {
   els.viewerNote.hidden = view.showBlockedReason === null;
   els.viewerNote.textContent = view.showBlockedReason || "";
 
-  const others = !state.artIndex || !piece.folder ? [] : state.artIndex.folders.map((f) => f.name).filter((n) => n !== piece.folder);
+  const others = !state.artIndex || !piece.folder ? [] : state.artIndex.folders.filter((f) => !isReadOnlyFolder(f)).map((f) => f.name).filter((n) => n !== piece.folder);
+  const readOnly = isReadOnlyPiece(piece);
+  els.viewerMove.closest("label").hidden = readOnly;
+  els.viewerTrash.hidden = readOnly;
   const sig = JSON.stringify(others);
   if (els.viewerMove.dataset.sig !== sig) {
     els.viewerMove.dataset.sig = sig;

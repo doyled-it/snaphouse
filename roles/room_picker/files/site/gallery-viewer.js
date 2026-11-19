@@ -5,9 +5,10 @@
 const GRID_ACTIONS = ["show", "pin", "move", "trash"];
 
 // Why a piece cannot be shown on the frame, or null. Today's orientation rule:
-// only a landscape piece rotates, so a portrait one is too tall.
+// only a landscape art piece rotates, so a portrait one is too tall. An Ente
+// piece rotates at any shape.
 function blockedReason(piece) {
-  if (piece && piece.landscape === false) {
+  if (piece && piece.landscape === false && piece.source !== "ente") {
     return "Too tall to show on the frame.";
   }
   return null;
