@@ -1,0 +1,12 @@
+# snaphouse Ente sync timer, managed by Ansible (roles/ente_sync). Do not edit on
+# the host.
+[Unit]
+Description=Run the snaphouse Ente album sync every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

@@ -172,6 +172,8 @@
   loop:
     - /var/lib/snaphouse/public/art
     - /var/lib/snaphouse/public/art-thumbs
+    # Renditions of the Ente albums (served by the regex location in art.conf).
+    - /var/lib/snaphouse/public/art-ente
 
 # The private state (rotation settings and last command) persists here, rewritten
 # atomically by the service. It needs its own art-owned directory because the

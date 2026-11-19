@@ -1,0 +1,166 @@
+---
+# Mirrors the household's Ente Photos albums onto the hub, read-only, so they
+# show as library folders and on the frame. This role installs the pinned Ente
+# CLI, creates the service account and its directories, generates the CLI's vault
+# key once, and runs the sync on a timer. The owner logs in to Ente once by hand;
+# until then the sync exits cleanly as "not set up".
+#
+# Nothing identifying lives here: no account name and no credentials. The vault key is
+# generated on the hub and never registered, printed or logged.
+
+- name: Create the ente group
+  ansible.builtin.group:
+    name: ente
+    system: true
+
+- name: Create the ente user
+  # No login. Owns the mirror, the CLI home and the vault key; the art account
+  # reads the mirror through the ente group.
+  ansible.builtin.user:
+    name: ente
+    group: ente
+    system: true
+    shell: /usr/sbin/nologin
+    home: /var/lib/snaphouse/ente
+    create_home: false
+
+- name: Let the art account read the mirror through the ente group
+  ansible.builtin.user:
+    name: art
+    groups: ente
+    append: true
+
+- name: Create the ente directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: ente
+    group: ente
+    mode: "0750"
+  loop:
+    - /var/lib/snaphouse/ente
+    - /var/lib/snaphouse/ente/mirror
+    - /var/lib/snaphouse/ente/home
+
+- name: Create the CLI install directory
+  ansible.builtin.file:
+    path: /opt/snaphouse/ente
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the pinned Ente CLI
+  ansible.builtin.get_url:
+    url: "https://github.com/ente-io/ente/releases/download/cli-v{{ ente_cli_version }}/ente-cli-v{{ ente_cli_version }}-linux-amd64.tar.gz"
+    dest: "/opt/snaphouse/ente/ente-cli-v{{ ente_cli_version }}-linux-amd64.tar.gz"
+    # Verified against the digest pinned in vars/all.yml.
+    checksum: "sha256:{{ ente_cli_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+    timeout: 60
+  register: ente_sync_download
+  retries: 5
+  delay: 10
+  until: ente_sync_download is succeeded
+  tags:
+    - hardware
+
+- name: Unpack the Ente CLI
+  ansible.builtin.unarchive:
+    src: "/opt/snaphouse/ente/ente-cli-v{{ ente_cli_version }}-linux-amd64.tar.gz"
+    dest: /opt/snaphouse/ente
+    remote_src: true
+    owner: root
+    group: root
+    creates: /opt/snaphouse/ente/ente
+  tags:
+    - hardware
+
+- name: Link the Ente CLI onto the path
+  ansible.builtin.file:
+    src: /opt/snaphouse/ente/ente
+    dest: /usr/local/bin/ente
+    state: link
+  tags:
+    - hardware
+
+- name: Check the installed Ente CLI version
+  ansible.builtin.command: ente --version
+  register: ente_sync_version
+  changed_when: false
+  failed_when: ente_sync_version.stdout | trim != 'ente ' ~ ente_cli_version
+  tags:
+    - hardware
+
+- name: Generate the vault key once
+  # `ente vault key generate` prints one line (44 base64 characters) on stdout.
+  # It is redirected straight to the key file so it never reaches Ansible's
+  # output, and `creates` keeps a later apply from replacing it. A failed run
+  # removes the partial file so `creates` does not trust an empty key.
+  ansible.builtin.shell:
+    cmd: >-
+      ente vault key generate > /var/lib/snaphouse/ente/vault.key
+      || { rm -f /var/lib/snaphouse/ente/vault.key; exit 1; }
+    creates: /var/lib/snaphouse/ente/vault.key
+  become: true
+  become_user: ente
+  no_log: true
+  tags:
+    - hardware
+
+- name: Lock down the vault key
+  ansible.builtin.file:
+    path: /var/lib/snaphouse/ente/vault.key
+    owner: ente
+    group: ente
+    mode: "0400"
+  tags:
+    - hardware
+
+- name: Install the Ente sync service unit
+  ansible.builtin.template:
+    src: snaphouse-ente-sync.service.j2
+    dest: /etc/systemd/system/snaphouse-ente-sync.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for ente_sync
+
+- name: Install the Ente sync timer
+  ansible.builtin.template:
+    src: snaphouse-ente-sync.timer.j2
+    dest: /etc/systemd/system/snaphouse-ente-sync.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for ente_sync
+
+- name: Ensure the verify.d dir exists for on-device check scripts
+  ansible.builtin.file:
+    path: /etc/snaphouse/verify.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the Ente sync verify check
+  ansible.builtin.copy:
+    src: verify.d/ente_sync.sh
+    dest: /etc/snaphouse/verify.d/ente_sync.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Reload systemd now if a unit changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the Ente sync timer
+  ansible.builtin.systemd_service:
+    name: snaphouse-ente-sync.timer
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service

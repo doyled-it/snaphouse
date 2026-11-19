@@ -150,3 +150,10 @@ snapcast_client_sha256:
   trixie:
     amd64: "3c699b5800904534c10f4a68d0a8736035d8c4b8d8a93ab05a14d4dcae0f04a5"
     arm64: "eced4134eeab132fc16af23ce19eb2f81abe23dd0f3c610150fb3bd1d344efae"
+
+# Ente Photos CLI, which exports the household's albums read-only to the hub (the
+# ente_sync role). Pinned by version and by the SHA-256 of the linux-amd64 release
+# tarball, kept in the repo rather than fetched from the download origin. Update
+# both together when bumping the version.
+ente_cli_version: "0.4.4"
+ente_cli_sha256: "719834d6b65e9e48a4a1d4e3e577247633f0e8a5eb2bae30278ec6c6fc536f17"
