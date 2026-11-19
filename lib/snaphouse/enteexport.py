@@ -55,13 +55,15 @@ def _read_record(album_dir: Path) -> dict | None:
     return data
 
 
-def _find_picture(album_dir: Path, album_id: str, file_id: str) -> EntePicture | None:
+def _index_pictures(album_dir: Path, album_id: str) -> dict[str, EntePicture]:
+    """List the directory once: stem -> picture for image regular files."""
     try:
         entries = list(album_dir.iterdir())
     except OSError:
-        return None
-    for entry in entries:
-        if entry.suffix.lower() not in ENTE_EXTENSIONS or entry.stem != file_id:
+        return {}
+    found: dict[str, EntePicture] = {}
+    for entry in sorted(entries, key=lambda e: e.name):
+        if entry.suffix.lower() not in ENTE_EXTENSIONS or entry.stem in found:
             continue
         try:
             if entry.is_symlink() or not entry.is_file():
@@ -69,8 +71,10 @@ def _find_picture(album_dir: Path, album_id: str, file_id: str) -> EntePicture |
             st = entry.stat()
         except OSError:
             continue
-        return EntePicture(file_id, entry, album_id, int(st.st_mtime), st.st_size)
-    return None
+        found[entry.stem] = EntePicture(
+            entry.stem, entry, album_id, int(st.st_mtime), st.st_size
+        )
+    return found
 
 
 def _scan_album(album_dir: Path) -> EnteAlbum | None:
@@ -80,13 +84,12 @@ def _scan_album(album_dir: Path) -> EnteAlbum | None:
     record = _read_record(album_dir)
     if record is None:
         return None
-    pictures = []
-    for file_id in sorted(record.get("files", {})):
-        if not _is_id(file_id):
-            continue
-        picture = _find_picture(album_dir, album_id, file_id)
-        if picture is not None:
-            pictures.append(picture)
+    on_disk = _index_pictures(album_dir, album_id)
+    pictures = [
+        on_disk[file_id]
+        for file_id in sorted(record.get("files", {}))
+        if _is_id(file_id) and file_id in on_disk
+    ]
     return EnteAlbum(ENTE_PREFIX + album_id, record["title"], tuple(pictures))
 
 

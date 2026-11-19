@@ -163,3 +163,19 @@ def test_module_constants():
     }
     assert enteexport.ENTE_ID_RE.fullmatch("aZ09")
     assert not enteexport.ENTE_ID_RE.fullmatch("")
+
+
+def test_each_album_directory_is_listed_once(tmp_path, monkeypatch):
+    files = {f"{i}.jpg": str(i) for i in range(1, 21)}
+    d = make_album(tmp_path, "101", "Album One", files)
+    calls = []
+    real = Path.iterdir
+
+    def counting(self):
+        calls.append(self)
+        return real(self)
+
+    monkeypatch.setattr(Path, "iterdir", counting)
+    (album,) = scan_export(tmp_path)
+    assert len(album.pictures) == 20
+    assert calls.count(d) == 1
