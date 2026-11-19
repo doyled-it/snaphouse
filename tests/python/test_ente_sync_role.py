@@ -73,6 +73,9 @@ def test_vault_key_generated_once_with_ente_vault_key_generate_mode_0400_owner_e
     task = gen[0]
     shell = task["ansible.builtin.shell"]
     assert "ente vault key generate > /var/lib/snaphouse/ente/vault.key" in shell["cmd"]
+    # The file is created owner-only, so it is never group-readable before the
+    # 0400 lockdown task runs.
+    assert shell["cmd"].lstrip().startswith("umask 077 &&")
     # A failed generate must not leave an empty file that `creates` then trusts.
     assert "rm -f /var/lib/snaphouse/ente/vault.key" in shell["cmd"]
     assert shell["creates"] == "/var/lib/snaphouse/ente/vault.key"

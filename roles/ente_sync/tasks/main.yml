@@ -31,7 +31,7 @@
     append: true
   # A running service keeps the groups it started with, so artadmin must restart
   # to read the 0750 mirror. The handler is defined in art_share (names are
-  # play-global) and runs at the end of the play, after this change.
+  # play-global) and runs at this role's meta: flush_handlers, after this change.
   notify: Restart the art admin service
 
 - name: Create the ente directories
@@ -101,11 +101,12 @@
 - name: Generate the vault key once
   # `ente vault key generate` prints one line (44 base64 characters) on stdout.
   # It is redirected straight to the key file so it never reaches Ansible's
-  # output, and `creates` keeps a later apply from replacing it. A failed run
+  # output, and `creates` keeps a later apply from replacing it. The umask keeps
+  # the file owner-only from the moment it exists. A failed run
   # removes the partial file so `creates` does not trust an empty key.
   ansible.builtin.shell:
     cmd: >-
-      ente vault key generate > /var/lib/snaphouse/ente/vault.key
+      umask 077 && ente vault key generate > /var/lib/snaphouse/ente/vault.key
       || { rm -f /var/lib/snaphouse/ente/vault.key; exit 1; }
     creates: /var/lib/snaphouse/ente/vault.key
   become: true
