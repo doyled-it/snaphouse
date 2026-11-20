@@ -439,6 +439,30 @@ NetworkManager's default leaves power saving on, which makes the radio doze
 between packets and underruns the Wi-Fi rooms (issue #140). The `wifi_powersave.sh`
 verify check fails if `iw` reports it on, and passes where there is no `wlan0`.
 
+## Persistent journal and the Wi-Fi watchdog
+
+Every machine keeps its journal on disk (`common` role: a journald drop-in with
+`Storage=persistent` and `SystemMaxUse=64M`, `/var/log/journal` created, journald
+restarted and flushed by the `Apply the persistent journal` handler, check
+`journal_persistent.sh`). Before this the Pis kept it in memory, so a Wi-Fi loss
+that lasted until a power cycle left nothing to read (issue #178).
+
+Machines with a `wlan0` that NetworkManager manages (not the wired hub) also get
+`snaphouse-wifi-watchdog.timer`, one check a minute running
+`lib/snaphouse/wifiwatchdog.py`. The signal is the default gateway from `ip route`:
+no default route, or no ping answer, is down (never mDNS or the hub, which reboots
+nightly). Down 5 minutes in a row restarts the Wi-Fi link once (`nmcli radio wifi`
+off and on, then `nmcli device connect wlan0`; the explicit connect is needed
+because NetworkManager stops autoconnecting after its retries run out). Still down
+10 minutes after that restart reboots, at most once an hour, with the reboot time
+stamped in `/var/lib/snaphouse/wifi-watchdog/` so the limit survives the reboot.
+The gateway answering clears the counters. Each step logs to the journal with the
+`wifi-watchdog:` tag (`journalctl -t snaphouse-wifi-watchdog`). The thresholds are
+`wifi_watchdog` in `vars/all.yml`. Check: `wifi_watchdog.sh` (timer enabled and
+active; passes where there is no wlan0). `iw` and `iputils-ping` are base packages,
+and `wifi_powersave.sh` fails with a clear message when `iw` is missing instead of
+passing silently.
+
 ## Verify checks and self-update pruning
 
 A role installs an on-device check by copying or templating it to

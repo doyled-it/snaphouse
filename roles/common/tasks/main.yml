@@ -22,6 +22,7 @@
       - jq
       - curl
       - iw
+      - iputils-ping
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -196,6 +197,91 @@
     owner: root
     group: root
     mode: "0755"
+
+# Persistent journal (issue #178). The Pis kept the journal in memory only, so
+# after a Wi-Fi loss that lasted until a power cycle there was nothing to read.
+# Keep it on disk, capped small for the SD card. The directory is created with
+# only a mode so systemd-tmpfiles (run by the handler) owns the group and ACLs.
+- name: Create the journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Keep the journal on disk across restarts
+  ansible.builtin.copy:
+    content: |
+      [Journal]
+      Storage=persistent
+      SystemMaxUse=64M
+    dest: /etc/systemd/journald.conf.d/snaphouse-persistent.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply the persistent journal
+
+- name: Create the persistent journal directory
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    mode: "2755"
+  notify: Apply the persistent journal
+
+- name: Install the persistent journal verify check
+  ansible.builtin.copy:
+    src: verify.d/journal_persistent.sh
+    dest: /etc/snaphouse/verify.d/journal_persistent.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# Wi-Fi watchdog (issue #178), only where a wlan0 exists and NetworkManager manages
+# the network (the wired hub gets none). A timer runs one check a minute; the logic
+# is lib/snaphouse/wifiwatchdog.py and the thresholds are wifi_watchdog in vars/all.yml.
+- name: Install the Wi-Fi watchdog service unit
+  ansible.builtin.template:
+    src: snaphouse-wifi-watchdog.service.j2
+    dest: /etc/systemd/system/snaphouse-wifi-watchdog.service
+    owner: root
+    group: root
+    mode: "0644"
+  when: (common_wlan0.stat.exists | default(false)) and (common_nm_dir.stat.isdir | default(false))
+  notify: Reload systemd for common
+
+- name: Install the Wi-Fi watchdog timer unit
+  ansible.builtin.template:
+    src: snaphouse-wifi-watchdog.timer.j2
+    dest: /etc/systemd/system/snaphouse-wifi-watchdog.timer
+    owner: root
+    group: root
+    mode: "0644"
+  when: (common_wlan0.stat.exists | default(false)) and (common_nm_dir.stat.isdir | default(false))
+  notify: Reload systemd for common
+
+- name: Install the Wi-Fi watchdog verify check
+  ansible.builtin.copy:
+    src: verify.d/wifi_watchdog.sh
+    dest: /etc/snaphouse/verify.d/wifi_watchdog.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Reload systemd now if the watchdog units changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the Wi-Fi watchdog timer
+  ansible.builtin.systemd_service:
+    name: snaphouse-wifi-watchdog.timer
+    enabled: true
+    state: started
+  when:
+    - common_systemd_init
+    - common_wlan0.stat.exists | default(false)
+    - common_nm_dir.stat.isdir | default(false)
+  tags:
+    - service
 
 - name: Set the hostname to this machine's snaphouse host name
   ansible.builtin.hostname:

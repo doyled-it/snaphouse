@@ -10,6 +10,12 @@ if [ ! -e /sys/class/net/wlan0 ]; then
     exit 0
 fi
 
+# A missing iw must fail loudly: skipping would leave power saving unchecked.
+if ! command -v iw >/dev/null 2>&1; then
+    echo "iw is not installed, cannot read wlan0 power save" >&2
+    exit 1
+fi
+
 if ! out=$(iw dev wlan0 get power_save 2>&1); then
     echo "iw could not read wlan0 power save: ${out}" >&2
     exit 1

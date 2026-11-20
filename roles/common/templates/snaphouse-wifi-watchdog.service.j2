@@ -1,0 +1,11 @@
+[Unit]
+Description=snaphouse Wi-Fi watchdog (one check: gateway ping, restart Wi-Fi, reboot)
+Documentation=https://github.com/doyled-it/snaphouse
+
+[Service]
+Type=oneshot
+# Stdlib only; runs in place from the on-device checkout. Thresholds come from
+# wifi_watchdog in vars/all.yml. Output goes to the journal under the tag below.
+Environment=PYTHONPATH=/opt/snaphouse/lib
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.wifiwatchdog --restart-after {{ wifi_watchdog.restart_after_s }} --reboot-after-restart {{ wifi_watchdog.reboot_after_restart_s }} --reboot-min-interval {{ wifi_watchdog.reboot_min_interval_s }}
+SyslogIdentifier=snaphouse-wifi-watchdog
