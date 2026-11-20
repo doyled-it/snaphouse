@@ -8,7 +8,7 @@
 # serves as /homebody.json. homebody's deploy/update.sh restarts this unit by the
 # name `homebody`.
 #
-# Presence probing (arping, l2ping) needs raw sockets, so the one capability it
+# Presence probing (arping) needs raw sockets, so the one capability it
 # holds is CAP_NET_RAW, and nothing else. The hardening is filesystem-only, like
 # the Matter unit: the network is left alone.
 [Unit]

@@ -386,7 +386,7 @@ def test_daemon_unit_follows_the_matter_controller():
 
 def test_daemon_unit_can_probe_presence_but_not_escalate():
     unit = _render_all(DAEMON_UNIT)
-    # arping and l2ping need raw sockets.
+    # arping needs raw sockets.
     assert "AmbientCapabilities=CAP_NET_RAW" in unit
     assert "CapabilityBoundingSet=CAP_NET_RAW" in unit
     assert "ProtectSystem=strict" in unit
