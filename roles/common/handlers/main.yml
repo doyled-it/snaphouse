@@ -38,6 +38,7 @@
 # in-memory journal onto disk.
 - name: Apply the persistent journal
   ansible.builtin.shell: |
+    set -e
     systemd-tmpfiles --create --prefix /var/log/journal
     systemctl restart systemd-journald
     journalctl --flush

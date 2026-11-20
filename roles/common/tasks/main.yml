@@ -240,6 +240,17 @@
 # Wi-Fi watchdog (issue #178), only where a wlan0 exists and NetworkManager manages
 # the network (the wired hub gets none). A timer runs one check a minute; the logic
 # is lib/snaphouse/wifiwatchdog.py and the thresholds are wifi_watchdog in vars/all.yml.
+# The same test is in verify.d/wifi_watchdog.sh, so verify cannot fail where the
+# role installed nothing: a wlan0 and a NetworkManager Wi-Fi connection profile.
+- name: Look for a NetworkManager Wi-Fi connection profile
+  ansible.builtin.command: nmcli -g TYPE connection show
+  register: common_wifi_profile
+  changed_when: false
+  failed_when: false
+  when: common_wlan0.stat.exists | default(false)
+  tags:
+    - hardware
+
 - name: Install the Wi-Fi watchdog service unit
   ansible.builtin.template:
     src: snaphouse-wifi-watchdog.service.j2
@@ -247,7 +258,7 @@
     owner: root
     group: root
     mode: "0644"
-  when: (common_wlan0.stat.exists | default(false)) and (common_nm_dir.stat.isdir | default(false))
+  when: common_wifi_profile.stdout | default('') is search('802-11-wireless')
   notify: Reload systemd for common
 
 - name: Install the Wi-Fi watchdog timer unit
@@ -257,7 +268,7 @@
     owner: root
     group: root
     mode: "0644"
-  when: (common_wlan0.stat.exists | default(false)) and (common_nm_dir.stat.isdir | default(false))
+  when: common_wifi_profile.stdout | default('') is search('802-11-wireless')
   notify: Reload systemd for common
 
 - name: Install the Wi-Fi watchdog verify check
@@ -278,8 +289,7 @@
     state: started
   when:
     - common_systemd_init
-    - common_wlan0.stat.exists | default(false)
-    - common_nm_dir.stat.isdir | default(false)
+    - common_wifi_profile.stdout | default('') is search('802-11-wireless')
   tags:
     - service
 

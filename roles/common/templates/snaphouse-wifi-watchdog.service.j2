@@ -1,11 +1,17 @@
 [Unit]
-Description=snaphouse Wi-Fi watchdog (one check: gateway ping, restart Wi-Fi, reboot)
+Description=snaphouse Wi-Fi watchdog (one check: gateway, restart Wi-Fi, reboot)
 Documentation=https://github.com/doyled-it/snaphouse
 
 [Service]
 Type=oneshot
-# Stdlib only; runs in place from the on-device checkout. Thresholds come from
-# wifi_watchdog in vars/all.yml. Output goes to the journal under the tag below.
+# System python, not the venv: the module is stdlib only, and a broken or
+# rebuilding venv must not disable recovery. It runs in place from the checkout.
+# Thresholds come from wifi_watchdog in vars/all.yml. Output goes to the journal
+# under the tag below.
 Environment=PYTHONPATH=/opt/snaphouse/lib
-ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.wifiwatchdog --restart-after {{ wifi_watchdog.restart_after_s }} --reboot-after-restart {{ wifi_watchdog.reboot_after_restart_s }} --reboot-min-interval {{ wifi_watchdog.reboot_min_interval_s }}
+ExecStart=/usr/bin/python3 -m snaphouse.wifiwatchdog --restart-after {{ wifi_watchdog.restart_after_s }} --reboot-after-restart {{ wifi_watchdog.reboot_after_restart_s }} --reboot-min-interval {{ wifi_watchdog.reboot_min_interval_s }}
 SyslogIdentifier=snaphouse-wifi-watchdog
+# Running state (/run/snaphouse-wifi-watchdog) is wiped by any reboot. Preserve it
+# between runs of this oneshot, or it would be removed after every check.
+RuntimeDirectory=snaphouse-wifi-watchdog
+RuntimeDirectoryPreserve=yes

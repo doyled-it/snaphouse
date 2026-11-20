@@ -447,21 +447,30 @@ restarted and flushed by the `Apply the persistent journal` handler, check
 `journal_persistent.sh`). Before this the Pis kept it in memory, so a Wi-Fi loss
 that lasted until a power cycle left nothing to read (issue #178).
 
-Machines with a `wlan0` that NetworkManager manages (not the wired hub) also get
+Machines with a `wlan0` and a NetworkManager Wi-Fi connection profile (`nmcli -g
+TYPE connection show` lists `802-11-wireless`; the wired hub has no wlan0) also get
 `snaphouse-wifi-watchdog.timer`, one check a minute running
-`lib/snaphouse/wifiwatchdog.py`. The signal is the default gateway from `ip route`:
-no default route, or no ping answer, is down (never mDNS or the hub, which reboots
-nightly). Down 5 minutes in a row restarts the Wi-Fi link once (`nmcli radio wifi`
-off and on, then `nmcli device connect wlan0`; the explicit connect is needed
-because NetworkManager stops autoconnecting after its retries run out). Still down
-10 minutes after that restart reboots, at most once an hour, with the reboot time
-stamped in `/var/lib/snaphouse/wifi-watchdog/` so the limit survives the reboot.
-The gateway answering clears the counters. Each step logs to the journal with the
-`wifi-watchdog:` tag (`journalctl -t snaphouse-wifi-watchdog`). The thresholds are
-`wifi_watchdog` in `vars/all.yml`. Check: `wifi_watchdog.sh` (timer enabled and
-active; passes where there is no wlan0). `iw` and `iputils-ping` are base packages,
-and `wifi_powersave.sh` fails with a clear message when `iw` is missing instead of
-passing silently.
+`lib/snaphouse/wifiwatchdog.py` with system `/usr/bin/python3` (stdlib only, so a
+broken venv cannot disable recovery). `wifi_watchdog.sh` uses the same gate as the
+role, so verify cannot fail where nothing was installed. No default route is down.
+A failed gateway ping is down only when the fallback also fails: wlan0 reported
+connected by NetworkManager (`GENERAL.STATE` 100) and the gateway neighbour entry
+on wlan0 REACHABLE or STALE with an lladdr counts as up. Never mDNS or the hub,
+which reboots nightly. Down 5 minutes in a row restarts the Wi-Fi link once
+(`nmcli radio wifi` off and on, a rescan, then `nmcli device connect wlan0`; the
+rescan gives a fresh scan list after the radio returns, and the explicit connect is
+needed because NetworkManager stops autoconnecting after its retries run out; each
+command is logged with its return code). Still down 10 minutes after that restart
+reboots, but only when uptime is at least an hour, so there is at most one
+watchdog reboot an hour. Timing uses CLOCK_BOOTTIME, never the wall clock: the Pis
+have no RTC and the clock is stale until NTP syncs, which cannot happen while Wi-Fi
+is dead. The running state is under `/run/snaphouse-wifi-watchdog` (a preserved
+RuntimeDirectory), so any reboot starts clean; only a `last-reboot` stamp (for the
+log) persists in `/var/lib/snaphouse/wifi-watchdog/`. The gateway answering clears
+the counters. Each step logs with the `wifi-watchdog:` tag (`journalctl -t
+snaphouse-wifi-watchdog`). Thresholds are `wifi_watchdog` in `vars/all.yml`.
+`iw` and `iputils-ping` are base packages, and `wifi_powersave.sh` fails with a
+clear message when `iw` is missing instead of passing silently.
 
 ## Verify checks and self-update pruning
 
