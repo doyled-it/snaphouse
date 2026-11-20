@@ -400,18 +400,29 @@ def _open_commands(controller: str, window: int) -> list[str]:
     moment that first session's agent went away, so every phone got "Pairing Not
     Allowed (0x18)". agent/default-agent come first so the DisplayYesNo agent is
     the default before pairable/discoverable are turned on in that same session.
-    The bluez-side pairable and discoverable timeouts are set to the window length,
-    so the adapter closes itself even if this process is killed before cleanup.
+    The bluez-side discoverable timeout is set to the window length, so the adapter
+    stops advertising itself even if this process is killed before cleanup. (BlueZ
+    5.66 has no `pairable-timeout` command in the main menu, so pairable is closed
+    by the cleanup only.) The caller must not send any of these until bluetoothctl
+    has connected to bluetoothd (issue #176); see `run_pairing_window`.
     """
     return [
         f"agent {AGENT_CAPABILITY}",
         "default-agent",
         f"select {controller}",
-        f"pairable-timeout {window}",
         f"discoverable-timeout {window}",
         "pairable on",
         "discoverable on",
     ]
+
+
+class PairingNotReady(RuntimeError):
+    """bluetoothctl never became ready to pair, so no window was opened."""
+
+
+# How long to wait for bluetoothctl to connect to bluetoothd, and for it to accept
+# the default agent, before giving up on the window.
+READY_TIMEOUT = 5.0
 
 
 def _make_line_handler(
@@ -422,6 +433,8 @@ def _make_line_handler(
     stop_event,
     select_failed: Optional[threading.Event] = None,
     known: Optional[dict] = None,
+    ready: Optional[threading.Event] = None,
+    default_ok: Optional[threading.Event] = None,
 ) -> Callable[[str], None]:
     """Build the dispatcher the reader feeds, one line at a time.
 
@@ -447,6 +460,11 @@ def _make_line_handler(
     removed: set[str] = set()
 
     def on_line(line: str) -> None:
+        plain = _strip_ansi(line)
+        if ready is not None and "Agent registered" in plain:
+            ready.set()
+        if default_ok is not None and "Default agent request successful" in plain:
+            default_ok.set()
         if select_failed is not None and "not available" in _strip_ansi(line):
             # The long-lived session could not select the receive adapter, so
             # its pairable/discoverable would land on the default controller.
@@ -553,13 +571,17 @@ def run_pairing_window(
 
     Starts ONE long-lived bluetoothctl that registers the DisplayYesNo agent,
     makes it the default, selects the receive adapter, and turns pairable and
-    discoverable on, all in that one session. Keeping the agent and the pairable
+    discoverable on, all in that one session. It first waits for bluetoothctl to
+    report "Agent registered" (connected to bluetoothd) and, after `default-agent`,
+    for "Default agent request successful"; if either does not arrive within
+    READY_TIMEOUT it raises PairingNotReady rather than leave a window that
+    declines every phone (issue #176). Keeping the agent and the pairable
     state in the same process for the whole window is the fix for issue #128: with
     BlueZ AlwaysPairable=false, setting pairable in a throwaway session and then
     spawning a separate agent dropped bondable the moment that first session's
     agent went away, and every phone got Pairing Not Allowed (0x18). bluez's own
-    discoverable and pairable timeouts are set to the window length too, so the
-    adapter closes itself even if this process is killed before cleanup.
+    discoverable timeout is set to the window length too, so the
+    adapter stops advertising itself even if this process is killed before cleanup.
 
     The window is driven by the clock, so a process that exits early does not
     shorten it; a stop event (set by the web service on a stop, or once a phone
@@ -588,8 +610,12 @@ def run_pairing_window(
         _check_select(session([f"select {controller}", "show"]))
 
         proc = spawn()
-        for command in _open_commands(controller, window):
-            _safe_send(proc, command)
+        ready = threading.Event()
+        default_ok = threading.Event()
+        # Start reading first: bluetoothctl drops every command written before it
+        # has connected to bluetoothd (it is still printing "Waiting to connect to
+        # bluetoothd..."), which left no default agent and made bluetoothd decline
+        # every passkey (issue #176). The output, not a fixed sleep, says when.
         proc.start_reader(
             _make_line_handler(
                 proc,
@@ -598,8 +624,29 @@ def run_pairing_window(
                 stop_event=stop_event,
                 select_failed=select_failed,
                 known=before,
+                ready=ready,
+                default_ok=default_ok,
             )
         )
+
+        def wait_for(event, what: str) -> None:
+            limit = monotonic() + READY_TIMEOUT
+            while not event.is_set():
+                remaining = limit - monotonic()
+                if remaining <= 0:
+                    raise PairingNotReady(what)
+                sleep(min(0.1, remaining))
+
+        wait_for(ready, "bluetoothctl did not connect to bluetoothd")
+        commands = _open_commands(controller, window)
+        split = commands.index("default-agent") + 1
+        for command in commands[:split]:
+            _safe_send(proc, command)
+        # "Agent is already registered" is fine (bluetoothctl registers one at
+        # startup); what matters is that the default agent request succeeds.
+        wait_for(default_ok, "bluetoothctl could not set the default agent")
+        for command in commands[split:]:
+            _safe_send(proc, command)
 
         deadline = monotonic() + duration
         while True:
@@ -704,7 +751,7 @@ def pair_phone(*, settings: Path = LOCAL_SETTINGS) -> int:
     )
     try:
         run_pairing_window(adapter)
-    except AdapterSelectFailed as exc:
+    except (AdapterSelectFailed, PairingNotReady) as exc:
         # The window aborted before it opened; run_pairing_window's cleanup has
         # already closed the adapter on the intended controller.
         print(f"{prog}: {exc}", file=sys.stderr)
@@ -794,7 +841,7 @@ def pair_speaker(
         devices = _named_devices(
             _check_select(session([f"select {adapter}", "devices"]))
         )
-    except AdapterSelectFailed as exc:
+    except (AdapterSelectFailed, PairingNotReady) as exc:
         print(f"{prog}: {exc}", file=sys.stderr)
         return 1
     if not devices:
@@ -821,7 +868,7 @@ def pair_speaker(
                 ]
             )
         )
-    except AdapterSelectFailed as exc:
+    except (AdapterSelectFailed, PairingNotReady) as exc:
         print(f"{prog}: {exc}", file=sys.stderr)
         return 1
     write_speaker(settings, name, address)
