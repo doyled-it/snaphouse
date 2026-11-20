@@ -41,8 +41,21 @@ class FakeProc:
     a return code from poll(), a running one reports None.
     """
 
-    def __init__(self, *, exited: bool = False):
+    def __init__(
+        self,
+        *,
+        exited: bool = False,
+        connects: bool = True,
+        default_agent_ok: bool = True,
+    ):
         self._exited = exited
+        # Like the real bluetoothctl: it prints "Agent registered" once it has
+        # connected to bluetoothd (commands sent before that are lost), and
+        # answers `default-agent` with "Default agent request successful".
+        self.connects = connects
+        self.default_agent_ok = default_agent_ok
+        self.connected = False
+        self.lost: list[str] = []
         self.sent: list[str] = []
         self.reader = None
         self.terminated = False
@@ -50,10 +63,18 @@ class FakeProc:
         self.waited = False
 
     def send(self, line: str) -> None:
+        if not self.connected:
+            self.lost.append(line)
+            return
         self.sent.append(line)
+        if line == "default-agent" and self.default_agent_ok and self.reader:
+            self.reader("Default agent request successful\n")
 
     def start_reader(self, on_line) -> None:
         self.reader = on_line
+        if self.connects:
+            self.connected = True
+            on_line("Agent registered\n")
 
     def poll(self):
         return 0 if self._exited else None
@@ -125,7 +146,6 @@ def test_open_commands_all_go_to_one_session_with_pairable_after_default_agent()
         f"agent {pairing.AGENT_CAPABILITY}",
         "default-agent",
         f"select {CONTROLLER}",
-        "pairable-timeout 120",
         "discoverable-timeout 120",
         "pairable on",
         "discoverable on",
@@ -140,6 +160,96 @@ def test_open_commands_all_go_to_one_session_with_pairable_after_default_agent()
     assert all("pairable on" not in s for s in sessions)
     # The window still closed the adapter at the end.
     assert any("discoverable off" in s and "pairable off" in s for s in sessions)
+
+
+def test_open_commands_are_not_sent_before_bluetoothctl_has_connected():
+    # Issue #176: bluetoothctl prints "Waiting to connect to bluetoothd..." and
+    # drops every command written before it has connected, so no default agent was
+    # set and the phone's passkey was declined. Nothing may be sent until the
+    # "Agent registered" line arrives.
+    proc = FakeProc(connects=False)
+    clock = FakeClock()
+    state = {"sleeps": 0}
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        state["sleeps"] += 1
+        if state["sleeps"] == 3:
+            assert proc.sent == [] and proc.lost == []
+            proc.connected = True
+            proc.reader("Waiting to connect to bluetoothd...\n")
+            proc.reader("Agent registered\n")
+
+    pairing.run_pairing_window(
+        CONTROLLER,
+        duration=120.0,
+        spawn=lambda: proc,
+        confirm=lambda passkey, device=None: False,
+        session=lambda commands, timeout=None: "",
+        monotonic=clock.monotonic,
+        sleep=sleep,
+        stop_event=None,
+    )
+
+    assert proc.lost == []
+    assert proc.sent[0] == f"agent {pairing.AGENT_CAPABILITY}"
+    assert "pairable on" in proc.sent
+
+
+def test_a_bluetoothctl_that_never_connects_fails_the_window_and_still_closes():
+    sessions: list[list[str]] = []
+    proc = FakeProc(connects=False)
+    clock = FakeClock()
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        return ""
+
+    with pytest.raises(pairing.PairingNotReady):
+        _run(session, proc, clock, duration=120.0)
+
+    assert proc.sent == [] and proc.lost == []
+    # It gave up after a few seconds, not the whole window.
+    assert clock.t - 1000.0 < 30.0
+    assert proc.terminated
+    assert any("discoverable off" in s and "pairable off" in s for s in sessions)
+
+
+def test_a_default_agent_request_that_does_not_succeed_fails_the_window():
+    # Without a default agent bluetoothd declines every passkey, so a window that
+    # could not set one must fail loudly instead of sitting open and declining.
+    sessions: list[list[str]] = []
+    proc = FakeProc(default_agent_ok=False)
+    clock = FakeClock()
+
+    def session(commands, timeout=None):
+        sessions.append(list(commands))
+        return ""
+
+    with pytest.raises(pairing.PairingNotReady):
+        _run(session, proc, clock, duration=120.0)
+
+    assert "pairable on" not in proc.sent
+    assert "discoverable on" not in proc.sent
+    assert clock.t - 1000.0 < 30.0
+    assert any("discoverable off" in s for s in sessions)
+
+
+def test_agent_already_registered_is_fine():
+    # bluetoothctl auto-registers an agent at startup, so the explicit
+    # `agent DisplayYesNo` answers "Agent is already registered".
+    proc = FakeProc()
+    clock = FakeClock()
+    orig_send = proc.send
+
+    def send(line):
+        orig_send(line)
+        if line.startswith("agent ") and proc.reader:
+            proc.reader("Agent is already registered\n")
+
+    proc.send = send
+    _run(lambda commands, timeout=None: "", proc, clock, duration=5.0)
+    assert "pairable on" in proc.sent and "discoverable on" in proc.sent
 
 
 def test_pairing_window_runs_full_duration_and_closes_even_if_the_process_exits_early():
@@ -641,7 +751,6 @@ def test_open_commands_order_registers_the_agent_before_opening():
         "agent DisplayYesNo",
         "default-agent",
         "select AA:BB:CC:DD:EE:FF",
-        "pairable-timeout 120",
         "discoverable-timeout 120",
         "pairable on",
         "discoverable on",
@@ -803,7 +912,8 @@ def test_opening_the_window_survives_a_process_that_died_at_once():
         sessions.append(list(commands))
         return ""
 
-    _run(session, DyingProc(), FakeClock(), duration=5.0)
+    with pytest.raises(pairing.PairingNotReady):
+        _run(session, DyingProc(), FakeClock(), duration=5.0)
     assert any("discoverable off" in s for s in sessions)
 
 

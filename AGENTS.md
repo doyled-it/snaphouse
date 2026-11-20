@@ -144,8 +144,20 @@ a separate agent dropped bondable the moment that first session's agent went
 away, and every phone got "Pairing Not Allowed (0x18)" (issue #128). Keep the
 agent and the pairable/discoverable state in the same process; do not split them.
 `test_pairing.py::test_open_commands_all_go_to_one_session_with_pairable_after_default_agent`
-is the regression pin, and the bluez-side `pairable-timeout`/`discoverable-timeout`
-are set to the window length so the adapter self-closes even if the process dies.
+is the regression pin, and the bluez-side `discoverable-timeout` is set to the
+window length so the adapter stops advertising even if the process dies (BlueZ 5.66
+has no `pairable-timeout` command in the main menu, so pairable is closed by the
+cleanup only).
+
+Nothing is sent until bluetoothctl has connected to bluetoothd (issue #176): while
+it prints "Waiting to connect to bluetoothd..." it silently drops every command, so
+no default agent was set and bluetoothd declined each phone's passkey ("incorrect
+PIN"). `run_pairing_window` starts the reader first, waits (bounded by
+`READY_TIMEOUT`) for "Agent registered", sends `agent` and `default-agent`, then
+waits for "Default agent request successful" before selecting the adapter and
+turning pairable/discoverable on. "Agent is already registered" is fine. If either
+line never arrives it raises `PairingNotReady` (the web service reports "Pairing
+failed.", the CLI exits non-zero) and the finally still closes the adapter.
 
 The web half is the `snaphouse-pairing` service (`lib/snaphouse/pairservice.py`,
 `roles/hub_pairing`): a stdlib loopback HTTP API nginx proxies at `/api/pair/`,
