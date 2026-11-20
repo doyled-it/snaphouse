@@ -98,7 +98,7 @@ installs nothing (no clone, no installer, no service, no verify check, just a
 debug line) where `frame_hardware` is `false`. This keeps a frame host's
 self-update from running nightstand's installer before the display is wired: a
 host can be in the frame list first and gain its hardware later (the office Pi 5
-runs its audio with `frame_hardware: false` until its Inky is attached). When the
+ran its audio with `frame_hardware: false` until its Inky was attached). When the
 display is attached, flip that host's `frame_hardware` to `true` in a one-line PR;
 its next self-update then clones and installs the frame app.
 

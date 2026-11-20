@@ -120,12 +120,11 @@ def test_every_frame_host_declares_a_boolean_frame_hardware():
             )
 
 
-def test_frame_hardware_is_true_only_where_the_display_is_wired():
-    # The nightstand has its Inky; the office does not yet (installed at the last
-    # rollout step). Flip the office to true in a one-line PR once wired.
+def test_frame_hardware_is_true_where_the_display_is_wired():
+    # Both frame hosts have an Inky attached.
     hosts = load_hosts()
     assert hosts["nightstand"]["frame_hardware"] is True
-    assert hosts["office"]["frame_hardware"] is False
+    assert hosts["office"]["frame_hardware"] is True
 
 
 def test_host_ids_are_unique_and_known():
