@@ -89,6 +89,7 @@ Removing it from the album takes it off the frame.
   the frame's own art sync interval). Albums shared with the house account appear in the album
   list (their `ownerId` differs from the account's own id). Hidden albums (by `visibility`) are
   skipped.
+- Picture files are mode 0640 (group `ente`, which the art service joins); the sync sets it on download and repairs any picture lacking group read on every run, never following symlinks.
 - Local mirror layout: `<root>/<albumId>/<fileId>.<ext>` plus one small record per album
   (`album.json`: album title, album `updatedAt`, and for each file its `updatedAt`, `hash` and
   extension). A file whose listed `updatedAt` or `hash` changed is downloaded again. A file no

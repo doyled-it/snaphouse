@@ -79,6 +79,7 @@ class FakeCli:
                 out.write_bytes(b"partial")
                 return subprocess.CompletedProcess(argv, 1, "", f"boom {SECRET}")
             out.write_bytes(self.payloads.get(fid, b"JPEGDATA"))
+            out.chmod(0o600)  # the real Ente CLI creates its output 0600
             return subprocess.CompletedProcess(argv, 0, "{}", "")
         raise AssertionError(f"unexpected argv {argv}")
 
@@ -505,3 +506,65 @@ def test_main_runs_export_with_argv(env, monkeypatch):
     ]
     assert enterun.main(argv) == 0
     assert seen["args"] == tuple(Path(x) for x in ["/opt/ente", "/m", "/h", "/k", "/s"])
+
+
+def mode_of(path):
+    return stat.S_IMODE(path.lstat().st_mode)
+
+
+def test_downloaded_picture_ends_group_readable_0640(env):
+    assert run(env, FakeCli()) == 0
+    assert mode_of(env["root"] / "101" / "5001.jpg") == 0o640
+
+
+def test_livephoto_still_ends_0640(env):
+    payload = still_zip({"a.jpg": b"STILL", "a.MP": b"VIDEO"})
+    cli = FakeCli(
+        files={"101": [fmeta("5001", name="a.zip", type_="livephoto")]},
+        payloads={"5001": payload},
+    )
+    old = os.umask(0o022)
+    try:
+        assert run(env, cli) == 0
+    finally:
+        os.umask(old)
+    assert mode_of(env["root"] / "101" / "5001.jpg") == 0o640
+
+
+def test_existing_0600_picture_is_repaired_on_a_run_that_downloads_nothing(env):
+    cli = FakeCli()
+    assert run(env, cli) == 0
+    pic = env["root"] / "101" / "5001.jpg"
+    pic.chmod(0o600)
+    again = FakeCli()
+    assert run(env, again) == 0
+    assert not [c for c in again.calls if c[3:6] == ["photos", "file", "download"]]
+    assert mode_of(pic) == 0o640
+
+
+def test_symlink_in_album_dir_is_not_chmodded_or_followed(env, tmp_path):
+    assert run(env, FakeCli()) == 0
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"x")
+    outside.chmod(0o600)
+    link = env["root"] / "101" / "9999.jpg"
+    link.symlink_to(outside)
+    assert run(env, FakeCli()) == 0
+    assert mode_of(outside) == 0o600
+    assert link.is_symlink()
+
+
+def test_chmod_failure_on_one_file_does_not_fail_the_run(env, monkeypatch):
+    assert run(env, FakeCli()) == 0
+    pic = env["root"] / "101" / "5001.jpg"
+    pic.chmod(0o600)
+    real = os.chmod
+
+    def boom(path, mode, **kw):
+        if str(path).endswith("5001.jpg"):
+            raise PermissionError("no")
+        return real(path, mode, **kw)
+
+    monkeypatch.setattr(os, "chmod", boom)
+    assert run(env, FakeCli()) == 0
+    assert status(env)["state"] == "ok"
