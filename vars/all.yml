@@ -157,3 +157,14 @@ snapcast_client_sha256:
 # both together when bumping the version.
 ente_cli_version: "0.4.4"
 ente_cli_sha256: "719834d6b65e9e48a4a1d4e3e577247633f0e8a5eb2bae30278ec6c6fc536f17"
+
+# Wi-Fi watchdog (issue #178), on machines whose wlan0 NetworkManager manages. A
+# timer checks the default gateway every interval. Down for restart_after_s in a
+# row restarts the Wi-Fi link once; still down reboot_after_restart_s after that
+# reboots, but never twice within reboot_min_interval_s (stamped under
+# /var/lib/snaphouse, so the limit survives the reboot).
+wifi_watchdog:
+  interval: "60s"
+  restart_after_s: 300
+  reboot_after_restart_s: 600
+  reboot_min_interval_s: 3600

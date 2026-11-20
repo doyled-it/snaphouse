@@ -24,3 +24,25 @@
   when: common_systemd_init
   tags:
     - service
+
+# Daemon-reload for the Wi-Fi watchdog units.
+- name: Reload systemd for common
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: common_systemd_init
+  tags:
+    - service
+
+# Apply the persistent journal without a reboot: create the directory with the
+# right group and ACLs, restart journald so it reads the drop-in, then move the
+# in-memory journal onto disk.
+- name: Apply the persistent journal
+  ansible.builtin.shell: |
+    set -e
+    systemd-tmpfiles --create --prefix /var/log/journal
+    systemctl restart systemd-journald
+    journalctl --flush
+  changed_when: true
+  when: common_systemd_init
+  tags:
+    - service

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the snaphouse Wi-Fi watchdog every {{ wifi_watchdog.interval }}
+
+[Timer]
+OnBootSec={{ wifi_watchdog.interval }}
+OnActiveSec={{ wifi_watchdog.interval }}
+OnUnitActiveSec={{ wifi_watchdog.interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
