@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,8 @@ STALE_AFTER = 3600.0
 _TMP_PREFIX = ".tmp-"
 _ALBUM_JSON = "album.json"
 _ISO = "%Y-%m-%dT%H:%M:%SZ"
+# The Ente CLI writes pictures 0600; the art service reads them as group `ente`.
+PICTURE_MODE = 0o640
 
 STALE_MESSAGE = "Ente sync has not run recently."
 ERR_KEY = "Could not read the Ente key."
@@ -282,6 +285,7 @@ def _fetch_one(cli: _Cli, album_id: str, album_dir: Path, entry: dict) -> str | 
             if ext not in ENTE_EXTENSIONS:
                 ext = ".jpg"
             final_src = part
+        os.chmod(final_src, PICTURE_MODE)
         os.replace(final_src, album_dir / f"{fid}{ext}")
         return ext
     finally:
@@ -344,6 +348,28 @@ def _sync_album(cli: _Cli, root: Path, album: dict) -> str | None:
     return None if ok else "download"
 
 
+def _heal_modes(album_dir: Path) -> None:
+    """Give pictures the CLI left unreadable to the group the group-read bit.
+
+    Regular files only: a symlink is never followed or changed. One failure
+    never stops the run.
+    """
+    try:
+        children = list(album_dir.iterdir())
+    except OSError:
+        return
+    for child in children:
+        if child.suffix.lower() not in ENTE_EXTENSIONS:
+            continue
+        try:
+            info = child.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_mode & stat.S_IRGRP:
+                continue
+            os.chmod(child, PICTURE_MODE)
+        except OSError:
+            continue
+
+
 def _remove_unwanted(root: Path, wanted_ids: set[str]) -> None:
     try:
         children = list(root.iterdir())
@@ -401,6 +427,7 @@ def run_export(
     problems: set[str] = set()
     for entry in wanted:
         problem = _sync_album(ente, root, entry)
+        _heal_modes(root / entry["id"])
         if problem:
             problems.add(problem)
     if problems:
