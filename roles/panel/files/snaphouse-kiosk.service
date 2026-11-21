@@ -34,8 +34,8 @@ UtmpMode=user
 EnvironmentFile=/etc/snaphouse/kiosk.env
 # A fully transparent cursor theme (installed by the panel role) so no mouse
 # pointer shows on the touch-only panel. cage and Chromium both draw their cursor
-# from the XCURSOR_* theme.
-Environment=XCURSOR_THEME=snaphouse-blank
+# from XCURSOR_PATH, loading the theme named "default" (XCURSOR_THEME is not read),
+# which the role installs under this path as the transparent one.
 Environment=XCURSOR_PATH=/usr/local/share/snaphouse/icons
 # The launcher waits for the hub itself, then execs cage/Chromium. Keeping the wait
 # in the launcher (not ExecStartPre) means the service is active while it waits, so

@@ -3,7 +3,8 @@
 # full screen on the official DSI display, pointed at the hub's room picker. cage
 # gives Chromium one borderless surface and nothing else: no window chrome, no
 # other apps. The pointer is hidden by a fully transparent XCURSOR theme that the
-# service environment selects (XCURSOR_THEME/XCURSOR_PATH, installed by the role):
+# service environment points at (XCURSOR_PATH, installed by the role as the theme
+# named "default", the one cage and Chromium load; XCURSOR_THEME is not read):
 # cage only unsets its own cursor when the seat has no pointer, and Chromium sets
 # its own cursor image, so a transparent theme is what keeps both invisible.
 #

@@ -385,7 +385,7 @@ def test_handlers_restart_both_services_and_are_gated_on_systemd():
 # The kiosk shows no mouse pointer. The only input is the touchscreen, but cage
 # (wlroots' xcursor manager) and Chromium both draw a cursor from the XCURSOR_*
 # theme, so the role installs a fully transparent theme and the unit points at it.
-CURSOR_THEME = "snaphouse-blank"
+CURSOR_THEME = "default"  # the name cage and wlroots load; XCURSOR_THEME is not read
 CURSOR_ROOT = "/usr/local/share/snaphouse/icons"
 CURSOR_SRC = ROLE / "files/cursors/left_ptr"
 
@@ -413,10 +413,17 @@ def test_blank_cursor_file_is_a_valid_fully_transparent_xcursor():
     assert set(pixels) == {0}, "every pixel must be fully transparent"
 
 
-def test_kiosk_unit_points_at_the_blank_cursor_theme():
+def test_kiosk_unit_path_resolves_default_left_ptr_to_the_blank_image():
     env = _unit_env()
-    assert env.get("XCURSOR_THEME") == CURSOR_THEME
     assert env.get("XCURSOR_PATH") == CURSOR_ROOT
+    assert "XCURSOR_THEME" not in env, "cage and Chromium do not read XCURSOR_THEME"
+    base = f"{env['XCURSOR_PATH']}/default"
+    dests = {
+        _module(t)[1].get("dest")
+        for t in _tasks()
+        if _module(t)[0].endswith("copy")
+    }
+    assert f"{base}/cursors/left_ptr" in dests
 
 
 def test_role_installs_the_blank_cursor_theme_and_names():

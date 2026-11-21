@@ -105,12 +105,14 @@
 
 # A fully transparent Xcursor theme, so the kiosk shows no mouse pointer. The panel's
 # only input is the touchscreen, but cage draws its default cursor and Chromium sets
-# its own, both from the XCURSOR_THEME/XCURSOR_PATH the kiosk unit exports. Every
+# its own, both from XCURSOR_PATH, which the kiosk unit exports. Neither reads XCURSOR_THEME: cage
+# loads the theme named "default" and asks for left_ptr, so the blank theme is installed
+# as "default" under that path. Every
 # common cursor name points at the one blank image so no shape falls through to a
 # visible theme.
 - name: Create the blank cursor theme directory
   ansible.builtin.file:
-    path: /usr/local/share/snaphouse/icons/snaphouse-blank/cursors
+    path: /usr/local/share/snaphouse/icons/default/cursors
     state: directory
     owner: root
     group: root
@@ -120,9 +122,9 @@
   ansible.builtin.copy:
     content: |
       [Icon Theme]
-      Name=snaphouse-blank
+      Name=default
       Comment=Fully transparent cursor for the touch-only panel
-    dest: /usr/local/share/snaphouse/icons/snaphouse-blank/index.theme
+    dest: /usr/local/share/snaphouse/icons/default/index.theme
     owner: root
     group: root
     mode: "0644"
@@ -131,7 +133,7 @@
 - name: Install the blank cursor image
   ansible.builtin.copy:
     src: cursors/left_ptr
-    dest: /usr/local/share/snaphouse/icons/snaphouse-blank/cursors/left_ptr
+    dest: /usr/local/share/snaphouse/icons/default/cursors/left_ptr
     owner: root
     group: root
     mode: "0644"
@@ -140,7 +142,7 @@
 - name: Point every other cursor name at the blank image
   ansible.builtin.file:
     src: left_ptr
-    dest: "/usr/local/share/snaphouse/icons/snaphouse-blank/cursors/{{ item }}"
+    dest: "/usr/local/share/snaphouse/icons/default/cursors/{{ item }}"
     state: link
   loop:
     - default
