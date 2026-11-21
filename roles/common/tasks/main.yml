@@ -185,7 +185,7 @@
 - name: Turn off power saving on the running wlan0
   ansible.builtin.command: iw dev wlan0 set power_save off
   # Changed only when it was on, so a second apply reports nothing.
-  when: common_wlan0_power_save.stdout | default('') is search('save +on')
+  when: "common_wlan0_power_save.stdout | default('') is search('save: +on')"
   changed_when: true
   tags:
     - hardware
