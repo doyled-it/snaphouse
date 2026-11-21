@@ -75,9 +75,17 @@ is up, even if that takes a moment.
 The screen dims during the quiet hours and wakes to full on a touch, returning to
 the low level after a minute idle; during the day it stays full. The backlight
 levels, the idle timeout, and the quiet-hours window are in `vars/all.yml`
-(`panel_backlight`). The tap that wakes a dimmed screen also reaches Chromium and
-can toggle a room, so confirm during bring-up whether the first touch should wake
-only; today it does both.
+(`panel_backlight`). The tap that wakes a dimmed screen only wakes it: while the
+screen is dim the backlight service holds an exclusive grab on the touchscreen, so
+the page never sees that tap. It lights the screen at once, swallows the touch
+until the finger lifts, then lets go, so the next tap works the page as usual. It
+never holds the touchscreen while the screen is at full brightness.
+
+The panel's card boots in a Pi 3 or a Pi 5. A Pi 3 detects the 7 inch display
+itself; for a Pi 5 the role writes a `[pi5]` section into `/boot/firmware/config.txt`
+naming the `vc4-kms-dsi-7inch` overlay, which other boards ignore. On a Pi 5, use
+the 22-way to 15-way display cable in the port labelled CAM/DISP 1 (or set
+`panel_pi5_dsi_port: 0` in the role vars for CAM/DISP 0).
 
 The hub address the panel opens is the one piece of per-home config it needs, and
 like every other address it stays out of the repo: set `panel_url` in the

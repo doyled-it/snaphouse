@@ -103,6 +103,67 @@
     - Reload systemd for panel
     - Restart the kiosk service
 
+# A fully transparent Xcursor theme, so the kiosk shows no mouse pointer. The panel's
+# only input is the touchscreen, but cage draws its default cursor and Chromium sets
+# its own, both from XCURSOR_PATH, which the kiosk unit exports. Neither reads XCURSOR_THEME: cage
+# loads the theme named "default" and asks for left_ptr, so the blank theme is installed
+# as "default" under that path. Every
+# common cursor name points at the one blank image so no shape falls through to a
+# visible theme.
+- name: Create the blank cursor theme directory
+  ansible.builtin.file:
+    path: /usr/local/share/snaphouse/icons/default/cursors
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the blank cursor theme index
+  ansible.builtin.copy:
+    content: |
+      [Icon Theme]
+      Name=default
+      Comment=Fully transparent cursor for the touch-only panel
+    dest: /usr/local/share/snaphouse/icons/default/index.theme
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the kiosk service
+
+- name: Install the blank cursor image
+  ansible.builtin.copy:
+    src: cursors/left_ptr
+    dest: /usr/local/share/snaphouse/icons/default/cursors/left_ptr
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the kiosk service
+
+- name: Point every other cursor name at the blank image
+  ansible.builtin.file:
+    src: left_ptr
+    dest: "/usr/local/share/snaphouse/icons/default/cursors/{{ item }}"
+    state: link
+  loop:
+    - default
+    - arrow
+    - pointer
+    - hand1
+    - hand2
+    - text
+    - xterm
+    - crosshair
+    - wait
+    - watch
+    - progress
+    - grab
+    - grabbing
+    - move
+    - not-allowed
+    - help
+    - all-scroll
+  notify: Restart the kiosk service
+
 - name: Install the backlight service unit
   ansible.builtin.template:
     src: snaphouse-backlight.service.j2
@@ -143,6 +204,25 @@
     mode: "0644"
   when: common_systemd_init
   notify: Restart the backlight service
+
+# The same SD card must boot on a Pi 3 and a Pi 5. A Pi 3 auto-detects the v1 7 inch
+# display (display_auto_detect=1 in the stock config.txt). A Pi 5 is documented to
+# detect it too, but the overlay is the explicit, documented form, so a [pi5]
+# conditional section names it and turns auto-detect off for that board only (the
+# overlay and auto-detect would otherwise both load it). Other boards ignore the
+# section. The block ends with [all] so nothing after it becomes Pi 5 only.
+# https://www.raspberrypi.com/documentation/accessories/touch-display.html
+- name: Name the 7 inch display overlay for a Pi 5
+  ansible.builtin.blockinfile:
+    path: /boot/firmware/config.txt
+    marker: "# {mark} snaphouse panel display (Pi 5)"
+    block: |
+      [pi5]
+      display_auto_detect=0
+      dtoverlay=vc4-kms-dsi-7inch{{ ',dsi0' if panel_pi5_dsi_port | int == 0 else '' }}
+      [all]
+  tags:
+    - hardware
 
 # Rotation. panel_rotation turns the display and the touch together. Both touch
 # real device config (the boot command line, the udev touch rule) that means

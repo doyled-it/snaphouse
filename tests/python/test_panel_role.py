@@ -380,3 +380,103 @@ def test_handlers_restart_both_services_and_are_gated_on_systemd():
     for handler in handlers:
         assert "common_systemd_init" in str(handler.get("when")), handler.get("name")
         assert "service" in (handler.get("tags") or []), handler.get("name")
+
+
+# The kiosk shows no mouse pointer. The only input is the touchscreen, but cage
+# (wlroots' xcursor manager) and Chromium both draw a cursor from the XCURSOR_*
+# theme, so the role installs a fully transparent theme and the unit points at it.
+CURSOR_THEME = "default"  # the name cage and wlroots load; XCURSOR_THEME is not read
+CURSOR_ROOT = "/usr/local/share/snaphouse/icons"
+CURSOR_SRC = ROLE / "files/cursors/left_ptr"
+
+
+def _unit_env() -> dict[str, str]:
+    env = {}
+    for line in KIOSK_UNIT.splitlines():
+        m = re.match(r'Environment="?(\w+)=([^"]*)"?$', line)
+        if m:
+            env[m.group(1)] = m.group(2)
+    return env
+
+
+def test_blank_cursor_file_is_a_valid_fully_transparent_xcursor():
+    import struct
+
+    data = CURSOR_SRC.read_bytes()
+    magic, header, _version, ntoc = struct.unpack_from("<4sIII", data, 0)
+    assert magic == b"Xcur" and header == 16 and ntoc >= 1
+    ctype, _sub, pos = struct.unpack_from("<III", data, 16)
+    assert ctype == 0xFFFD0002
+    _h, _t, _s, _v, w, h, _xh, _yh, _delay = struct.unpack_from("<9I", data, pos)
+    pixels = data[pos + 36 : pos + 36 + 4 * w * h]
+    assert len(pixels) == 4 * w * h and w > 0 and h > 0
+    assert set(pixels) == {0}, "every pixel must be fully transparent"
+
+
+def test_kiosk_unit_path_resolves_default_left_ptr_to_the_blank_image():
+    env = _unit_env()
+    assert env.get("XCURSOR_PATH") == CURSOR_ROOT
+    assert "XCURSOR_THEME" not in env, "cage and Chromium do not read XCURSOR_THEME"
+    base = f"{env['XCURSOR_PATH']}/default"
+    dests = {
+        _module(t)[1].get("dest")
+        for t in _tasks()
+        if _module(t)[0].endswith("copy")
+    }
+    assert f"{base}/cursors/left_ptr" in dests
+
+
+def test_role_installs_the_blank_cursor_theme_and_names():
+    tasks = _tasks()
+    base = f"{CURSOR_ROOT}/{CURSOR_THEME}"
+    copies = [
+        _module(t)[1]
+        for t in tasks
+        if _module(t)[0].endswith("copy") and str(_module(t)[1].get("dest", "")).startswith(base)
+    ]
+    dests = {c["dest"] for c in copies}
+    assert f"{base}/cursors/left_ptr" in dests
+    assert f"{base}/index.theme" in dests
+    links = [t for t in tasks if _module(t)[0].endswith(".file") and _module(t)[1].get("state") == "link"]
+    assert links, "no task links the other cursor names to the blank image"
+    loop = links[0].get("loop") or []
+    assert {"default", "pointer", "text"} <= set(loop)
+
+
+# The panel's SD card moves between a Pi 3 (display auto-detected) and a Pi 5 (the
+# 7 inch v1 needs its overlay named). The overlay goes in a [pi5] conditional
+# section, so the same card boots on both boards.
+CONFIG_TXT = "/boot/firmware/config.txt"
+
+
+def _config_block_task() -> dict:
+    for task in _tasks():
+        key, args = next(
+            ((k, v) for k, v in task.items() if k.startswith("ansible.builtin.")),
+            (None, None),
+        )
+        if key and key.endswith("blockinfile") and args.get("path") == CONFIG_TXT:
+            return task
+    raise AssertionError("no blockinfile task edits config.txt")
+
+
+def test_pi5_display_overlay_is_in_a_pi5_conditional_section():
+    task = _config_block_task()
+    block = task["ansible.builtin.blockinfile"]["block"]
+    lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+    assert lines[0] == "[pi5]"
+    assert "dtoverlay=vc4-kms-dsi-7inch" in block
+    assert "display_auto_detect=0" in lines
+    # Back to [all] so later lines in the file do not become Pi 5 only.
+    assert lines[-1] == "[all]"
+    assert "hardware" in (task.get("tags") or [])
+
+
+def test_pi5_overlay_names_the_dsi_port_from_a_role_var():
+    block = _config_block_task()["ansible.builtin.blockinfile"]["block"]
+    rendered = Environment().from_string(block).render(panel_pi5_dsi_port=0)
+    assert "dtoverlay=vc4-kms-dsi-7inch,dsi0" in rendered
+    rendered = Environment().from_string(block).render(panel_pi5_dsi_port=1)
+    assert "dtoverlay=vc4-kms-dsi-7inch\n" in rendered + "\n"
+    assert "dsi0" not in rendered
+    assert ROLE_VARS["panel_pi5_dsi_port"] in (0, 1)

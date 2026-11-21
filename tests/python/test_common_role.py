@@ -231,3 +231,20 @@ def test_wifi_verify_check_reads_iw_and_carries_the_managed_marker():
     assert "iw dev wlan0 get power_save" in text
     assert "/sys/class/net/wlan0" in text
     assert "power save is on" in text
+
+
+def test_running_switch_off_pattern_matches_real_iw_output():
+    """`iw dev wlan0 get power_save` prints `Power save: on` (with a colon)."""
+    import re
+
+    task = next(
+        t
+        for t in _tasks()
+        if "power_save off" in str(t.get("ansible.builtin.command"))
+    )
+    when = str(task["when"])
+    match = re.search(r"is search\('([^']*)'\)", when)
+    assert match, f"no search pattern in {when!r}"
+    pattern = match.group(1)
+    assert re.search(pattern, "Power save: on")
+    assert not re.search(pattern, "Power save: off")
