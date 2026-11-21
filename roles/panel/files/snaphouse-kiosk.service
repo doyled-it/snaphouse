@@ -32,6 +32,11 @@ UtmpIdentifier=tty1
 UtmpMode=user
 # PANEL_URL for the hub wait and the kiosk launcher, templated from local config.
 EnvironmentFile=/etc/snaphouse/kiosk.env
+# A fully transparent cursor theme (installed by the panel role) so no mouse
+# pointer shows on the touch-only panel. cage and Chromium both draw their cursor
+# from the XCURSOR_* theme.
+Environment=XCURSOR_THEME=snaphouse-blank
+Environment=XCURSOR_PATH=/usr/local/share/snaphouse/icons
 # The launcher waits for the hub itself, then execs cage/Chromium. Keeping the wait
 # in the launcher (not ExecStartPre) means the service is active while it waits, so
 # a late hub never reads as a failed unit, and Chromium only opens once the hub

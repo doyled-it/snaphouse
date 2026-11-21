@@ -380,3 +380,57 @@ def test_handlers_restart_both_services_and_are_gated_on_systemd():
     for handler in handlers:
         assert "common_systemd_init" in str(handler.get("when")), handler.get("name")
         assert "service" in (handler.get("tags") or []), handler.get("name")
+
+
+# The kiosk shows no mouse pointer. The only input is the touchscreen, but cage
+# (wlroots' xcursor manager) and Chromium both draw a cursor from the XCURSOR_*
+# theme, so the role installs a fully transparent theme and the unit points at it.
+CURSOR_THEME = "snaphouse-blank"
+CURSOR_ROOT = "/usr/local/share/snaphouse/icons"
+CURSOR_SRC = ROLE / "files/cursors/left_ptr"
+
+
+def _unit_env() -> dict[str, str]:
+    env = {}
+    for line in KIOSK_UNIT.splitlines():
+        m = re.match(r'Environment="?(\w+)=([^"]*)"?$', line)
+        if m:
+            env[m.group(1)] = m.group(2)
+    return env
+
+
+def test_blank_cursor_file_is_a_valid_fully_transparent_xcursor():
+    import struct
+
+    data = CURSOR_SRC.read_bytes()
+    magic, header, _version, ntoc = struct.unpack_from("<4sIII", data, 0)
+    assert magic == b"Xcur" and header == 16 and ntoc >= 1
+    ctype, _sub, pos = struct.unpack_from("<III", data, 16)
+    assert ctype == 0xFFFD0002
+    _h, _t, _s, _v, w, h, _xh, _yh, _delay = struct.unpack_from("<9I", data, pos)
+    pixels = data[pos + 36 : pos + 36 + 4 * w * h]
+    assert len(pixels) == 4 * w * h and w > 0 and h > 0
+    assert set(pixels) == {0}, "every pixel must be fully transparent"
+
+
+def test_kiosk_unit_points_at_the_blank_cursor_theme():
+    env = _unit_env()
+    assert env.get("XCURSOR_THEME") == CURSOR_THEME
+    assert env.get("XCURSOR_PATH") == CURSOR_ROOT
+
+
+def test_role_installs_the_blank_cursor_theme_and_names():
+    tasks = _tasks()
+    base = f"{CURSOR_ROOT}/{CURSOR_THEME}"
+    copies = [
+        _module(t)[1]
+        for t in tasks
+        if _module(t)[0].endswith("copy") and str(_module(t)[1].get("dest", "")).startswith(base)
+    ]
+    dests = {c["dest"] for c in copies}
+    assert f"{base}/cursors/left_ptr" in dests
+    assert f"{base}/index.theme" in dests
+    links = [t for t in tasks if _module(t)[0].endswith(".file") and _module(t)[1].get("state") == "link"]
+    assert links, "no task links the other cursor names to the blank image"
+    loop = links[0].get("loop") or []
+    assert {"default", "pointer", "text"} <= set(loop)

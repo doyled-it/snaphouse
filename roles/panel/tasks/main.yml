@@ -103,6 +103,65 @@
     - Reload systemd for panel
     - Restart the kiosk service
 
+# A fully transparent Xcursor theme, so the kiosk shows no mouse pointer. The panel's
+# only input is the touchscreen, but cage draws its default cursor and Chromium sets
+# its own, both from the XCURSOR_THEME/XCURSOR_PATH the kiosk unit exports. Every
+# common cursor name points at the one blank image so no shape falls through to a
+# visible theme.
+- name: Create the blank cursor theme directory
+  ansible.builtin.file:
+    path: /usr/local/share/snaphouse/icons/snaphouse-blank/cursors
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the blank cursor theme index
+  ansible.builtin.copy:
+    content: |
+      [Icon Theme]
+      Name=snaphouse-blank
+      Comment=Fully transparent cursor for the touch-only panel
+    dest: /usr/local/share/snaphouse/icons/snaphouse-blank/index.theme
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the kiosk service
+
+- name: Install the blank cursor image
+  ansible.builtin.copy:
+    src: cursors/left_ptr
+    dest: /usr/local/share/snaphouse/icons/snaphouse-blank/cursors/left_ptr
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the kiosk service
+
+- name: Point every other cursor name at the blank image
+  ansible.builtin.file:
+    src: left_ptr
+    dest: "/usr/local/share/snaphouse/icons/snaphouse-blank/cursors/{{ item }}"
+    state: link
+  loop:
+    - default
+    - arrow
+    - pointer
+    - hand1
+    - hand2
+    - text
+    - xterm
+    - crosshair
+    - wait
+    - watch
+    - progress
+    - grab
+    - grabbing
+    - move
+    - not-allowed
+    - help
+    - all-scroll
+  notify: Restart the kiosk service
+
 - name: Install the backlight service unit
   ansible.builtin.template:
     src: snaphouse-backlight.service.j2

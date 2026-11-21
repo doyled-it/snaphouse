@@ -2,7 +2,10 @@
 # The control-panel kiosk: cage (a single-app Wayland compositor) running Chromium
 # full screen on the official DSI display, pointed at the hub's room picker. cage
 # gives Chromium one borderless surface and nothing else: no window chrome, no
-# other apps, and the pointer stays hidden on a touch-only panel.
+# other apps. The pointer is hidden by a fully transparent XCURSOR theme that the
+# service environment selects (XCURSOR_THEME/XCURSOR_PATH, installed by the role):
+# cage only unsets its own cursor when the seat has no pointer, and Chromium sets
+# its own cursor image, so a transparent theme is what keeps both invisible.
 #
 # PANEL_URL is set by the service EnvironmentFile (/etc/snaphouse/kiosk.env),
 # templated from the untracked local config, so the hub address never lives in the
