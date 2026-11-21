@@ -1,5 +1,8 @@
 """Panel backlight schedule: dim during quiet hours, wake to full on touch.
 
+The tap that wakes a dimmed screen only wakes it: while dim the daemon holds an
+exclusive evdev grab on the touchscreen (see _ActivityClock).
+
 The official 7 inch DSI display exposes its backlight as a sysfs device under
 /sys/class/backlight/<name>/, with a writable `brightness` file (0 .. max) and a
 read-only `max_brightness`. The exact device name depends on the panel driver
@@ -21,9 +24,11 @@ the standard library, so it stays light on the Pi 3.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import glob
 import os
 import select
+import struct
 import sys
 import time as time_module
 from dataclasses import dataclass
@@ -36,6 +41,24 @@ DEFAULT_SYS_CLASS = Path("/sys/class/backlight")
 # (the input wait wakes the loop); this only bounds how soon the quiet-hours edge
 # and the post-touch dim take effect.
 DEFAULT_INTERVAL_S = 2.0
+
+# evdev ioctls and event codes for the wake-only tap. EVIOCGRAB is
+# _IOW('E', 0x90, int): while one reader holds it, no other reader (the
+# compositor) receives that device's events. EVIOCGBIT(EV_ABS, 8) reads the
+# absolute axes a device reports, which picks the touchscreen out of the event
+# nodes (the HDMI keyboard and jack have none).
+EVIOCGRAB = 0x40044590
+EVIOCGBIT_ABS = (2 << 30) | (8 << 16) | (0x45 << 8) | (0x20 + 3)
+EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
+SYN_DROPPED = 3
+BTN_TOUCH = 0x14A
+ABS_X, ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_TRACKING_ID = 0x00, 0x2F, 0x35, 0x39
+_EVENT_FMT = "@llHHi"
+_EVENT_SIZE = struct.calcsize(_EVENT_FMT)
+
+# After a waking tap, how long the touchscreen may stay silent before the tap is
+# treated as over even though no lift was seen. Bounds how long the grab can hold.
+LIFT_FALLBACK_S = 0.3
 
 # Where the touchscreen reports events. Any readable event counts as a touch, so
 # the daemon never parses the evdev payload; it only needs to know "something
@@ -95,6 +118,12 @@ class Schedule:
         return self.dim_pct
 
 
+    def is_dim(self, now: time, idle_s: float) -> bool:
+        """True when the scheduled level is the dim level (a real dim: a dim
+        level equal to full leaves nothing to wake from)."""
+        return self.dim_pct != self.full_pct and self.target_pct(now, idle_s) == self.dim_pct
+
+
 class Backlight:
     """A sysfs backlight device: read max_brightness, write brightness."""
 
@@ -131,6 +160,36 @@ def apply_once(backlight: Backlight, schedule: Schedule, *, now: time, idle_s: f
     return backlight.set_pct(schedule.target_pct(now, idle_s))
 
 
+class _Fingers:
+    """Which contacts are down on one touchscreen, from its evdev stream."""
+
+    def __init__(self) -> None:
+        self._touch = False
+        self._slot = 0
+        self._live: set[int] = set()
+
+    @property
+    def down(self) -> bool:
+        return self._touch or bool(self._live)
+
+    def feed(self, etype: int, code: int, value: int) -> None:
+        if etype == EV_KEY and code == BTN_TOUCH:
+            self._touch = bool(value)
+            if not value:
+                self._live.clear()
+        elif etype == EV_ABS and code == ABS_MT_SLOT:
+            self._slot = value
+        elif etype == EV_ABS and code == ABS_MT_TRACKING_ID:
+            if value < 0:
+                self._live.discard(self._slot)
+            else:
+                self._live.add(self._slot)
+        elif etype == EV_SYN and code == SYN_DROPPED:
+            # Events were lost, so the picture is stale: start again from "up".
+            self._touch = False
+            self._live.clear()
+
+
 class _ActivityClock:
     """Tracks the last touch as a monotonic timestamp, and waits for the next one.
 
@@ -142,6 +201,15 @@ class _ActivityClock:
     daemon up before the driver binds, or the node is enumerated late. So the glob
     is rescanned on every wait(), opening any node that has shown up since, rather
     than globbed once at start and then sleeping forever against an empty fd set.
+
+    Wake-only tap. While the screen is dim, maintain(dim=True) holds an exclusive
+    grab (EVIOCGRAB) on the touchscreen nodes, so the compositor receives nothing
+    and the waking tap cannot toggle a room. That tap is swallowed until every
+    finger lifts (or the screen stays silent for LIFT_FALLBACK_S), then the grab is
+    released so the next tap reaches the page. It never grabs while the level is
+    full, and never while a finger is already down (grabbing mid-touch would hand
+    the compositor a contact with no start). Only nodes that report absolute axes
+    are grabbed, so the HDMI keyboard and jack are left alone.
     """
 
     def __init__(
@@ -150,29 +218,102 @@ class _ActivityClock:
         *,
         monotonic=time_module.monotonic,
         opener=os.open,
+        ioctl=fcntl.ioctl,
     ) -> None:
         self._monotonic = monotonic
         self._opener = opener
+        self._ioctl = ioctl
         self._input_glob = input_glob
         self._last = monotonic()
         # Keyed by path so a rescan does not reopen a node already watched.
         self._fds: dict[str, int] = {}
+        self._touchscreens: set[str] = set()
+        self._fingers: dict[str, _Fingers] = {}
+        self._pending: dict[str, bytes] = {}
+        self._grabbed = False
+        self._swallowing = False
+        self._last_data = monotonic()
         self._rescan()
+
+    def _is_touchscreen(self, fd: int) -> bool:
+        try:
+            bits = self._ioctl(fd, EVIOCGBIT_ABS, bytes(8))
+        except OSError:
+            return False
+        def has(code: int) -> bool:
+            return bool(bits[code // 8] & (1 << (code % 8)))
+        return has(ABS_MT_POSITION_X) or has(ABS_X)
 
     def _rescan(self) -> None:
         for path in sorted(glob.glob(self._input_glob)):
             if path in self._fds:
                 continue
             try:
-                self._fds[path] = self._opener(path, os.O_RDONLY | os.O_NONBLOCK)
+                fd = self._opener(path, os.O_RDONLY | os.O_NONBLOCK)
             except OSError:
                 # A node we cannot open (permissions, hot-unplug) is skipped
                 # rather than fatal; the others still report touches.
                 continue
+            self._fds[path] = fd
+            if self._is_touchscreen(fd):
+                self._touchscreens.add(path)
+                self._fingers[path] = _Fingers()
+                if self._grabbed:
+                    self._grab_one(fd, True)
+
+    def _grab_one(self, fd: int, on: bool) -> bool:
+        try:
+            self._ioctl(fd, EVIOCGRAB, 1 if on else 0)
+        except OSError as exc:
+            print(f"snaphouse-backlight: EVIOCGRAB {int(on)} failed: {exc}", file=sys.stderr)
+            return False
+        return True
+
+    def _finger_down(self) -> bool:
+        return any(f.down for f in self._fingers.values())
 
     @property
     def idle_s(self) -> float:
         return self._monotonic() - self._last
+
+    def maintain(self, *, dim: bool) -> None:
+        """Hold or drop the touchscreen grab to match the scheduled level.
+
+        Call once per loop after wait(). `dim` is whether the scheduled level is
+        the dim level (Schedule.is_dim).
+        """
+        if self._swallowing:
+            quiet = self._monotonic() - self._last_data >= LIFT_FALLBACK_S
+            if self._finger_down() and not quiet:
+                return
+            self._set_grab(False)
+            self._swallowing = False
+            for fingers in self._fingers.values():
+                fingers.feed(EV_SYN, SYN_DROPPED, 0)  # forget a lift we never saw
+            return
+        if dim and not self._grabbed and not self._finger_down():
+            self._set_grab(True)
+        elif not dim and self._grabbed:
+            self._set_grab(False)
+
+    def _set_grab(self, on: bool) -> None:
+        ok = True
+        for path in sorted(self._touchscreens):
+            ok = self._grab_one(self._fds[path], on) and ok
+        # A failed grab is retried on the next call; a release is always recorded.
+        self._grabbed = on and ok and bool(self._touchscreens)
+
+    def _feed(self, path: str, data: bytes) -> None:
+        fingers = self._fingers.get(path)
+        if fingers is None:
+            return
+        buf = self._pending.pop(path, b"") + data
+        usable = len(buf) - len(buf) % _EVENT_SIZE
+        for off in range(0, usable, _EVENT_SIZE):
+            _s, _u, etype, code, value = struct.unpack_from(_EVENT_FMT, buf, off)
+            fingers.feed(etype, code, value)
+        if usable < len(buf):
+            self._pending[path] = buf[usable:]
 
     def wait(self, timeout: float) -> bool:
         # Pick up a touchscreen that was not there at start before deciding how to
@@ -181,16 +322,30 @@ class _ActivityClock:
         if not self._fds:
             time_module.sleep(timeout)
             return False
+        if self._swallowing:
+            # Wake in time to notice a lift that never arrives.
+            left = LIFT_FALLBACK_S - (self._monotonic() - self._last_data)
+            timeout = min(timeout, max(left, 0.01))
+        by_fd = {fd: path for path, fd in self._fds.items()}
         readable, _, _ = select.select(list(self._fds.values()), [], [], timeout)
         if not readable:
             return False
         for fd in readable:
+            chunks = []
             try:
-                while os.read(fd, 4096):
-                    pass
+                while True:
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
             except (BlockingIOError, OSError):
                 pass
-        self._last = self._monotonic()
+            self._feed(by_fd[fd], b"".join(chunks))
+        now = self._monotonic()
+        self._last = now
+        self._last_data = now
+        if self._grabbed:
+            self._swallowing = True
         return True
 
 
@@ -226,7 +381,10 @@ def run(argv: list[str], *, now_time=None) -> int:
     backlight = Backlight.discover(Path(args.sys_class))
     activity = _ActivityClock(args.input_glob)
     while True:
-        apply_once(backlight, schedule, now=now_time(), idle_s=activity.idle_s)
+        now = now_time()
+        apply_once(backlight, schedule, now=now, idle_s=activity.idle_s)
+        # While dim, hold the touchscreen so the waking tap only wakes the screen.
+        activity.maintain(dim=schedule.is_dim(now, activity.idle_s))
         # Wake early on a touch so the screen lights up at once; otherwise re-check
         # on the interval so the quiet-hours edge and the post-touch dim land.
         activity.wait(args.interval)

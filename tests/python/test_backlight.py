@@ -228,3 +228,185 @@ def test_activity_clock_opens_a_touchscreen_that_appears_late(tmp_path):
 
     os.close(write_fd)
     os.close(read_fd)
+
+
+# --------------------------------------------------------------------------- #
+# Wake-only tap: an exclusive grab (EVIOCGRAB) while dimmed
+# --------------------------------------------------------------------------- #
+
+import struct  # noqa: E402
+
+EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
+BTN_TOUCH, ABS_MT_SLOT, ABS_MT_TRACKING_ID = 0x14A, 0x2F, 0x39
+_EVENT = "@llHHi"
+
+
+def _ev(etype: int, code: int, value: int) -> bytes:
+    return struct.pack(_EVENT, 0, 0, etype, code, value)
+
+
+class _FakeIoctl:
+    """Records EVIOCGRAB calls and answers the EV_ABS capability probe.
+
+    `touch_fds` are the descriptors that report ABS_MT_POSITION_X; any other fd
+    (a keyboard, a pipe) answers with no absolute axes, or fails like a pipe does.
+    """
+
+    def __init__(self, touch_fds, fail_grab=False):
+        self.touch_fds = set(touch_fds)
+        self.fail_grab = fail_grab
+        self.grabs: list[tuple[int, int]] = []
+
+    def __call__(self, fd, request, arg=0):
+        if request == backlight.EVIOCGRAB:
+            if self.fail_grab:
+                raise OSError(16, "busy")
+            self.grabs.append((fd, int(arg)))
+            return 0
+        if fd in self.touch_fds:
+            bits = bytearray(8)
+            bits[0x35 // 8] |= 1 << (0x35 % 8)  # ABS_MT_POSITION_X
+            return bytes(bits)
+        return bytes(8)
+
+
+def _gate(tmp_path, names=("event0",), touch=("event0",), **kw):
+    """An _ActivityClock over pipes, one per node; returns it and the pipes."""
+    pipes, fds = {}, {}
+    for name in names:
+        r, w = os.pipe()
+        os.set_blocking(r, False)
+        (tmp_path / name).write_text("")
+        pipes[name] = (r, w)
+        fds[str(tmp_path / name)] = r
+    clock = _FakeClock(1000.0)
+    ioctl = _FakeIoctl([pipes[n][0] for n in touch], **kw)
+    activity = backlight._ActivityClock(
+        str(tmp_path / "event*"),
+        monotonic=clock,
+        opener=lambda path, flags: fds[path],
+        ioctl=ioctl,
+    )
+    return activity, clock, ioctl, pipes
+
+
+def _send(pipes, name, *events):
+    os.write(pipes[name][1], b"".join(events))
+
+
+def _touch_down():
+    return _ev(EV_ABS, ABS_MT_TRACKING_ID, 5) + _ev(EV_KEY, BTN_TOUCH, 1) + _ev(EV_SYN, 0, 0)
+
+
+def _touch_up():
+    return _ev(EV_ABS, ABS_MT_TRACKING_ID, -1) + _ev(EV_KEY, BTN_TOUCH, 0) + _ev(EV_SYN, 0, 0)
+
+
+def test_is_dim_only_when_the_scheduled_level_is_the_dim_level():
+    sched = _schedule(full_pct=100, dim_pct=20, dim_timeout_s=60.0)
+    assert sched.is_dim(time(23, 0), 120.0) is True
+    assert sched.is_dim(time(23, 0), 5.0) is False  # just touched: full
+    assert sched.is_dim(time(12, 0), 9999.0) is False  # daytime: full
+    same = _schedule(full_pct=100, dim_pct=100, dim_timeout_s=60.0)
+    assert same.is_dim(time(23, 0), 120.0) is False  # nothing to wake from
+
+
+def test_no_grab_while_the_level_is_full(tmp_path):
+    activity, _clock, ioctl, _p = _gate(tmp_path)
+    activity.maintain(dim=False)
+    assert ioctl.grabs == []
+
+
+def test_grabs_only_the_touchscreen_node_when_dim(tmp_path):
+    activity, _clock, ioctl, pipes = _gate(
+        tmp_path, names=("event0", "event1"), touch=("event0",)
+    )
+    activity.maintain(dim=True)
+    assert ioctl.grabs == [(pipes["event0"][0], 1)]
+
+
+def test_wake_tap_is_swallowed_until_the_finger_lifts_then_released(tmp_path):
+    activity, clock, ioctl, pipes = _gate(tmp_path)
+    clock.t = 1100.0
+    activity.maintain(dim=True)
+    fd = pipes["event0"][0]
+    assert ioctl.grabs == [(fd, 1)]
+
+    _send(pipes, "event0", _touch_down())
+    assert activity.wait(0.01) is True
+    assert activity.idle_s == 0.0  # the screen goes to full at once
+
+    # The level is now full (dim=False) but the finger is still down: keep the grab.
+    activity.maintain(dim=False)
+    assert ioctl.grabs == [(fd, 1)]
+
+    _send(pipes, "event0", _touch_up())
+    activity.wait(0.01)
+    activity.maintain(dim=False)
+    assert ioctl.grabs == [(fd, 1), (fd, 0)]  # released: the next tap reaches the page
+
+    # A later tap while the level is full is never grabbed.
+    activity.maintain(dim=False)
+    assert ioctl.grabs == [(fd, 1), (fd, 0)]
+
+
+def test_a_lost_lift_releases_after_a_short_quiet_fallback(tmp_path):
+    activity, clock, ioctl, pipes = _gate(tmp_path)
+    activity.maintain(dim=True)
+    _send(pipes, "event0", _touch_down())
+    activity.wait(0.01)
+    fd = pipes["event0"][0]
+
+    clock.t += 0.2
+    activity.maintain(dim=False)
+    assert ioctl.grabs == [(fd, 1)]  # inside the 300 ms window: still swallowing
+
+    clock.t += 0.2
+    activity.maintain(dim=False)
+    assert ioctl.grabs == [(fd, 1), (fd, 0)]
+
+
+def test_never_grabs_while_a_finger_is_down(tmp_path):
+    activity, _clock, ioctl, pipes = _gate(tmp_path)
+    _send(pipes, "event0", _touch_down())
+    activity.wait(0.01)
+    activity.maintain(dim=True)
+    assert ioctl.grabs == []  # the level went dim mid-touch: wait for the lift
+
+    _send(pipes, "event0", _touch_up())
+    activity.wait(0.01)
+    activity.maintain(dim=True)
+    assert [g[1] for g in ioctl.grabs] == [1]
+
+
+def test_grab_is_dropped_when_the_level_returns_to_full_untouched(tmp_path):
+    activity, _clock, ioctl, pipes = _gate(tmp_path)
+    activity.maintain(dim=True)
+    activity.maintain(dim=False)  # quiet hours ended
+    fd = pipes["event0"][0]
+    assert ioctl.grabs == [(fd, 1), (fd, 0)]
+
+
+def test_a_failed_grab_is_tolerated_and_retried(tmp_path):
+    activity, _clock, ioctl, _p = _gate(tmp_path, fail_grab=True)
+    activity.maintain(dim=True)  # must not raise
+    ioctl.fail_grab = False
+    activity.maintain(dim=True)
+    assert len(ioctl.grabs) == 1
+
+
+def test_a_second_finger_keeps_the_swallow_going(tmp_path):
+    activity, _clock, ioctl, pipes = _gate(tmp_path)
+    activity.maintain(dim=True)
+    two = (
+        _ev(EV_ABS, ABS_MT_SLOT, 0) + _ev(EV_ABS, ABS_MT_TRACKING_ID, 1)
+        + _ev(EV_ABS, ABS_MT_SLOT, 1) + _ev(EV_ABS, ABS_MT_TRACKING_ID, 2)
+        + _ev(EV_KEY, BTN_TOUCH, 1) + _ev(EV_SYN, 0, 0)
+    )
+    _send(pipes, "event0", two)
+    activity.wait(0.01)
+    # One finger lifts, the other is still down.
+    _send(pipes, "event0", _ev(EV_ABS, ABS_MT_SLOT, 0) + _ev(EV_ABS, ABS_MT_TRACKING_ID, -1) + _ev(EV_SYN, 0, 0))
+    activity.wait(0.01)
+    activity.maintain(dim=False)
+    assert [g[1] for g in ioctl.grabs] == [1]
