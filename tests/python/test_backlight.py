@@ -410,3 +410,74 @@ def test_a_second_finger_keeps_the_swallow_going(tmp_path):
     activity.wait(0.01)
     activity.maintain(dim=False)
     assert [g[1] for g in ioctl.grabs] == [1]
+
+
+def test_a_held_finger_is_not_grabbed_after_the_fallback_release(tmp_path):
+    activity, clock, ioctl, pipes = _gate(tmp_path)
+    activity.maintain(dim=True)
+    _send(pipes, "event0", _touch_down())
+    activity.wait(0.01)
+    clock.t += 0.5  # the screen stays silent: a held, stationary finger
+    activity.maintain(dim=False)
+    assert [g[1] for g in ioctl.grabs] == [1, 0]
+
+    # The level goes dim again with the finger still held: no grab mid-touch.
+    activity.maintain(dim=True)
+    assert [g[1] for g in ioctl.grabs] == [1, 0]
+
+    # A real lift is seen, then the grab can return.
+    _send(pipes, "event0", _touch_up())
+    activity.wait(0.01)
+    activity.maintain(dim=True)
+    assert [g[1] for g in ioctl.grabs] == [1, 0, 1]
+
+
+def test_one_failing_node_does_not_make_the_others_ebusy(tmp_path):
+    class _Picky(_FakeIoctl):
+        def __call__(self, fd, request, arg=0):
+            if request == backlight.EVIOCGRAB and fd == self.bad:
+                raise OSError(16, "busy")
+            return super().__call__(fd, request, arg)
+
+    names = ("event0", "event1")
+    pipes, fds = {}, {}
+    for name in names:
+        r, w = os.pipe()
+        os.set_blocking(r, False)
+        (tmp_path / name).write_text("")
+        pipes[name] = (r, w)
+        fds[str(tmp_path / name)] = r
+    ioctl = _Picky([pipes[n][0] for n in names])
+    ioctl.bad = pipes["event0"][0]
+    activity = backlight._ActivityClock(
+        str(tmp_path / "event*"),
+        monotonic=_FakeClock(0.0),
+        opener=lambda path, flags: fds[path],
+        ioctl=ioctl,
+    )
+    activity.maintain(dim=True)
+    activity.maintain(dim=True)  # the retry must skip the node already grabbed
+    good = pipes["event1"][0]
+    assert ioctl.grabs == [(good, 1)]
+
+
+def test_an_unplugged_node_is_closed_and_dropped(tmp_path):
+    closed: list[int] = []
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+    node = tmp_path / "event0"
+    node.write_text("")
+    activity = backlight._ActivityClock(
+        str(tmp_path / "event*"),
+        monotonic=_FakeClock(0.0),
+        opener=lambda path, flags: read_fd,
+        ioctl=_FakeIoctl([read_fd]),
+        closer=lambda fd: closed.append(fd),
+    )
+    os.close(write_fd)  # EOF: the device went away
+    node.unlink()
+    activity.wait(0.01)
+    assert closed == [read_fd]
+    # No fds left, so the next wait sleeps instead of spinning on the dead fd.
+    assert activity._fds == {} and activity._touchscreens == set()
+    os.close(read_fd)

@@ -219,10 +219,12 @@ class _ActivityClock:
         monotonic=time_module.monotonic,
         opener=os.open,
         ioctl=fcntl.ioctl,
+        closer=os.close,
     ) -> None:
         self._monotonic = monotonic
         self._opener = opener
         self._ioctl = ioctl
+        self._closer = closer
         self._input_glob = input_glob
         self._last = monotonic()
         # Keyed by path so a rescan does not reopen a node already watched.
@@ -230,7 +232,13 @@ class _ActivityClock:
         self._touchscreens: set[str] = set()
         self._fingers: dict[str, _Fingers] = {}
         self._pending: dict[str, bytes] = {}
-        self._grabbed = False
+        # Paths currently grabbed, tracked per node so one that fails to grab does
+        # not make a retry hit EBUSY on the nodes that already succeeded.
+        self._grabbed_paths: set[str] = set()
+        self._want_grab = False
+        # Set when a swallowed touch was force-released with the finger possibly
+        # still down; no re-grab until a real lift has been seen.
+        self._await_lift = False
         self._swallowing = False
         self._last_data = monotonic()
         self._rescan()
@@ -258,8 +266,8 @@ class _ActivityClock:
             if self._is_touchscreen(fd):
                 self._touchscreens.add(path)
                 self._fingers[path] = _Fingers()
-                if self._grabbed:
-                    self._grab_one(fd, True)
+                if self._want_grab and self._grab_one(fd, True):
+                    self._grabbed_paths.add(path)
 
     def _grab_one(self, fd: int, on: bool) -> bool:
         try:
@@ -288,20 +296,38 @@ class _ActivityClock:
                 return
             self._set_grab(False)
             self._swallowing = False
-            for fingers in self._fingers.values():
-                fingers.feed(EV_SYN, SYN_DROPPED, 0)  # forget a lift we never saw
+            # Forced out by silence with a contact still tracked: wait for the real
+            # lift before grabbing again, so a held finger is never grabbed mid-touch.
+            self._await_lift = self._finger_down()
             return
-        if dim and not self._grabbed and not self._finger_down():
+        if dim and not self._finger_down() and not self._await_lift:
             self._set_grab(True)
-        elif not dim and self._grabbed:
+        elif not dim and self._grabbed_paths:
             self._set_grab(False)
 
     def _set_grab(self, on: bool) -> None:
-        ok = True
+        self._want_grab = on
         for path in sorted(self._touchscreens):
-            ok = self._grab_one(self._fds[path], on) and ok
-        # A failed grab is retried on the next call; a release is always recorded.
-        self._grabbed = on and ok and bool(self._touchscreens)
+            if on == (path in self._grabbed_paths):
+                continue
+            if self._grab_one(self._fds[path], on):
+                (self._grabbed_paths.add if on else self._grabbed_paths.discard)(path)
+            elif not on:
+                # A release that fails (node gone) leaves nothing held.
+                self._grabbed_paths.discard(path)
+
+    def _drop(self, path: str) -> None:
+        """Close a node that went away and forget it everywhere."""
+        fd = self._fds.pop(path, None)
+        if fd is not None:
+            try:
+                self._closer(fd)
+            except OSError:
+                pass
+        self._touchscreens.discard(path)
+        self._fingers.pop(path, None)
+        self._pending.pop(path, None)
+        self._grabbed_paths.discard(path)
 
     def _feed(self, path: str, data: bytes) -> None:
         fingers = self._fingers.get(path)
@@ -330,21 +356,36 @@ class _ActivityClock:
         readable, _, _ = select.select(list(self._fds.values()), [], [], timeout)
         if not readable:
             return False
+        activity = False
         for fd in readable:
+            path = by_fd[fd]
             chunks = []
+            gone = False
             try:
                 while True:
                     chunk = os.read(fd, 4096)
                     if not chunk:
+                        gone = True  # EOF: the device was unplugged
                         break
                     chunks.append(chunk)
-            except (BlockingIOError, OSError):
+            except BlockingIOError:
                 pass
-            self._feed(by_fd[fd], b"".join(chunks))
+            except OSError:
+                gone = True  # ENODEV and friends
+            self._feed(path, b"".join(chunks))
+            if gone:
+                self._drop(path)
+                if not chunks:
+                    continue
+            activity = True
+        if not activity:
+            return False
+        if self._await_lift and not self._finger_down():
+            self._await_lift = False
         now = self._monotonic()
         self._last = now
         self._last_data = now
-        if self._grabbed:
+        if self._grabbed_paths:
             self._swallowing = True
         return True
 
