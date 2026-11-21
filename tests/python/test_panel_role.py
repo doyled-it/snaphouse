@@ -434,3 +434,42 @@ def test_role_installs_the_blank_cursor_theme_and_names():
     assert links, "no task links the other cursor names to the blank image"
     loop = links[0].get("loop") or []
     assert {"default", "pointer", "text"} <= set(loop)
+
+
+# The panel's SD card moves between a Pi 3 (display auto-detected) and a Pi 5 (the
+# 7 inch v1 needs its overlay named). The overlay goes in a [pi5] conditional
+# section, so the same card boots on both boards.
+CONFIG_TXT = "/boot/firmware/config.txt"
+
+
+def _config_block_task() -> dict:
+    for task in _tasks():
+        key, args = next(
+            ((k, v) for k, v in task.items() if k.startswith("ansible.builtin.")),
+            (None, None),
+        )
+        if key and key.endswith("blockinfile") and args.get("path") == CONFIG_TXT:
+            return task
+    raise AssertionError("no blockinfile task edits config.txt")
+
+
+def test_pi5_display_overlay_is_in_a_pi5_conditional_section():
+    task = _config_block_task()
+    block = task["ansible.builtin.blockinfile"]["block"]
+    lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+    assert lines[0] == "[pi5]"
+    assert "dtoverlay=vc4-kms-dsi-7inch" in block
+    assert "display_auto_detect=0" in lines
+    # Back to [all] so later lines in the file do not become Pi 5 only.
+    assert lines[-1] == "[all]"
+    assert "hardware" in (task.get("tags") or [])
+
+
+def test_pi5_overlay_names_the_dsi_port_from_a_role_var():
+    block = _config_block_task()["ansible.builtin.blockinfile"]["block"]
+    rendered = Environment().from_string(block).render(panel_pi5_dsi_port=0)
+    assert "dtoverlay=vc4-kms-dsi-7inch,dsi0" in rendered
+    rendered = Environment().from_string(block).render(panel_pi5_dsi_port=1)
+    assert "dtoverlay=vc4-kms-dsi-7inch\n" in rendered + "\n"
+    assert "dsi0" not in rendered
+    assert ROLE_VARS["panel_pi5_dsi_port"] in (0, 1)

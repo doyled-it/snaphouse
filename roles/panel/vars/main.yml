@@ -23,3 +23,8 @@ panel_rotation_calibration:
   "90": "0 -1 1 1 0 0"
   "180": "-1 0 1 0 -1 1"
   "270": "0 1 0 -1 0 1"
+
+# Which Pi 5 display port the 7 inch v1 is cabled to: 1 is the port labelled
+# CAM/DISP 1 (the overlay's default DSI1), 0 is CAM/DISP 0 (adds ",dsi0"). Only
+# read when the card boots in a Pi 5. Use the 22-way to 15-way display cable.
+panel_pi5_dsi_port: 1

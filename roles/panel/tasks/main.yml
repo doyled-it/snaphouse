@@ -203,6 +203,25 @@
   when: common_systemd_init
   notify: Restart the backlight service
 
+# The same SD card must boot on a Pi 3 and a Pi 5. A Pi 3 auto-detects the v1 7 inch
+# display (display_auto_detect=1 in the stock config.txt). A Pi 5 is documented to
+# detect it too, but the overlay is the explicit, documented form, so a [pi5]
+# conditional section names it and turns auto-detect off for that board only (the
+# overlay and auto-detect would otherwise both load it). Other boards ignore the
+# section. The block ends with [all] so nothing after it becomes Pi 5 only.
+# https://www.raspberrypi.com/documentation/accessories/touch-display.html
+- name: Name the 7 inch display overlay for a Pi 5
+  ansible.builtin.blockinfile:
+    path: /boot/firmware/config.txt
+    marker: "# {mark} snaphouse panel display (Pi 5)"
+    block: |
+      [pi5]
+      display_auto_detect=0
+      dtoverlay=vc4-kms-dsi-7inch{{ ',dsi0' if panel_pi5_dsi_port | int == 0 else '' }}
+      [all]
+  tags:
+    - hardware
+
 # Rotation. panel_rotation turns the display and the touch together. Both touch
 # real device config (the boot command line, the udev touch rule) that means
 # nothing in the container, so both are tagged hardware. Confirm the exact display
