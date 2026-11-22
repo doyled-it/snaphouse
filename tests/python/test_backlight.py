@@ -481,3 +481,22 @@ def test_an_unplugged_node_is_closed_and_dropped(tmp_path):
     # No fds left, so the next wait sleeps instead of spinning on the dead fd.
     assert activity._fds == {} and activity._touchscreens == set()
     os.close(read_fd)
+
+
+# --------------------------------------------------------------------------- #
+# --no-grab: the page screensaver swallows the waking tap instead
+# --------------------------------------------------------------------------- #
+
+
+def test_no_grab_flag_defaults_off_and_parses():
+    assert backlight._parse_args([]).no_grab is False
+    assert backlight._parse_args(["--no-grab"]).no_grab is True
+
+
+def test_grab_wanted_follows_dim_unless_no_grab():
+    assert backlight.grab_wanted(dim=True, no_grab=False) is True
+    assert backlight.grab_wanted(dim=False, no_grab=False) is False
+    # With no_grab the daemon never asks to hold the touchscreen, so any grab it
+    # holds is released and the screensaver sees the first tap.
+    assert backlight.grab_wanted(dim=True, no_grab=True) is False
+    assert backlight.grab_wanted(dim=False, no_grab=True) is False

@@ -480,3 +480,47 @@ def test_pi5_overlay_names_the_dsi_port_from_a_role_var():
     assert "dtoverlay=vc4-kms-dsi-7inch\n" in rendered + "\n"
     assert "dsi0" not in rendered
     assert ROLE_VARS["panel_pi5_dsi_port"] in (0, 1)
+
+
+# --------------------------------------------------------------------------- #
+# the screensaver switches
+# --------------------------------------------------------------------------- #
+
+ALL_VARS = yaml.safe_load((REPO / "vars/all.yml").read_text())
+
+
+def test_dim_level_is_unchanged_by_the_screensaver_work():
+    # The night dim level is tuned separately on the live panel.
+    assert ALL_VARS["panel_backlight"]["dim_pct"] == 15
+
+
+def test_screensaver_settings_live_in_vars():
+    assert ALL_VARS["panel_screensaver"] == {"enabled": True, "day_idle_s": 300}
+    assert ALL_VARS["panel_backlight"]["grab_wake_tap"] is False
+
+
+def test_backlight_unit_drops_the_grab_when_the_screensaver_handles_the_tap():
+    unit = _render(
+        "snaphouse-backlight.service.j2",
+        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": False},
+        panel_screensaver={"enabled": True, "day_idle_s": 300},
+    )
+    assert "--no-grab" in unit
+
+
+def test_backlight_unit_keeps_the_grab_without_the_screensaver():
+    unit = _render(
+        "snaphouse-backlight.service.j2",
+        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": False},
+        panel_screensaver={"enabled": False, "day_idle_s": 300},
+    )
+    assert "--no-grab" not in unit
+
+
+def test_backlight_unit_keeps_the_grab_when_grab_wake_tap_is_set():
+    unit = _render(
+        "snaphouse-backlight.service.j2",
+        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": True},
+        panel_screensaver={"enabled": True, "day_idle_s": 300},
+    )
+    assert "--no-grab" not in unit

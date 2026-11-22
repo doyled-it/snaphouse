@@ -101,6 +101,18 @@ panel_backlight:
   dim_timeout_s: 60
   quiet_start: "22:00"
   quiet_end: "06:00"
+  # false lets the page screensaver swallow the waking tap (the daemon then runs
+  # with --no-grab); true keeps the evdev grab from #184. The grab only turns off
+  # while panel_screensaver.enabled is true.
+  grab_wake_tap: false
+
+# The panel's page screensaver (Aurora over the room picker, see
+# docs/superpowers/specs/2026-11-22-panel-screensaver-design.md). It shows after
+# day_idle_s seconds idle by day, and after panel_backlight.dim_timeout_s inside the
+# quiet hours. The role passes these to the kiosk URL as query parameters.
+panel_screensaver:
+  enabled: true
+  day_idle_s: 300
 
 # Pinned Snapcast release. Chosen as the newest release (v0.35.0, 2026-03-10) that
 # supports everything the hub needs: the meta stream (meta:// priority/merge
