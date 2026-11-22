@@ -107,8 +107,9 @@ export function createScreensaver({
   }
 
   function onVisibility() {
+    if (!up) return;
     if (doc.hidden) aurora.stop();
-    else if (up) aurora.start();
+    else aurora.start();
   }
 
   for (const type of SWALLOWED) doc.addEventListener(type, onInput, true);
