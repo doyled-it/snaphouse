@@ -2616,3 +2616,36 @@ a.row-title {
     font-size: 2.2rem;
   }
 }
+
+/* --- Panel screensaver (the kiosk only; see screensaver.js) --------------- */
+
+.screensaver {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  --ss-in: 2s;
+  --ss-out: 300ms;
+  transition: opacity var(--ss-out) ease-out;
+}
+
+.screensaver.is-up {
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity var(--ss-in) ease-in;
+  cursor: none;
+}
+
+.screensaver canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screensaver.is-up {
+    transition-duration: var(--ss-out);
+  }
+}

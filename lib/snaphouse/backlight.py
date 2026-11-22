@@ -1,7 +1,9 @@
 """Panel backlight schedule: dim during quiet hours, wake to full on touch.
 
 The tap that wakes a dimmed screen only wakes it: while dim the daemon holds an
-exclusive evdev grab on the touchscreen (see _ActivityClock).
+exclusive evdev grab on the touchscreen (see _ActivityClock). With --no-grab the
+page's screensaver overlay swallows that first tap instead, so the daemon never
+grabs and one tap both wakes the screen and dismisses the overlay.
 
 The official 7 inch DSI display exposes its backlight as a sysfs device under
 /sys/class/backlight/<name>/, with a writable `brightness` file (0 .. max) and a
@@ -390,6 +392,16 @@ class _ActivityClock:
         return True
 
 
+def grab_wanted(*, dim: bool, no_grab: bool) -> bool:
+    """Whether to hold the touchscreen grab for this pass.
+
+    With no_grab the page's screensaver swallows the first tap itself, so the
+    daemon never grabs (and releases any grab it holds): one tap then both
+    brightens the screen and dismisses the overlay.
+    """
+    return dim and not no_grab
+
+
 def _build_schedule(args: argparse.Namespace) -> Schedule:
     return Schedule(
         quiet_start=parse_hhmm(args.quiet_start),
@@ -410,6 +422,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--quiet-start", default="22:00")
     parser.add_argument("--quiet-end", default="06:00")
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_S)
+    parser.add_argument(
+        "--no-grab",
+        action="store_true",
+        help="never grab the touchscreen; the page screensaver swallows the waking tap",
+    )
     return parser.parse_args(argv)
 
 
@@ -424,8 +441,13 @@ def run(argv: list[str], *, now_time=None) -> int:
     while True:
         now = now_time()
         apply_once(backlight, schedule, now=now, idle_s=activity.idle_s)
-        # While dim, hold the touchscreen so the waking tap only wakes the screen.
-        activity.maintain(dim=schedule.is_dim(now, activity.idle_s))
+        # While dim, hold the touchscreen so the waking tap only wakes the screen,
+        # unless the page screensaver handles that tap (--no-grab).
+        activity.maintain(
+            dim=grab_wanted(
+                dim=schedule.is_dim(now, activity.idle_s), no_grab=args.no_grab
+            )
+        )
         # Wake early on a touch so the screen lights up at once; otherwise re-check
         # on the interval so the quiet-hours edge and the post-touch dim land.
         activity.wait(args.interval)

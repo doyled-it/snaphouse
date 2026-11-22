@@ -3,7 +3,9 @@
   venv, dimming the official DSI display during the shared quiet hours and waking
   it to full on a touch (then back to dim after the idle timeout), full otherwise.
   The levels, timeout, and quiet-hours window come from panel_backlight in
-  vars/all.yml, inlined here so one place in the repo owns them.
+  vars/all.yml, inlined here so one place in the repo owns them. With the page
+  screensaver on (panel_screensaver.enabled) and grab_wake_tap false, the daemon
+  runs with --no-grab: the page swallows the waking tap instead.
 #}
 [Unit]
 Description=Snaphouse panel backlight schedule
@@ -20,7 +22,7 @@ Type=simple
 # Reads the touchscreen under /dev/input and writes the sysfs backlight, both
 # root-owned device nodes, so it runs as root. It is stdlib only.
 Environment=PYTHONPATH=/opt/snaphouse/lib
-ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight --full-pct {{ panel_backlight.full_pct }} --dim-pct {{ panel_backlight.dim_pct }} --dim-timeout {{ panel_backlight.dim_timeout_s }} --quiet-start {{ panel_backlight.quiet_start }} --quiet-end {{ panel_backlight.quiet_end }}
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight --full-pct {{ panel_backlight.full_pct }} --dim-pct {{ panel_backlight.dim_pct }} --dim-timeout {{ panel_backlight.dim_timeout_s }} --quiet-start {{ panel_backlight.quiet_start }} --quiet-end {{ panel_backlight.quiet_end }}{% if (panel_screensaver | default({})).enabled | default(false) and not (panel_backlight.grab_wake_tap | default(false)) %} --no-grab{% endif %}
 Restart=always
 RestartSec=2
 

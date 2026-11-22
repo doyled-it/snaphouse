@@ -480,3 +480,128 @@ def test_pi5_overlay_names_the_dsi_port_from_a_role_var():
     assert "dtoverlay=vc4-kms-dsi-7inch\n" in rendered + "\n"
     assert "dsi0" not in rendered
     assert ROLE_VARS["panel_pi5_dsi_port"] in (0, 1)
+
+
+# --------------------------------------------------------------------------- #
+# the screensaver switches
+# --------------------------------------------------------------------------- #
+
+ALL_VARS = yaml.safe_load((REPO / "vars/all.yml").read_text())
+
+
+def test_dim_level_is_unchanged_by_the_screensaver_work():
+    # The night dim level is tuned separately on the live panel.
+    assert ALL_VARS["panel_backlight"]["dim_pct"] == 15
+
+
+def test_screensaver_settings_live_in_vars():
+    assert ALL_VARS["panel_screensaver"] == {"enabled": True, "day_idle_s": 300}
+    assert ALL_VARS["panel_backlight"]["grab_wake_tap"] is False
+
+
+def test_backlight_unit_drops_the_grab_when_the_screensaver_handles_the_tap():
+    unit = _render(
+        "snaphouse-backlight.service.j2",
+        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": False},
+        panel_screensaver={"enabled": True, "day_idle_s": 300},
+    )
+    assert "--no-grab" in unit
+
+
+def test_backlight_unit_keeps_the_grab_without_the_screensaver():
+    unit = _render(
+        "snaphouse-backlight.service.j2",
+        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": False},
+        panel_screensaver={"enabled": False, "day_idle_s": 300},
+    )
+    assert "--no-grab" not in unit
+
+
+def test_backlight_unit_keeps_the_grab_when_grab_wake_tap_is_set():
+    unit = _render(
+        "snaphouse-backlight.service.j2",
+        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": True},
+        panel_screensaver={"enabled": True, "day_idle_s": 300},
+    )
+    assert "--no-grab" not in unit
+
+
+# --------------------------------------------------------------------------- #
+# the kiosk URL carries the screensaver parameters
+# --------------------------------------------------------------------------- #
+
+SS_CTX = {
+    "panel_screensaver": {"enabled": True, "day_idle_s": 300},
+    "panel_backlight": {**BACKLIGHT_CTX, "grab_wake_tap": False},
+}
+SS_QUERY = "panel=1&idle=300&nidle=60&qs=22:00&qe=06:00"
+
+
+def _panel_url(**context) -> str:
+    rendered = _render("snaphouse-kiosk.env.j2", **context)
+    (line,) = [ln for ln in rendered.splitlines() if ln.startswith("PANEL_URL=")]
+    return line.removeprefix("PANEL_URL=")
+
+
+def test_kiosk_url_gets_the_screensaver_query():
+    assert _panel_url(panel_url="http://10-0-0-9.example/", **SS_CTX) == (
+        f"http://10-0-0-9.example/?{SS_QUERY}"
+    )
+
+
+def test_kiosk_url_default_hub_name_gets_the_query_too():
+    assert _panel_url(**SS_CTX) == f"http://house.local/?{SS_QUERY}"
+
+
+def test_kiosk_url_merges_with_an_existing_query():
+    assert _panel_url(panel_url="http://h.example/?x=1", **SS_CTX) == (
+        f"http://h.example/?x=1&{SS_QUERY}"
+    )
+
+
+def test_kiosk_url_puts_the_query_before_the_fragment():
+    assert _panel_url(panel_url="http://h.example/#listen", **SS_CTX) == (
+        f"http://h.example/?{SS_QUERY}#listen"
+    )
+    assert _panel_url(panel_url="http://h.example/?x=1#listen", **SS_CTX) == (
+        f"http://h.example/?x=1&{SS_QUERY}#listen"
+    )
+
+
+def test_kiosk_url_handles_a_path_without_a_slash_and_a_trailing_question_mark():
+    assert _panel_url(panel_url="http://h.example/app", **SS_CTX) == (
+        f"http://h.example/app?{SS_QUERY}"
+    )
+    assert _panel_url(panel_url="http://h.example/?", **SS_CTX) == (
+        f"http://h.example/?{SS_QUERY}"
+    )
+
+
+def test_kiosk_url_uses_the_configured_timing():
+    url = _panel_url(
+        panel_screensaver={"enabled": True, "day_idle_s": 120},
+        panel_backlight={**BACKLIGHT_CTX, "dim_timeout_s": 45, "quiet_start": "23:30"},
+    )
+    assert "idle=120&nidle=45&qs=23:30&qe=06:00" in url
+
+
+def test_kiosk_url_is_unchanged_when_the_screensaver_is_off():
+    assert _panel_url(
+        panel_url="http://h.example/#x",
+        panel_screensaver={"enabled": False, "day_idle_s": 300},
+        panel_backlight=BACKLIGHT_CTX,
+    ) == "http://h.example/#x"
+
+
+def test_kiosk_env_change_restarts_the_kiosk():
+    # The page reads its parameters once at load, so a changed env file must
+    # restart the kiosk.
+    (task,) = [
+        t
+        for t in _tasks()
+        if isinstance(t.get("ansible.builtin.template"), dict)
+        and t["ansible.builtin.template"].get("dest") == "/etc/snaphouse/kiosk.env"
+    ]
+    assert task["notify"] == "Restart the kiosk service"
+    names = [h["name"] for h in _handlers()]
+    assert "Restart the kiosk service" in names

@@ -75,7 +75,7 @@ test("kiosk block drops backdrop-filter", () => {
   assert.match(block, /-webkit-backdrop-filter:\s*none/);
 });
 
-test("no transition lasts 300ms or more except the hue drift and the switch spring", () => {
+test("no transition lasts 300ms or more except the hue drift, the switch spring and the screensaver fade", () => {
   const found = [];
   for (const m of css.matchAll(/(?:^|\n)\s*(transition|animation)(?:-duration)?:\s*([^;]+);/g)) {
     for (const d of m[2].matchAll(/(?<![\w.-])(\d*\.?\d+)(ms|s)\b/g)) {
@@ -86,7 +86,7 @@ test("no transition lasts 300ms or more except the hue drift and the switch spri
   assert.ok(found.length > 5);
   for (const { ms, text } of found) {
     if (ms < 300) continue;
-    const allowed = /--h\b/.test(text) || /tile-flash/.test(text) || /--spring/.test(text) || /\.45s/.test(text);
+    const allowed = /--h\b/.test(text) || /tile-flash/.test(text) || /--spring/.test(text) || /\.45s/.test(text) || /--ss-/.test(text);
     assert.ok(allowed, `too long: ${text}`);
   }
 });

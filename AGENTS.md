@@ -508,6 +508,33 @@ turns the easing off. In `rooms.js`, `followCover` guards out-of-order results w
 a token. The frame mirror image only preloads through `swapImage`; the now-playing
 cover is the single source of color. Tests: `tests/js/cover-color.test.js`.
 
+## Panel screensaver
+
+The wall panel shows a slow Aurora canvas over the room picker when idle (design:
+`docs/superpowers/specs/2026-11-22-panel-screensaver-design.md`). It is panel-only:
+the panel role appends `?panel=1&idle=<s>&nidle=<s>&qs=HH:MM&qe=HH:MM` to `panel_url`
+in `snaphouse-kiosk.env.j2` (query before any `#fragment`, merged with an existing
+query), from `panel_screensaver` and `panel_backlight` in `vars/all.yml`. The page
+reads them once at load, so a changed env file restarts the kiosk. `rooms.js` fetches
+`screensaver.js` by dynamic `import()` only when `panel=1` is present, so phones create
+no overlay, canvas, timer or rAF loop (`tests/js/rooms-screensaver-wiring.test.js`).
+
+Modules in `roles/room_picker/files/site/`: `aurora-math.js` (pure colors, hue mixing,
+ribbon curves), `aurora.js` (canvas drawing, 200 px wide, one rAF loop capped at 30 fps,
+3 s hue crossfade, no loop while stopped), `screensaver-model.js` (parameter parsing,
+quiet-hours and idle rules, browser local time), `screensaver.js` (the overlay). Hues come
+from `followCover` in `rooms.js`; with nothing playing the chroma is 0 and the tint uses
+`chromaScale`, so it stays a faint blue-grey. The overlay swallows every pointer, touch and
+key event while up and for 400 ms after the last one, so the first tap (with its pointerup
+and click) only dismisses. The idle rule is re-checked once a minute: at 22:00 a panel idle
+for 60 s or more shows at once; an overlay already up stays up at 06:00.
+
+At night the backlight daemon runs with `--no-grab` while `panel_screensaver.enabled` is true
+and `panel_backlight.grab_wake_tap` is false, so one tap wakes the screen and dismisses the
+overlay. The evdev grab from #184 stays for a panel without the screensaver. `dim_pct` is
+tuned separately on the live panel, never in a screensaver change. Pass mark on the board at
+the 30 fps cap: at most 20 percent total CPU on the Pi 3, 10 percent on the Pi 5.
+
 ## Tooling
 
 - Python: `uv run pytest tests/python`. Dev deps (pytest, pyyaml) are in
