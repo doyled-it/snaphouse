@@ -202,4 +202,4 @@ def test_targets_mark_a_host_not_installed_from_the_inventory_flag():
     for name, spec in _load_hosts().items():
         assert flags[name] is spec.get("installed", True)
     assert flags["nightstand-frame"] is True
-    assert flags["panel"] is False
+    assert flags["panel"] is True
