@@ -59,7 +59,13 @@ def _module(task: dict) -> tuple[str, dict]:
 
 
 def _render(template: str, **context) -> str:
-    env = Environment(loader=FileSystemLoader(str(ROLE / "templates")), keep_trailing_newline=True)
+    # Match Ansible's template module, which renders with trim_blocks on: a
+    # block tag at the end of a line eats that line's newline.
+    env = Environment(
+        loader=FileSystemLoader(str(ROLE / "templates")),
+        keep_trailing_newline=True,
+        trim_blocks=True,
+    )
     base = {"ansible_managed": "managed by Ansible", **ROLE_VARS}
     base.update(context)
     return env.get_template(template).render(**base)
@@ -506,6 +512,10 @@ def test_backlight_unit_drops_the_grab_when_the_screensaver_handles_the_tap():
         panel_screensaver={"enabled": True, "day_idle_s": 300},
     )
     assert "--no-grab" in unit
+    # The flag ends the ExecStart line; the next directive keeps its own line.
+    exec_line = next(ln for ln in unit.splitlines() if ln.startswith("ExecStart="))
+    assert exec_line.endswith(" --no-grab")
+    assert any(ln.startswith("Restart=") for ln in unit.splitlines())
 
 
 def test_backlight_unit_keeps_the_grab_without_the_screensaver():
