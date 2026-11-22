@@ -1,6 +1,7 @@
 ---
-# The control panel: the Raspberry Pi 3 with the official 7 inch DSI touch display
-# on a wall or counter, showing the hub's room picker. This role installs the
+# The control panel: a Raspberry Pi 5 (the card also boots in a Pi 3) with the
+# official 7 inch DSI touch display on a wall or counter, showing the hub's room
+# picker. This role installs the
 # kiosk (cage running Chromium full screen on tty1), the backlight schedule, the
 # display/touch rotation, and the verify check. It plays no audio; it can join as
 # a speaker later (snapclient is not in its role list).

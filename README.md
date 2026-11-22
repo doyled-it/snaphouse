@@ -84,8 +84,8 @@ never holds the touchscreen while the screen is at full brightness.
 The panel's card boots in a Pi 3 or a Pi 5. A Pi 3 detects the 7 inch display
 itself; for a Pi 5 the role writes a `[pi5]` section into `/boot/firmware/config.txt`
 naming the `vc4-kms-dsi-7inch` overlay, which other boards ignore. On a Pi 5, use
-the 22-way to 15-way display cable in the port labelled CAM/DISP 1 (or set
-`panel_pi5_dsi_port: 0` in the role vars for CAM/DISP 0).
+the 22-way to 15-way display cable in the port labelled CAM/DISP 0 (or set
+`panel_pi5_dsi_port: 1` in the role vars for CAM/DISP 1).
 
 The hub address the panel opens is the one piece of per-home config it needs, and
 like every other address it stays out of the repo: set `panel_url` in the
