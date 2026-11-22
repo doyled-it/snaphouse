@@ -2060,13 +2060,30 @@ function followCover(url) {
   const token = coverColorToken;
   if (!url) {
     applyCoverColor(document.documentElement, DEFAULT_HUES);
+    currentHues = DEFAULT_HUES;
+    screensaver?.setHues(DEFAULT_HUES);
     return;
   }
   loadCoverHues(url).then((hues) => {
     if (token === coverColorToken) {
       applyCoverColor(document.documentElement, hues);
+      currentHues = hues;
+      screensaver?.setHues(hues);
     }
   });
+}
+
+// The wall panel's screensaver. The kiosk URL carries ?panel=1 (and the timing);
+// only then is the module fetched, so phones create no overlay, canvas or timer.
+let screensaver = null;
+let currentHues = DEFAULT_HUES;
+if (new URLSearchParams(location.search).get("panel") === "1") {
+  import("./screensaver.js")
+    .then((m) => {
+      screensaver = m.initScreensaver(location.search);
+      screensaver?.setHues(currentHues);
+    })
+    .catch(() => {});
 }
 
 function updateNowPlayingCard(track) {
