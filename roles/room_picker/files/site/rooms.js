@@ -95,6 +95,8 @@ import {
   intentOutcome,
   parseGarageText,
   pollMs as garagePollMs,
+  movementPoll,
+  MOVE_POLL,
   recentLine,
   settingLimits as garageLimits,
   settingsBody as garageSettingsBody,
@@ -138,7 +140,7 @@ import {
   viewerState,
 } from "./gallery-viewer.js";
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
-import { classifyMachines, healthMessage, reasonLabel, speakerBanner } from "./health-model.js";
+import { classifyMachines, healthMessage, healthRows, reasonLabel, speakerBanner } from "./health-model.js";
 import { applyPlan, everythingOffPlan, heldStatus, howToText, loadBluetoothName, onlyHerePlan, playbackControls, playbackRequest, roomState } from "./listen-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
@@ -373,7 +375,7 @@ const state = {
   garage: null,
   garageProbed: false,
   // The last classified machines (health-model.js), for the panel's House health.
-  health: { troubled: [], notSetUp: [] },
+  health: { troubled: [], notSetUp: [], rows: [] },
   config: { rooms: [] },
   cards: new Map(), // room id -> { card, toggle, slider }
   rooms: new Map(), // room id -> latest row from roomsFromStatus
@@ -1028,7 +1030,7 @@ async function refreshHealth() {
     return;
   }
   const { troubled, notSetUp } = classifyMachines(entries);
-  state.health = { troubled, notSetUp };
+  state.health = { troubled, notSetUp, rows: healthRows(entries) };
   renderNotSetUp(notSetUp);
   renderNeedsAttention(troubled);
   const message = healthMessage(troubled);
@@ -4220,6 +4222,9 @@ let garageRecentKey = "";
 let garagePending = null;
 let garageBusy = false;
 let garagePoll = null;
+// The 1 s read while the door travels (garage-model.js movementPoll).
+let garageMovePoll = null;
+let garageMoveSince = null;
 
 const garageQueue = createAutosave({
   write: writeGarage,
@@ -4250,6 +4255,7 @@ async function refreshGarage() {
 function applyGarage(doc) {
   state.garage = doc;
   state.garageProbed = true;
+  followGarageMovement(doc);
   if (doc) {
     garageWritten = { ...doc.settings };
     garageQueue.seed(garageWritten);
@@ -4259,6 +4265,19 @@ function applyGarage(doc) {
     applyHash();
   } else {
     syncTabs();
+  }
+}
+
+// Whatever started the movement (panel, phone or the wall button), read every
+// second while the door is opening or closing, for at most 30 s.
+function followGarageMovement(doc) {
+  const next = movementPoll({ state: doc ? doc.state : null, since: garageMoveSince, now: Date.now() });
+  garageMoveSince = next.since;
+  if (next.fast && garageMovePoll === null) {
+    garageMovePoll = setInterval(refreshGarage, MOVE_POLL.everyMs);
+  } else if (!next.fast && garageMovePoll !== null) {
+    clearInterval(garageMovePoll);
+    garageMovePoll = null;
   }
 }
 

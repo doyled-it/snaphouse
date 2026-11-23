@@ -307,7 +307,7 @@ the link is live. A tap posts `garage/intent`; only the reply's `confirm_require
 second tap (an inline "Open the garage door? Open / Cancel", with "You are away. This moves the door."
 above it) is needed before `garage/command`. The command is sent once, never retried. A refused or
 failed request shows the hub's own error sentence (`errorLine`); a timeout always shows "No movement
-seen yet. Check the card before trying again." After a command the page polls every 2 s for up to 15 s.
+seen yet. Check the card before trying again." After a command the page polls every 2 s for up to 15 s. Whatever starts a movement (this page, another phone or the wall button), the page also reads the document every 1 s while the door is opening or closing, for at most 30 s per movement (`movementPoll`), so the percentage follows the door; homebody publishes position steps at most once a second.
 Both POSTs carry `X-Snaphouse: 1`. UI copy never says ESPHome, board, ntfy, API or homebody.
 The wall panel is the one exception to the hub-decided confirm: its button is always two taps (see Panel layout), and its second tap sends the command straight away.
 
@@ -563,6 +563,8 @@ Music has a now-playing bar and one column per room (a vertical fill that takes 
 5, plus and minus, On/Off); Only here, Everything off and play history are phone only. `columnFit` flags a
 room count where a column would leave under 60 px of fill (four rooms fit, a fifth does not); the page keeps
 text sizes and the builder is told, not shrunk.
+
+More's tile line stays "All good" or "N need attention", but the House health screen lists every machine with a status (`healthRows` in `health-model.js`: OK, Needs attention with the short reason, or Not set up yet; problems first).
 
 Garage on the panel: the fill is how closed the door is, from `position` when it is a number (also while
 stopped), else full when closed, empty when open, and a fixed 15 s sweep while opening or closing

@@ -270,3 +270,14 @@ test("recentLine says what happened and where it came from", () => {
   assert.equal(recentLine({ ...away, who: "Front phone" }, at("07:52")), "07:52  Opened (from away, Front phone)");
   assert.equal(recentLine({ atMs: null, event: "stopped", origin: null, who: null }, at("")), "Stopped");
 });
+
+test("movementPoll reads every second while the door travels, for at most 30 s", async () => {
+  const { movementPoll, MOVE_POLL } = await import("../../roles/room_picker/files/site/garage-model.js");
+  assert.deepEqual(MOVE_POLL, { everyMs: 1000, forMs: 30000 });
+  assert.deepEqual(movementPoll({ state: "closed", since: null, now: 5000 }), { fast: false, since: null });
+  assert.deepEqual(movementPoll({ state: "opening", since: null, now: 5000 }), { fast: true, since: 5000 });
+  assert.deepEqual(movementPoll({ state: "closing", since: 5000, now: 34999 }), { fast: true, since: 5000 });
+  assert.deepEqual(movementPoll({ state: "closing", since: 5000, now: 35000 }), { fast: false, since: 5000 });
+  assert.deepEqual(movementPoll({ state: "open", since: 5000, now: 36000 }), { fast: false, since: null });
+  assert.deepEqual(movementPoll({ state: null, since: 5000, now: 6000 }), { fast: false, since: null });
+});

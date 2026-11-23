@@ -44,12 +44,13 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 export function moreTiles({ frames, pictureCount, troubled }) {
   const tiles = [];
   if (frames !== null && frames !== undefined) {
-    tiles.push({ id: "frames", title: "Frames", line: plural(frames, "frame", "frames"), warn: false });
+    tiles.push({ id: "frames", hash: "#frame", title: "Frames", line: plural(frames, "frame", "frames"), warn: false });
   }
-  tiles.push({ id: "gallery", title: "Gallery", line: plural(pictureCount, "picture", "pictures"), warn: false });
-  tiles.push({ id: "bluetooth", title: "Bluetooth", line: "Pair a phone, devices", warn: false });
+  tiles.push({ id: "gallery", hash: "#gallery", title: "Gallery", line: plural(pictureCount, "picture", "pictures"), warn: false });
+  tiles.push({ id: "bluetooth", hash: "#settings", title: "Bluetooth", line: "Pair a phone, devices", warn: false });
   tiles.push({
     id: "health",
+    hash: "#health",
     title: "House health",
     line: troubled === 0 ? "All good" : `${troubled} ${troubled === 1 ? "needs" : "need"} attention`,
     warn: troubled > 0,
