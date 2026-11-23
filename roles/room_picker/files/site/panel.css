@@ -306,14 +306,15 @@ html[data-panel] .p-garage {
   gap: 10px;
 }
 html[data-panel] .p-garage-info {
-  flex: 7 1 0;
+  container-type: inline-size;
+  flex: 1.15 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 html[data-panel] .p-garage-word {
-  font-size: 88px;
+  font-size: min(88px, 22cqw);
   line-height: 1;
   font-weight: 800;
   letter-spacing: 0;
@@ -329,12 +330,12 @@ html[data-panel] .p-garage-line {
 }
 html[data-panel] .p-garage-btn {
   position: relative;
-  flex: 3 1 0;
+  flex: 1 1 0;
   min-width: 0;
-  border: 0;
+  border: 3px solid oklch(0.45 0.07 var(--h, 255));
   border-radius: 16px;
   overflow: hidden;
-  background: oklch(0.2 0.02 var(--h, 255));
+  background: oklch(0.26 0.04 var(--h, 255));
   color: oklch(0.98 0.01 var(--h, 255));
 }
 html[data-panel] .p-garage-fill {
@@ -691,4 +692,23 @@ html[data-panel] .toast {
 }
 html[data-panel] .p-garage-btn:disabled {
   opacity: 1;
+}
+
+/* Pairing in progress, lost or failed: the device list steps aside so the
+   controls fit without scrolling, and the two buttons sit side by side. */
+html[data-panel] .p-bluetooth:has(#pair-open:not([hidden])) #devices,
+html[data-panel] .p-bluetooth:has(#pair-lost:not([hidden])) #devices,
+html[data-panel] .p-bluetooth:has(#pair-error:not([hidden])) #devices {
+  display: none;
+}
+html[data-panel] .p-bluetooth .pair-actions {
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-bluetooth .pair-actions .btn {
+  flex: 1 1 0;
+  width: auto;
+}
+html[data-panel] .p-bluetooth #pair-idle .settings-note {
+  display: none;
 }
