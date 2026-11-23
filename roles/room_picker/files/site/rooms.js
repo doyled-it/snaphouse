@@ -2110,6 +2110,9 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
         power: setRoomPower,
         volume: (id, percent) => sendControl(volumeRequest(id, percent)),
         playback: onPlayback,
+        garageTap: (action) => onGarageTap(action, true),
+        garageBusy: () => garageBusy,
+        garageNotice: () => (garageEls.error.hidden ? "" : garageEls.error.textContent) || garageEls.sent.textContent,
         progress: () => (state.nowTrack ? progressAt(state.nowTrack, Date.now()) : null),
       });
     })
@@ -3836,7 +3839,7 @@ function applyClimate(doc) {
 
 function climateTick() {
   climateTicks += 1;
-  if (state.screen === "climate" || climateTicks % CLIMATE_IDLE_EVERY === 0) {
+  if (PANEL_MODE || state.screen === "climate" || climateTicks % CLIMATE_IDLE_EVERY === 0) {
     refreshClimate();
   }
 }
@@ -4233,7 +4236,7 @@ function applyGarage(doc) {
 
 function garageTick() {
   garageTicks += 1;
-  if (state.screen === "garage" || garageTicks % GARAGE_IDLE_EVERY === 0) {
+  if (PANEL_MODE || state.screen === "garage" || garageTicks % GARAGE_IDLE_EVERY === 0) {
     refreshGarage();
   }
 }
@@ -4338,7 +4341,9 @@ async function postGarage(path, body) {
 
 // A tap on Open or Close: ask the hub for a nonce, then either send the command
 // straight away or wait for the second tap, as the intent reply says.
-async function onGarageTap(action) {
+// `confirmed` is the wall panel's armed first tap: its second tap is the confirm,
+// so a confirm_required reply sends the command straight away (never a third tap).
+async function onGarageTap(action, confirmed = false) {
   if (garageBusy) {
     return;
   }
@@ -4352,7 +4357,7 @@ async function onGarageTap(action) {
     const out = intentOutcome(reply.status, reply.body, action);
     if (out.kind === "error") {
       showFieldError(garageEls.error, out.text);
-    } else if (out.kind === "confirm") {
+    } else if (out.kind === "confirm" && !confirmed) {
       garagePending = { action, nonce: out.nonce };
       garageEls.confirmText.textContent = out.text;
       garageEls.confirmNote.textContent = out.note || "";
