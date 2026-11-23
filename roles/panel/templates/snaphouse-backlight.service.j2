@@ -22,7 +22,7 @@ Type=simple
 # Reads the touchscreen under /dev/input and writes the sysfs backlight, both
 # root-owned device nodes, so it runs as root. It is stdlib only.
 Environment=PYTHONPATH=/opt/snaphouse/lib
-ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight --full-pct {{ panel_backlight.full_pct }} --dim-pct {{ panel_backlight.dim_pct }} --dim-timeout {{ panel_backlight.dim_timeout_s }} --quiet-start {{ panel_backlight.quiet_start }} --quiet-end {{ panel_backlight.quiet_end }}{% if (panel_screensaver | default({})).enabled | default(false) and not (panel_backlight.grab_wake_tap | default(false)) %} --no-grab{% endif %}
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight --full-pct {{ panel_backlight.full_pct }} --dim-pct {{ panel_backlight.dim_pct }} --dim-timeout {{ panel_backlight.dim_timeout_s }} --quiet-start {{ panel_backlight.quiet_start }} --quiet-end {{ panel_backlight.quiet_end }}{{ ' --no-grab' if ((panel_screensaver | default({})).enabled | default(false) and not (panel_backlight.grab_wake_tap | default(false))) else '' }}
 Restart=always
 RestartSec=2
 
