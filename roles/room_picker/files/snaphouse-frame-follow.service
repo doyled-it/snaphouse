@@ -1,0 +1,18 @@
+# Oneshot started by snaphouse-frame-follow.path whenever artadmin rewrites
+# art-control.json. It runs on the hub only (the room_picker role), as the same
+# account and with the same access as snaphouse-house-status.service, and
+# republishes the commanded frame's mirror every 2 s until the frame confirms the
+# command (applied_seq) or 90 s pass. snaphouse.framefollow is stdlib-only and
+# reuses the house-status poller's hardened fetch and write code. The handled seq
+# lives in the state directory, so a settings-only rewrite of art-control.json
+# exits at once instead of polling again.
+[Unit]
+Description=snaphouse frame follower (fast frame mirror republish after a command)
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+StateDirectory=snaphouse/frame-follow
+Environment=PYTHONPATH=/opt/snaphouse/lib
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.framefollow

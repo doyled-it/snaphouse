@@ -203,3 +203,72 @@ def test_targets_mark_a_host_not_installed_from_the_inventory_flag():
         assert flags[name] is spec.get("installed", True)
     assert flags["nightstand-frame"] is True
     assert flags["panel"] is True
+
+
+# --- frame change feedback: the follower units -------------------------------- #
+
+ROLE = REPO / "roles/room_picker"
+FOLLOW_SERVICE = ROLE / "files/snaphouse-frame-follow.service"
+FOLLOW_PATH = ROLE / "files/snaphouse-frame-follow.path"
+
+
+def _tasks() -> list[dict]:
+    return yaml.safe_load((ROLE / "tasks/main.yml").read_text())
+
+
+def test_follow_path_unit_watches_the_art_control_file_artadmin_publishes():
+    text = FOLLOW_PATH.read_text()
+    assert "PathChanged=/var/lib/snaphouse/public/art/art-control.json" in text
+    assert "Unit=snaphouse-frame-follow.service" in text
+    assert "WantedBy=multi-user.target" in text
+    # artadmin publishes into <public>/art/, and the unit must name that file.
+    artadmin = (REPO / "lib/snaphouse/artadmin.py").read_text()
+    assert 'public_root / "art" / "art-control.json"' in artadmin
+
+
+def test_follow_service_is_a_oneshot_running_the_follower_like_the_house_poller():
+    follow = FOLLOW_SERVICE.read_text()
+    poller = (ROLE / "files/snaphouse-house-status.service").read_text()
+    assert "Type=oneshot" in follow
+    assert "ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.framefollow" in follow
+    assert "Environment=PYTHONPATH=/opt/snaphouse/lib" in follow
+    # Same account and hardening as the poller: it sets neither User= nor any
+    # sandboxing, so the follower must not either (it republishes into the same
+    # root-owned frames directory).
+    for line in ("User=", "ProtectSystem", "NoNewPrivileges", "ReadWritePaths"):
+        assert (line in follow) == (line in poller), line
+    # Its handled-seq state directory is what stops a settings rewrite storming it.
+    assert "StateDirectory=snaphouse/frame-follow" in follow
+
+
+def test_follow_state_path_matches_the_state_directory():
+    module = (REPO / "lib/snaphouse/framefollow.py").read_text()
+    assert 'Path("/var/lib/snaphouse/frame-follow/state.json")' in module
+
+
+def test_follow_units_are_installed_and_the_path_unit_enabled_on_a_real_host():
+    tasks = _tasks()
+    installed = {
+        t["ansible.builtin.copy"]["dest"]
+        for t in tasks
+        if "ansible.builtin.copy" in t
+    }
+    assert "/etc/systemd/system/snaphouse-frame-follow.service" in installed
+    assert "/etc/systemd/system/snaphouse-frame-follow.path" in installed
+    enable = [
+        t
+        for t in tasks
+        if t.get("ansible.builtin.systemd_service", {}).get("name")
+        == "snaphouse-frame-follow.path"
+    ]
+    assert len(enable) == 1
+    assert enable[0]["ansible.builtin.systemd_service"]["enabled"] is True
+    assert enable[0]["when"] == "common_systemd_init"
+    assert "service" in enable[0]["tags"]
+
+
+def test_follow_units_carry_no_em_dash_or_identifying_data():
+    for unit in (FOLLOW_SERVICE, FOLLOW_PATH):
+        text = unit.read_text()
+        assert "—" not in text
+        assert not re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", text)

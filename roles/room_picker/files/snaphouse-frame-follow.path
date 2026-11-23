@@ -1,0 +1,12 @@
+# Starts snaphouse-frame-follow.service when the art command file changes.
+# artadmin rewrites it atomically after every settings change and every command,
+# so the follower itself decides whether the command seq is new.
+[Unit]
+Description=Watch the art command file to follow a frame change
+
+[Path]
+PathChanged=/var/lib/snaphouse/public/art/art-control.json
+Unit=snaphouse-frame-follow.service
+
+[Install]
+WantedBy=multi-user.target
