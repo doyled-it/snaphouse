@@ -321,7 +321,7 @@
     climate: { label: "Climate", vars: { split: "A: big number + setpoint card", center: "B: setpoint in the middle" },
       note: "Away temperature and timing rules stay on the phone." },
     garage: { label: "Garage", vars: { split: "A: status + big button", stack: "B: status bar + recent" },
-      note: "Open asks for a second tap within 4 seconds. Alert settings stay on the phone." },
+      note: "The button fill shows how closed the door is and follows it as it moves (sped up to 6 s here). Open asks for a second tap within 4 seconds." },
     more: { label: "More", vars: { grid: "Four big tiles" }, note: "Tap a tile to go there." },
     frame: { label: "More: Frames", vars: { main: "Mirror + three buttons" },
       note: "Frame settings (quiet hours, weather, folders) stay on the phone." },
@@ -331,6 +331,7 @@
   };
   let page = "music", variant = "playing";
   try { const s = JSON.parse(localStorage.getItem("panel-mock") || "null"); if (s && PAGES[s.page] && PAGES[s.page].vars[s.variant]) { page = s.page; variant = s.variant; } } catch (e) {}
+  const hp = location.hash.slice(1).split(":"); if (PAGES[hp[0]]) { page = hp[0]; variant = PAGES[hp[0]].vars[hp[1]] ? hp[1] : Object.keys(PAGES[hp[0]].vars)[0]; }
 
   const PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
   const PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>';
@@ -371,19 +372,39 @@
     setpt += Number(b.dataset.d); document.querySelectorAll(".setpt").forEach((e) => { e.textContent = setpt + "°"; });
   }));
 
-  // Garage: two-step open, back to idle after 4 s.
-  let doorOpen = false, armed = null;
+  // Garage: two-step open, back to idle after 4 s. The button's fill shows how
+  // closed the door is (full = closed, empty = open), following its position.
+  // Travel is sped up to 6 s here; a real door takes about 15 s.
+  let pos = 0, dir = 0, armed = null, timer = null;
+  function word() { return dir > 0 ? "OPENING" : dir < 0 ? "CLOSING" : pos >= 100 ? "OPEN" : "CLOSED"; }
   function drawDoor() {
-    document.querySelectorAll(".door").forEach((d) => { d.textContent = doorOpen ? "OPEN" : "CLOSED"; d.classList.toggle("open", doorOpen); });
-    document.getElementById("stripdoor").textContent = doorOpen ? "open" : "closed";
+    const w = word(), closed = 100 - pos;
+    document.querySelectorAll(".door").forEach((d) => { d.textContent = w; d.classList.toggle("open", w !== "CLOSED"); });
+    document.getElementById("stripdoor").textContent = w.toLowerCase();
+    document.querySelectorAll(".since").forEach((s) => { s.textContent = dir ? `${Math.round(pos)}% open` : "for 1 h 32 min"; });
     document.querySelectorAll(".gbtn").forEach((b) => {
       b.classList.toggle("confirm", !!armed);
-      b.textContent = armed ? (doorOpen ? "Tap to close" : "Tap to open") : (doorOpen ? "Close" : "Open");
+      b.disabled = !!dir;
+      b.style.background = armed ? "" : `linear-gradient(to top, var(--accent) ${closed}%, var(--card2) ${closed}%)`;
+      b.style.color = armed ? "" : (closed > 45 ? "var(--ink)" : "var(--text)");
+      b.textContent = armed ? (pos >= 100 ? "Tap to close" : "Tap to open")
+        : dir ? `${dir > 0 ? "Opening" : "Closing"}, ${Math.round(pos)}%` : (pos >= 100 ? "Close" : "Open");
     });
     document.querySelectorAll(".gfoot").forEach((f) => { f.textContent = armed ? "Tap again within 4 seconds" : "Tap, then tap again to confirm"; });
   }
+  function travel(d) {
+    dir = d; const start = performance.now(), from = pos, to = d > 0 ? 100 : 0;
+    clearInterval(timer);
+    timer = setInterval(() => {
+      const t = Math.min(1, (performance.now() - start) / 6000);
+      pos = from + (to - from) * t;
+      if (t >= 1) { clearInterval(timer); dir = 0; }
+      drawDoor();
+    }, 100);
+  }
   document.querySelectorAll(".gbtn").forEach((b) => b.addEventListener("click", () => {
-    if (armed) { clearTimeout(armed); armed = null; doorOpen = !doorOpen; }
+    if (dir) return;
+    if (armed) { clearTimeout(armed); armed = null; travel(pos >= 100 ? -1 : 1); }
     else { armed = setTimeout(() => { armed = null; drawDoor(); }, 4000); }
     drawDoor();
   }));
