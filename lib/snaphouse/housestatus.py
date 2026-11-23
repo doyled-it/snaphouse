@@ -258,7 +258,7 @@ def select_art_history(parsed: object) -> Optional[dict]:
 
 
 PENDING_STATES = ("changing", "waiting", "failed")
-PENDING_WAIT_REASONS = ("music", "game", "pin", "settling")
+PENDING_WAIT_REASONS = ("music", "game", "pin", "settling", "screen")
 MAX_PENDING_SINCE = 40
 
 

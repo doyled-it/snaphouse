@@ -256,7 +256,7 @@ disappears while the tab is open, `rooms.js` calls `applyHash` and the page retu
 A tap on Next, Back or Show on the frame (the Frames screen, the gallery viewer, the
 panel) gives feedback at once and then follows the change to the end. The rules are pure
 in `frame-change-model.js` (`startChange`, `advance`, `viewOf`, `settled`, `progressOf`,
-`pollMs`, `needsPng`; tests in `tests/js/frame-change-model.test.js`); `rooms.js`
+`inFlight`; tests in `tests/js/frame-change-model.test.js`); `rooms.js`
 (`sendFrameCommand`, `changeTick`, `renderChange`) only sends, polls and draws, and the
 panel draws the same view from `host.frameChange()`.
 

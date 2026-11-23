@@ -134,7 +134,8 @@ and win where they differ.
 1. **`pending` carries a state, not just `on_screen`.** Shape:
    `{"seq", "id", "since", "state", "reason"}`. `state` is `changing` (the frame
    will push this piece now), `waiting` (the piece is next but the frame is not
-   drawing art now; `reason` is one of `music`, `game`, `pin`, `settling`), or
+   drawing art now; `reason` is one of `music`, `game`, `pin`, `settling`, or `screen`, the generic reason for any other scheduled screen such as the
+   morning weather), or
    `failed` (the push raised; `reason` null). A command redraw already bypasses
    quiet hours, so quiet hours is not a reason. The frame clears `pending` on its
    next mirror write and replaces it when a newer command applies.

@@ -229,7 +229,8 @@ optional fields, so the page can show a change in flight:
 addressed to it, before the e-ink push. `seq` is the command's seq, `id` the piece id the
 rotation moved to, `since` an ISO stamp. `state` is `changing` (the frame will push this piece
 now), `waiting` (the piece is next but the frame is not drawing art now; `reason` is one of
-`music`, `game`, `pin`, `settling`) or `failed` (the push raised; `reason` null). The frame
+`music`, `game`, `pin`, `settling`, or the generic `screen` for any other scheduled
+screen such as the morning weather) or `failed` (the push raised; `reason` null). The frame
 clears `pending` on its next mirror write and replaces it when a newer command applies.
 `applied_seq` is the seq of the latest command whose piece is on the panel, written on every
 mirror write after a command push and absent until the first. Confirmation is by seq only

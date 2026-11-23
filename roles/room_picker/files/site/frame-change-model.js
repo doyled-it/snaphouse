@@ -14,6 +14,7 @@
 export const CHANGE_TIMEOUT_MS = 90_000;
 export const DONE_MS = 3000;
 export const MESSAGE_MS = 8000;
+// The page registers its 2 s read with page-timers at this period.
 export const FAST_POLL_MS = 2000;
 export const PUSH_MS = 35_000;
 
@@ -22,6 +23,7 @@ const WAITING_WHAT = {
   game: "the game",
   pin: "the pinned screen",
   settling: "music",
+  screen: "another screen",
 };
 
 export function startChange({ frameId, action, seq, targetId, nowMs }) {
@@ -103,18 +105,6 @@ export function progressOf(change, nowMs) {
     return 0;
   }
   return Math.min(0.95, Math.max(0, (nowMs - change.changingMs) / PUSH_MS));
-}
-
-export function pollMs(change, idleMs) {
-  return inFlight(change) ? FAST_POLL_MS : idleMs;
-}
-
-// The image is fetched only when the frame says it drew something new.
-export function needsPng(previousUpdatedAt, mirror) {
-  if (!isDoc(mirror) || typeof mirror.updated_at !== "string") {
-    return false;
-  }
-  return mirror.updated_at !== previousUpdatedAt;
 }
 
 // What to draw. `lookup(id)` returns { title, thumb } from the page's art index, or

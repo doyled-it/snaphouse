@@ -5,8 +5,6 @@ import {
   DONE_MS,
   advance,
   inFlight,
-  needsPng,
-  pollMs,
   progressOf,
   settled,
   startChange,
@@ -64,6 +62,7 @@ test("waiting names what the frame shows, per reason, and ends the flow", () => 
     game: "Up next: Water Lilies. The frame shows the game right now.",
     pin: "Up next: Water Lilies. The frame shows the pinned screen right now.",
     settling: "Up next: Water Lilies. The frame shows music right now.",
+    screen: "Up next: Water Lilies. The frame shows another screen right now.",
   };
   for (const [reason, text] of Object.entries(expect)) {
     const change = advance(sent(), mirror({ pending: pending({ state: "waiting", reason }) }), T0 + 3000);
@@ -151,20 +150,6 @@ test("waiting and failed messages settle after they have been shown", () => {
   const change = advance(sent(), mirror({ pending: pending({ state: "failed" }) }), T0 + 3000);
   assert.equal(settled(change, T0 + 3500), false);
   assert.equal(settled(change, T0 + 3000 + 8000), true);
-});
-
-test("polling is every 2 s only while a change is in flight", () => {
-  assert.equal(pollMs(sent(), 30_000), 2000);
-  assert.equal(pollMs(null, 30_000), 30_000);
-  const done = advance(sent(), mirror({ applied_seq: 7 }), T0 + 5000);
-  assert.equal(pollMs(done, 30_000), 30_000);
-});
-
-test("the image is fetched only when updated_at changes", () => {
-  assert.equal(needsPng("t1", mirror({ updated_at: "t1" })), false);
-  assert.equal(needsPng("t1", mirror({ updated_at: "t2" })), true);
-  assert.equal(needsPng(null, mirror()), true);
-  assert.equal(needsPng("t1", null), false);
 });
 
 test("the copy has no em dash", () => {

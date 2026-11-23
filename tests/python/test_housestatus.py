@@ -878,7 +878,7 @@ def test_frame_meta_keeps_valid_pending_and_applied_seq():
 
 
 def test_frame_meta_keeps_waiting_with_each_reason():
-    for reason in ("music", "game", "pin", "settling"):
+    for reason in ("music", "game", "pin", "settling", "screen"):
         pending = {**_PENDING, "state": "waiting", "reason": reason}
         assert select_frame_meta(_meta_with(pending=pending))["pending"] == pending
 
