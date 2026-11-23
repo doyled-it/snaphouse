@@ -257,13 +257,58 @@ def select_art_history(parsed: object) -> Optional[dict]:
     return {"current": _select_piece(parsed.get("current")), "history": history}
 
 
+PENDING_STATES = ("changing", "waiting", "failed")
+PENDING_WAIT_REASONS = ("music", "game", "pin", "settling")
+MAX_PENDING_SINCE = 40
+
+
+def _non_negative_int(value: object) -> Optional[int]:
+    """The value when it is a real non-negative int (a bool is not), else None."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _select_pending(raw: object) -> Optional[dict]:
+    """Validate the frame's change announcement, or None to drop it alone.
+
+    ``seq`` is a non-negative int, ``id`` passes the piece-id check, ``since`` is a
+    string of at most 40 characters, ``state`` is changing, waiting or failed, and
+    ``reason`` is one of the four wait reasons exactly when the state is waiting
+    (null for the other two). Only these five keys are kept.
+    """
+    if not isinstance(raw, dict):
+        return None
+    seq = _non_negative_int(raw.get("seq"))
+    piece_id = raw.get("id")
+    if seq is None or not isinstance(piece_id, str):
+        return None
+    if _safe_piece_id(piece_id, piece_id.rsplit("/", 1)[-1]) is None:
+        return None
+    since = raw.get("since")
+    if not isinstance(since, str) or len(since) > MAX_PENDING_SINCE:
+        return None
+    state = raw.get("state")
+    reason = raw.get("reason")
+    if state not in PENDING_STATES:
+        return None
+    if state == "waiting":
+        if reason not in PENDING_WAIT_REASONS:
+            return None
+    elif reason is not None:
+        return None
+    return {"seq": seq, "id": piece_id, "since": since, "state": state, "reason": reason}
+
+
 def select_frame_meta(parsed: object) -> Optional[dict]:
-    """Validate a fetched frame.json body to {updated_at, screen} or None.
+    """Validate a fetched frame.json body to its pinned fields, or None.
 
     None means the body is the wrong shape (not an object, or a missing or empty
     updated_at or screen), which the caller treats as a failed fetch and keeps the
-    last good file. Only the two pinned fields are kept, so a peer cannot smuggle
-    extra content onto the page through the same-origin mirror.
+    last good file. Only the pinned fields are kept, so a peer cannot smuggle extra
+    content onto the page through the same-origin mirror. The optional ``pending``
+    and ``applied_seq`` (change feedback) are each checked on their own: a bad one
+    is dropped and the rest of the file is still published.
     """
     if not isinstance(parsed, dict):
         return None
@@ -273,7 +318,14 @@ def select_frame_meta(parsed: object) -> Optional[dict]:
     screen = parsed.get("screen")
     if not isinstance(screen, str) or not screen:
         return None
-    return {"updated_at": updated_at, "screen": screen}
+    meta: dict = {"updated_at": updated_at, "screen": screen}
+    applied_seq = _non_negative_int(parsed.get("applied_seq"))
+    if applied_seq is not None:
+        meta["applied_seq"] = applied_seq
+    pending = _select_pending(parsed.get("pending"))
+    if pending is not None:
+        meta["pending"] = pending
+    return meta
 
 
 def aggregate(targets: list[dict], fetch: Fetch, now: Now) -> dict:

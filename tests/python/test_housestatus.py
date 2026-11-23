@@ -855,3 +855,67 @@ def test_main_republishes_every_frame(tmp_path, monkeypatch):
     assert json.loads(house_out.read_text())["machines"][0]["status"]["host"] == "house"
     for frame_id in ("nightstand", "office"):
         assert (frames_root / frame_id / "frame.png").exists()
+
+
+# --- frame change feedback: pending and applied_seq -------------------------- #
+
+_PENDING = {
+    "seq": 13,
+    "id": "Folder/next.jpg",
+    "since": "2026-11-23T07:01:00-08:00",
+    "state": "changing",
+    "reason": None,
+}
+
+
+def _meta_with(**extra):
+    return {**_FRAME_META, **extra}
+
+
+def test_frame_meta_keeps_valid_pending_and_applied_seq():
+    got = select_frame_meta(_meta_with(pending=dict(_PENDING), applied_seq=12))
+    assert got == _meta_with(pending=_PENDING, applied_seq=12)
+
+
+def test_frame_meta_keeps_waiting_with_each_reason():
+    for reason in ("music", "game", "pin", "settling"):
+        pending = {**_PENDING, "state": "waiting", "reason": reason}
+        assert select_frame_meta(_meta_with(pending=pending))["pending"] == pending
+
+
+def test_frame_meta_keeps_failed_pending():
+    pending = {**_PENDING, "state": "failed"}
+    assert select_frame_meta(_meta_with(pending=pending))["pending"] == pending
+
+
+def test_frame_meta_drops_a_bad_pending_alone():
+    bad = [
+        {**_PENDING, "seq": True},
+        {**_PENDING, "seq": -1},
+        {**_PENDING, "seq": "13"},
+        {**_PENDING, "id": "../x.jpg"},
+        {**_PENDING, "id": 5},
+        {**_PENDING, "since": "x" * 41},
+        {**_PENDING, "since": 5},
+        {**_PENDING, "state": "stuck"},
+        {**_PENDING, "state": "waiting", "reason": "weather"},
+        {**_PENDING, "state": "waiting", "reason": None},
+        {**_PENDING, "reason": "music"},
+        {k: v for k, v in _PENDING.items() if k != "since"},
+        "not an object",
+    ]
+    for pending in bad:
+        got = select_frame_meta(_meta_with(pending=pending, applied_seq=3))
+        assert got == _meta_with(applied_seq=3), pending
+
+
+def test_frame_meta_drops_a_bad_applied_seq_alone():
+    for value in (True, -1, "3", 1.5, None):
+        got = select_frame_meta(_meta_with(pending=dict(_PENDING), applied_seq=value))
+        assert got == _meta_with(pending=_PENDING), value
+
+
+def test_frame_meta_still_drops_unknown_keys_with_the_new_fields():
+    pending = {**_PENDING, "extra": "x"}
+    got = select_frame_meta(_meta_with(pending=pending, secret="x"))
+    assert got == _meta_with(pending=_PENDING)
