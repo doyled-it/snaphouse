@@ -1,7 +1,7 @@
 // The panel's Garage screen: the door state on the left, one tall two-tap
 // button on the right whose fill shows how closed the door is.
 import { garageView } from "./garage-model.js";
-import { armState, garageButton, garageFill } from "./panel-garage-model.js";
+import { armState, garageButton, garageFill, glideOpen, glideRate } from "./panel-garage-model.js";
 import { button, el, setText } from "./panel-dom.js";
 
 export function createGarageScreen(panel) {
@@ -26,6 +26,58 @@ export function createGarageScreen(panel) {
   let lastState = null;
   let movingSince = 0;
   let shownFill = -2;
+  // The glide while the door moves with a known position (see glideOpen).
+  let report = null; // last { open, ms } the opener reported
+  let prevReport = null;
+  let rate = 0;
+  let glideDir = 0;
+  let shownOpen = null;
+  let raf = 0;
+
+  function drawFill(fill) {
+    if (shownFill !== fill) {
+      shownFill = fill;
+      level.style.clipPath = `inset(${(1 - fill) * 100}% 0 0 0)`;
+    }
+  }
+
+  function glideFrame() {
+    raf = 0;
+    if (!glideDir || !report || (arm && arm.armed)) return;
+    shownOpen = glideOpen(report, glideDir, rate, Date.now(), shownOpen);
+    drawFill(1 - shownOpen);
+    const pct = Math.round((glideDir > 0 ? shownOpen : 1 - shownOpen) * 100);
+    setText(label, `${glideDir > 0 ? "Opening" : "Closing"}, ${pct}%`);
+    raf = requestAnimationFrame(glideFrame);
+  }
+
+  function stopGlide() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    glideDir = 0;
+    report = null;
+    prevReport = null;
+    shownOpen = null;
+  }
+
+  // Track the opener's reports while the door moves; true while gliding.
+  function followReports(doc) {
+    const dir = doc.state === "opening" ? 1 : doc.state === "closing" ? -1 : 0;
+    if (!dir || typeof doc.position !== "number") {
+      stopGlide();
+      return false;
+    }
+    if (dir !== glideDir) stopGlide();
+    glideDir = dir;
+    const open = Math.max(0, Math.min(1, doc.position / 100));
+    if (!report || report.open !== open) {
+      prevReport = report;
+      report = { open, ms: Date.now() };
+      rate = glideRate(prevReport, report);
+    }
+    if (!raf) raf = requestAnimationFrame(glideFrame);
+    return true;
+  }
 
   function view() {
     const doc = host.state.garage;
@@ -71,12 +123,9 @@ export function createGarageScreen(panel) {
     const armed = arm.armed;
     main.dataset.armed = armed ? "true" : "false";
     main.disabled = b.disabled && !armed;
-    const pct = f.fill === null ? 0 : f.fill;
-    if (shownFill !== pct) {
-      shownFill = pct;
-      level.style.clipPath = `inset(${(1 - pct) * 100}% 0 0 0)`;
-    }
     level.hidden = f.fill === null;
+    if (followReports(doc) && !armed) return; // glideFrame draws the fill and label
+    drawFill(f.fill === null ? 0 : f.fill);
     setText(label, armed ? arm.label : f.text || (b.action === "close" ? "Close" : b.action === "open" ? "Open" : ""));
   }
 

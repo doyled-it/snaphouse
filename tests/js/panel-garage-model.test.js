@@ -106,3 +106,37 @@ test("armState: a disabled button never arms", () => {
   const a = armState(null, { type: "tap", action: "open", disabled: true }, 0);
   assert.deepEqual([a.armed, a.send], [false, false]);
 });
+
+// ---- glide: the fill moves between the opener's position reports ----
+import { GLIDE_AHEAD, glideRate, glideOpen } from "../../roles/room_picker/files/site/panel-garage-model.js";
+
+test("glideRate uses the observed speed between two reports, else the usual travel time", () => {
+  assert.equal(glideRate(null, { open: 0.1, ms: 1000 }), 1 / TRAVEL_MS);
+  // 20 points in 2 s: 0.1 per second.
+  const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-12, `${a} vs ${b}`);
+  near(glideRate({ open: 0.1, ms: 1000 }, { open: 0.3, ms: 3000 }), 0.2 / 2000);
+  // Closing gives the same positive speed.
+  near(glideRate({ open: 0.6, ms: 0 }, { open: 0.4, ms: 2000 }), 0.2 / 2000);
+  // No time between reports, or no movement: fall back.
+  assert.equal(glideRate({ open: 0.1, ms: 1000 }, { open: 0.3, ms: 1000 }), 1 / TRAVEL_MS);
+  assert.equal(glideRate({ open: 0.3, ms: 0 }, { open: 0.3, ms: 2000 }), 1 / TRAVEL_MS);
+  // Absurd speeds are clamped to 5 to 40 s for a full travel.
+  assert.equal(glideRate({ open: 0, ms: 0 }, { open: 0.9, ms: 100 }), 1 / 5000);
+  assert.equal(glideRate({ open: 0, ms: 0 }, { open: 0.01, ms: 10000 }), 1 / 40000);
+});
+
+test("glideOpen moves ahead of the last report at the rate, capped and never backwards", () => {
+  const rate = 1 / 10000; // 10 s full travel
+  // Opening: 1 s after a report at 40% open, 50%.
+  assert.ok(Math.abs(glideOpen({ open: 0.4, ms: 0 }, 1, rate, 1000, 0.4) - 0.5) < 1e-9);
+  // Never more than GLIDE_AHEAD past the report.
+  assert.equal(glideOpen({ open: 0.4, ms: 0 }, 1, rate, 60000, 0.4), 0.4 + GLIDE_AHEAD);
+  // Closing goes down.
+  assert.ok(Math.abs(glideOpen({ open: 0.6, ms: 0 }, -1, rate, 1000, 0.6) - 0.5) < 1e-9);
+  // Never backwards: a report behind what is already shown holds the shown value.
+  assert.equal(glideOpen({ open: 0.5, ms: 0 }, 1, rate, 0, 0.55), 0.55);
+  assert.equal(glideOpen({ open: 0.5, ms: 0 }, -1, rate, 0, 0.45), 0.45);
+  // Clamped to the ends.
+  assert.equal(glideOpen({ open: 0.98, ms: 0 }, 1, rate, 5000, 0.98), 1);
+  assert.equal(glideOpen({ open: 0.02, ms: 0 }, -1, rate, 5000, 0.02), 0);
+});
