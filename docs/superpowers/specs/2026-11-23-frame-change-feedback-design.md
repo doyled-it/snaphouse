@@ -67,7 +67,7 @@ Owner picked B on 2026-11-23.
 
 - `frame.json` gains an optional `pending` object, additive to the "Frame mirror
   file" contract: `{"seq": <command seq>, "id": <piece id>, "since": iso,
-  "on_screen": bool}`. The frame writes it (the same atomic write) on the cycle it
+  "state", "reason"}` (call 1). The frame writes it (the same atomic write) on the cycle it
   applies a next, previous, or show command for this frame, before the push.
   `id` is the piece id the rotation moved to (the same id as art-index and
   art-history). See call 1 for how the frame says it will not draw art now.
@@ -79,10 +79,8 @@ Owner picked B on 2026-11-23.
 ### Hub (snaphouse)
 
 - When `snaphouse-artadmin` accepts a next, previous, or show command, the hub
-  republishes the affected frame's mirror (`frame.png`, `frame.json`,
-  `art-history.json`) every 2 s until `frame.json` has no `pending` for that
-  command's seq and its `updated_at` is newer than the command, or 90 s pass,
-  whichever comes first. Same hardening as the existing republish (no
+  republishes the affected frame's mirror every 2 s until its `applied_seq`
+  reaches the command's seq, or 90 s pass (calls 6 and 7). Same hardening as the existing republish (no
   redirects, size caps, shape checks, atomic writes, last good copy kept).
 - The once-a-minute timer stays as it is.
 - The command reply gives the page the command's `seq` (if it does not already)
@@ -99,17 +97,18 @@ States for one frame after a tap:
 2. **Changing**: when the republished `frame.json` carries `pending` with the
    command's seq, the frame area shows the target picture (its thumbnail from
    art-index, dimmed slightly or framed) with "Changing to <title>" and a gentle
-   progress indicator (the push takes about 30 s). If `on_screen` is false, it
+   progress indicator (the push takes about 30 s). If `state` is `waiting`, it
    says "Up next: <title>. The frame shows <music, the game, the pinned
-   screen> right now." and ends there.
-3. **Now showing**: when `frame.json` loses `pending` and its `updated_at` moves
-   past the tap, the new mirror replaces the old one with "Now showing <title>"
+   screen> right now." (from `reason`) and ends there. If `state` is `failed`, it
+   says "The frame could not show it. Try again." and ends there.
+3. **Now showing**: when `frame.json`'s `applied_seq` reaches the command's seq
+   (call 2), the new mirror replaces the old one with "Now showing <title>"
    for 3 s, then the screen returns to normal.
 4. **No confirmation**: if nothing confirms in 90 s, "The frame did not confirm
    the change. It may be busy or offline." and the screen returns to normal.
 
-- While a change is in flight the page reads that frame's republished files every
-  2 s, back to `FRAME_MS` when it ends.
+- While a change is in flight the page reads that frame's republished
+  `frame.json` every 2 s (call 7), back to `FRAME_MS` when it ends.
 - Taps on Next or Back during a change are allowed; each new command restarts
   the flow with its own seq.
 - Panel sizes follow the panel layout design (text 20 px and up, buttons 72 px
@@ -118,13 +117,10 @@ States for one frame after a tap:
 ## Left to the builder
 
 - Where in nightstand's loop to write `pending` (after `Rotation.apply`, before
-  the push) and how `on_screen` is derived from the decision.
-- How the hub's fast republish runs (a short-lived task in the artadmin service
-  or a triggered one-shot of the house-status poller), as long as the hardening
-  is shared and only the affected frame is polled.
+  the push) and how `state` and `reason` are derived from the decision.
 - The exact visual treatment of the Changing state, within the sizes above.
 - Tests: nightstand unit tests for `pending` (written on a command, cleared on the
-  push, `on_screen` false cases); hub tests for the fast republish (stops on
+  push, the waiting and failed cases); hub tests for the fast republish (stops on
   confirm, stops at 90 s, polls only the one frame); page model tests for the
   state machine (sent, changing, now showing, no confirmation, a second tap).
 - Update both repos' AGENTS.md and the hub's `docs/cross-repo-features.md`
