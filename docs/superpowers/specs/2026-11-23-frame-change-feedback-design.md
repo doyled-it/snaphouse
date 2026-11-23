@@ -1,6 +1,6 @@
 # Frame change feedback design
 
-Date: 2026-11-23. Status: draft for owner approval.
+Date: 2026-11-23. Status: draft for owner approval (builder check done).
 
 ## Intent
 
@@ -70,16 +70,11 @@ Owner picked B on 2026-11-23.
   "on_screen": bool}`. The frame writes it (the same atomic write) on the cycle it
   applies a next, previous, or show command for this frame, before the push.
   `id` is the piece id the rotation moved to (the same id as art-index and
-  art-history). `on_screen` is false when the frame will not draw art now (a
-  live game, a now-playing screen, a pin on something else, or the settle wait),
-  so the page can say so instead of waiting.
+  art-history). See call 1 for how the frame says it will not draw art now.
 - After the push that shows that piece, the frame writes `frame.json` without
   `pending` (with the new `updated_at` and `screen`), as it does today. If the
-  command does not lead to an art push (`on_screen` false), `pending` stays until
-  the next mirror write.
-- When `pending` is written, the frame also stops waiting the rest of its
-  `check_seconds` sleep before the push it already does at once for a command
-  (no change in behavior if it already pushes right away; the builder confirms).
+  command does not lead to an art push, `pending` stays until the next mirror
+  write (call 1).
 
 ### Hub (snaphouse)
 
@@ -134,3 +129,51 @@ States for one frame after a tap:
   state machine (sent, changing, now showing, no confirmation, a second tap).
 - Update both repos' AGENTS.md and the hub's `docs/cross-repo-features.md`
   ("Frame mirror file" gains `pending`).
+
+## Calls made after the builder check
+
+Level 1's calls after a builder read the draft; they refine the sections above
+and win where they differ.
+
+1. **`pending` carries a state, not just `on_screen`.** Shape:
+   `{"seq", "id", "since", "state", "reason"}`. `state` is `changing` (the frame
+   will push this piece now), `waiting` (the piece is next but the frame is not
+   drawing art now; `reason` is one of `music`, `game`, `pin`, `settling`), or
+   `failed` (the push raised; `reason` null). A command redraw already bypasses
+   quiet hours, so quiet hours is not a reason. The frame clears `pending` on its
+   next mirror write and replaces it when a newer command applies.
+2. **Confirmation is by sequence, never by clocks.** `frame.json` gains
+   `applied_seq`: the seq of the latest command whose piece is on the panel,
+   written on every mirror write after a command push (absent until the first).
+   The page treats a change as done when `applied_seq >= seq`. No comparison of
+   `updated_at` with the tap time (the Pis' clocks can drift).
+3. **The hub's mirror validator passes the new fields, checked.**
+   `select_frame_meta` keeps `pending` only when `seq` is a non-negative int,
+   `id` passes the existing piece-id check, `since` is a string of at most 40
+   characters, `state` and `reason` are from the lists above; otherwise it drops
+   `pending` alone. `applied_seq` must be a non-negative int or it is dropped.
+   The rest of the file's checks are unchanged.
+4. **Matching a command to frames.** The page always sends `frame` with Next,
+   Back and Show (the Frames screen has a chosen frame), and takes the seq from
+   the command reply (the builder confirms it is already returned; if not, the
+   reply gains it). A command with `frame: null` (none from this page, but older
+   clients) fast-polls every frame host. A frame that never applies the seq (for
+   example a restart that only records it) ends in the 90 s "did not confirm"
+   message; that is accepted.
+5. **Title and thumbnail** come from the page's art index (loaded for the gallery
+   already; the Frames screen loads it if it has not). An id missing from the
+   index shows "the next picture" with no thumbnail.
+6. **The fast republish is a separate one-shot, not inside artadmin.** A systemd
+   path unit watches `art-control.json` (artadmin writes it on every command) and
+   starts `snaphouse-frame-follow.service`, running as the same user as the
+   house-status poller with the same write access to the frames directory and
+   the same hardening code. It reads the latest command and polls the targeted
+   frame (or every frame for `null`) every 2 s until that frame's `applied_seq`
+   reaches the seq or 90 s pass from the latest command. A new command while it
+   runs extends the window to 90 s from the new command (it re-reads the control
+   file each loop; the path unit does not start a second copy).
+7. **Cheap polling.** The hub's follower republishes `frame.png` only when
+   `frame.json`'s `updated_at` changed. The page reads `frame.json` every 2 s
+   during a change and fetches `frame.png` only when `updated_at` changes.
+8. The draft's item about skipping the frame's sleep is dropped: the frame
+   already acts on a command in the same 10 s cycle.
