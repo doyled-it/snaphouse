@@ -28,7 +28,8 @@ export function createGarageScreen(panel) {
   let shownFill = -2;
   // The glide while the door moves with a known position (see glideOpen).
   let report = null; // last { open, ms } the opener reported
-  let prevReport = null;
+  let first = null; // first report after the door actually started to move
+  let startOpen = null; // the position when the movement began
   let rate = 0;
   let glideDir = 0;
   let shownOpen = null;
@@ -37,13 +38,14 @@ export function createGarageScreen(panel) {
   function drawFill(fill) {
     if (shownFill !== fill) {
       shownFill = fill;
-      level.style.clipPath = `inset(${(1 - fill) * 100}% 0 0 0)`;
+      // The door hangs from the top and clears from the bottom up, like the real one.
+      level.style.clipPath = `inset(0 0 ${(1 - fill) * 100}% 0)`;
     }
   }
 
   function glideFrame() {
     raf = 0;
-    if (!glideDir || !report || (arm && arm.armed)) return;
+    if (!glideDir || !report || !first || (arm && arm.armed)) return;
     shownOpen = glideOpen(report, glideDir, rate, Date.now(), shownOpen);
     drawFill(1 - shownOpen);
     const pct = Math.round((glideDir > 0 ? shownOpen : 1 - shownOpen) * 100);
@@ -56,7 +58,8 @@ export function createGarageScreen(panel) {
     raf = 0;
     glideDir = 0;
     report = null;
-    prevReport = null;
+    first = null;
+    startOpen = null;
     shownOpen = null;
   }
 
@@ -70,11 +73,15 @@ export function createGarageScreen(panel) {
     if (dir !== glideDir) stopGlide();
     glideDir = dir;
     const open = Math.max(0, Math.min(1, doc.position / 100));
+    if (startOpen === null) startOpen = open;
     if (!report || report.open !== open) {
-      prevReport = report;
       report = { open, ms: Date.now() };
-      rate = glideRate(prevReport, report);
+      // The opener holds the start position through its pre-close warning; the
+      // glide waits for the first real movement.
+      if (!first && open !== startOpen) first = report;
+      rate = glideRate(first, report, dir);
     }
+    if (!first) return false; // not moving yet: the static fill and label stand
     if (!raf) raf = requestAnimationFrame(glideFrame);
     return true;
   }

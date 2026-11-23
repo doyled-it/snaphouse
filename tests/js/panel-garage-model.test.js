@@ -108,35 +108,46 @@ test("armState: a disabled button never arms", () => {
 });
 
 // ---- glide: the fill moves between the opener's position reports ----
-import { GLIDE_AHEAD, glideRate, glideOpen } from "../../roles/room_picker/files/site/panel-garage-model.js";
+import {
+  GLIDE_AHEAD,
+  OPEN_TRAVEL_MS,
+  CLOSE_TRAVEL_MS,
+  glideRate,
+  glideOpen,
+} from "../../roles/room_picker/files/site/panel-garage-model.js";
 
-test("glideRate uses the observed speed between two reports, else the usual travel time", () => {
-  assert.equal(glideRate(null, { open: 0.1, ms: 1000 }), 1 / TRAVEL_MS);
-  // 20 points in 2 s: 0.1 per second.
-  const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-12, `${a} vs ${b}`);
-  near(glideRate({ open: 0.1, ms: 1000 }, { open: 0.3, ms: 3000 }), 0.2 / 2000);
-  // Closing gives the same positive speed.
-  near(glideRate({ open: 0.6, ms: 0 }, { open: 0.4, ms: 2000 }), 0.2 / 2000);
-  // No time between reports, or no movement: fall back.
-  assert.equal(glideRate({ open: 0.1, ms: 1000 }, { open: 0.3, ms: 1000 }), 1 / TRAVEL_MS);
-  assert.equal(glideRate({ open: 0.3, ms: 0 }, { open: 0.3, ms: 2000 }), 1 / TRAVEL_MS);
-  // Absurd speeds are clamped to 5 to 40 s for a full travel.
-  assert.equal(glideRate({ open: 0, ms: 0 }, { open: 0.9, ms: 100 }), 1 / 5000);
-  assert.equal(glideRate({ open: 0, ms: 0 }, { open: 0.01, ms: 10000 }), 1 / 40000);
+const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} vs ${b}`);
+
+test("glideRate averages over the whole movement, else this door's usual travel", () => {
+  // Before the door has moved (first equals latest), the usual travel time per direction.
+  near(glideRate(null, { open: 0, ms: 0 }, 1), 1 / OPEN_TRAVEL_MS);
+  near(glideRate({ open: 1, ms: 0 }, { open: 1, ms: 0 }, -1), 1 / CLOSE_TRAVEL_MS);
+  // Average since the first moving report, not the last step: 0.09 to 0.56 in 5 s.
+  near(glideRate({ open: 0.09, ms: 1000 }, { open: 0.56, ms: 6000 }, 1), 0.47 / 5000);
+  // Jittery single steps do not matter: only first and latest count.
+  near(glideRate({ open: 0.96, ms: 0 }, { open: 0.61, ms: 5000 }, -1), 0.35 / 5000);
+  // Under 1.5 s of movement is too little to trust: the usual travel.
+  near(glideRate({ open: 0.09, ms: 1000 }, { open: 0.19, ms: 2000 }, 1), 1 / OPEN_TRAVEL_MS);
+  // Absurd averages are clamped to a 5 to 40 s full travel.
+  near(glideRate({ open: 0, ms: 0 }, { open: 0.9, ms: 2000 }, 1), 1 / 5000);
+  near(glideRate({ open: 0, ms: 0 }, { open: 0.01, ms: 4000 }, 1), 1 / 40000);
 });
 
-test("glideOpen moves ahead of the last report at the rate, capped and never backwards", () => {
+test("glideOpen moves past the last report, easing off near the limit, never backwards", () => {
   const rate = 1 / 10000; // 10 s full travel
-  // Opening: 1 s after a report at 40% open, 50%.
-  assert.ok(Math.abs(glideOpen({ open: 0.4, ms: 0 }, 1, rate, 1000, 0.4) - 0.5) < 1e-9);
-  // Never more than GLIDE_AHEAD past the report.
-  assert.equal(glideOpen({ open: 0.4, ms: 0 }, 1, rate, 60000, 0.4), 0.4 + GLIDE_AHEAD);
+  // Early on it tracks the rate closely: 0.5 s after 40% is a little under 45%.
+  const half = glideOpen({ open: 0.4, ms: 0 }, 1, rate, 500, 0.4);
+  assert.ok(half > 0.44 && half < 0.45, String(half));
+  // It eases off instead of stopping dead: always below the limit, still rising.
+  const a = glideOpen({ open: 0.4, ms: 0 }, 1, rate, 3000, 0.4);
+  const b = glideOpen({ open: 0.4, ms: 0 }, 1, rate, 4000, 0.4);
+  assert.ok(a < b && b < 0.4 + GLIDE_AHEAD, `${a} ${b}`);
   // Closing goes down.
-  assert.ok(Math.abs(glideOpen({ open: 0.6, ms: 0 }, -1, rate, 1000, 0.6) - 0.5) < 1e-9);
-  // Never backwards: a report behind what is already shown holds the shown value.
+  assert.ok(glideOpen({ open: 0.6, ms: 0 }, -1, rate, 1000, 0.6) < 0.6);
+  // Never backwards against what is already drawn.
   assert.equal(glideOpen({ open: 0.5, ms: 0 }, 1, rate, 0, 0.55), 0.55);
   assert.equal(glideOpen({ open: 0.5, ms: 0 }, -1, rate, 0, 0.45), 0.45);
   // Clamped to the ends.
-  assert.equal(glideOpen({ open: 0.98, ms: 0 }, 1, rate, 5000, 0.98), 1);
-  assert.equal(glideOpen({ open: 0.02, ms: 0 }, -1, rate, 5000, 0.02), 0);
+  assert.equal(glideOpen({ open: 0.99, ms: 0 }, 1, rate, 9000, 0.99), 1);
+  assert.equal(glideOpen({ open: 0.01, ms: 0 }, -1, rate, 9000, 0.01), 0);
 });
