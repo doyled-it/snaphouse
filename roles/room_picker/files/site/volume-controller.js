@@ -133,3 +133,10 @@ export function keyStep(key) {
       return null;
   }
 }
+
+// A vertical track: the top is 100, the bottom 0 (the panel's room columns).
+export function valueFromPointerVertical(clientY, top, height) {
+  if (!(height > 0)) return 0;
+  const pct = Math.round((1 - (clientY - top) / height) * 100);
+  return Math.max(0, Math.min(100, pct));
+}

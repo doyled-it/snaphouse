@@ -1806,6 +1806,13 @@ export function pairInstruction(speakerName) {
   return `Now open Bluetooth on this phone, tap Pair new device, choose ${speaker}, and tap Pair. You can stay there; come back here when it's done.`;
 }
 
+// The pairing instruction as the wall panel says it: the panel is not the phone,
+// so "on your phone". Lives here, not in panel-model.js, so phones never fetch a
+// panel module (rooms.js imports this one eagerly).
+export function pairInstructionPanel(speakerName) {
+  return pairInstruction(speakerName).replace("on this phone", "on your phone");
+}
+
 // Who is pairing right now, once the hub has accepted a phone and the window is
 // still finishing; null before that and in every other state.
 export function pairProgress(parsed) {

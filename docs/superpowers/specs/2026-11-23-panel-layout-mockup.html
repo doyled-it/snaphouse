@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel Mockup</title>
+<style>
+  /* Throwaway spike: panel layout mockups at the panel's 800x480. Not product code. */
+  :root {
+    --bg: #0a1120; --card: #131b2c; --card2: #1a2436; --line: #26324a;
+    --text: #eef2f9; --muted: #a3aec4; --accent: #8db8ff; --ink: #0b1a33;
+    --warn: #ffb86b; --bad: #ff8a8a; --badbg: #3a1f26; --ok: #8fd19e;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: #05080f; color: var(--text);
+    font-family: -apple-system, system-ui, "Inter", "Segoe UI", sans-serif; }
+  body { padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .switcher { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 860px; }
+  .switcher button { font: inherit; font-size: 15px; padding: 8px 14px; border-radius: 999px;
+    border: 1px solid var(--line); background: #111827; color: var(--muted); cursor: pointer; }
+  .switcher button.on { background: var(--accent); color: var(--ink); border-color: var(--accent); }
+  .switcher.vars button { font-size: 14px; padding: 6px 12px; }
+  .note { color: #7d8aa3; font-size: 14px; max-width: 800px; text-align: center; line-height: 1.45; min-height: 20px; }
+
+  .panel { width: 800px; height: 480px; flex: none; overflow: hidden; position: relative;
+    background: radial-gradient(120% 90% at 85% 110%, #1f1a4a 0%, transparent 55%), var(--bg);
+    border-radius: 6px; outline: 10px solid #000; display: flex; user-select: none; margin-top: 8px; }
+  .rail { width: 96px; flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px;
+    border-right: 1px solid var(--line); background: rgba(0,0,0,.25); }
+  .rail button { flex: 1; border: 0; border-radius: 16px; background: transparent; color: var(--muted);
+    font: inherit; font-size: 17px; font-weight: 600; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
+  .rail button.on { background: var(--card2); color: var(--accent); }
+  .rail svg { width: 32px; height: 32px; }
+  .main { flex: 1; display: flex; flex-direction: column; padding: 12px 14px 14px; gap: 12px; min-width: 0; }
+
+  .strip { height: 48px; flex: none; display: flex; align-items: center; gap: 22px; font-size: 24px; }
+  .strip b { font-size: 30px; font-weight: 700; }
+  .strip .dim { color: var(--muted); }
+  .strip .sep { width: 1px; height: 28px; background: var(--line); }
+  .strip .grow { flex: 1; }
+  .strip .clock { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .strip .back { height: 48px; padding: 0 18px 0 10px; font-size: 22px; font-weight: 600; display: flex; gap: 6px; }
+  .strip .back svg { width: 28px; height: 28px; }
+
+  .btn { border: 0; border-radius: 20px; background: var(--card2); color: var(--text); font: inherit;
+    display: grid; place-items: center; cursor: pointer; transition: transform .08s, background .08s; }
+  .btn:active { transform: scale(.95); }
+  .btn svg { width: 36px; height: 36px; }
+  .btn.primary { background: var(--accent); color: var(--ink); }
+  .btn.danger { background: var(--badbg); color: var(--bad); }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 22px; }
+  .h { font-size: 20px; color: var(--muted); font-weight: 600; }
+  .view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+  .hide { display: none !important; }
+  .art { border-radius: 12px; flex: none;
+    background: conic-gradient(from 210deg at 35% 40%, #ff7a59, #ffd36b, #6bd4ff, #a06bff, #ff7a59); }
+
+  /* Music */
+  .bar { height: 112px; flex: none; display: flex; align-items: center; gap: 14px; padding: 12px 14px; }
+  .bar .art { width: 86px; height: 86px; }
+  .bar .meta { flex: 1; min-width: 0; }
+  .title { font-size: 26px; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .artist { font-size: 21px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar .btn { width: 84px; height: 84px; }
+  .bar .idletxt { font-size: 21px; color: var(--muted); line-height: 1.3; }
+  .cols { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; min-height: 0; }
+  .col { display: flex; flex-direction: column; padding: 12px; gap: 10px; }
+  .col .name { font-size: 24px; font-weight: 700; text-align: center; }
+  .col .row { flex: 1; display: grid; grid-template-columns: 1fr 72px; gap: 10px; min-height: 0; }
+  .col .stack { display: flex; flex-direction: column; gap: 10px; }
+  .col .stack .btn { flex: 1; }
+  .fill { position: relative; border-radius: 16px; background: var(--card2); overflow: hidden; cursor: pointer; }
+  .fill i { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(#b7b2ff, #8a84ea); }
+  .fill span { position: absolute; inset: auto 0 10px; text-align: center; font-size: 28px; font-weight: 800; color: var(--ink); }
+  .col.off .fill i { background: #39445c; }
+  .col.off .fill span { color: var(--muted); }
+  .col .power { height: 56px; font-size: 22px; font-weight: 700; }
+  .col:not(.off) .power { background: var(--accent); color: var(--ink); }
+
+  /* Climate */
+  .grid2 { flex: 1; display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; min-height: 0; }
+  .big { padding: 18px 24px; display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+  .temp { font-size: 112px; font-weight: 800; line-height: 1; letter-spacing: -2px; }
+  .mode { font-size: 26px; }
+  .mode b { color: var(--accent); }
+  .who { font-size: 21px; color: var(--muted); }
+  .who b { color: var(--text); }
+  .set { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .set .h { text-align: center; }
+  .set .value { font-size: 64px; font-weight: 800; text-align: center; line-height: 1; }
+  .pm { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; }
+  .pm .btn { font-size: 52px; font-weight: 300; }
+  .foot { font-size: 19px; color: var(--muted); text-align: center; }
+  .dial { flex: 1; display: grid; grid-template-columns: 150px 1fr 150px; gap: 14px; align-items: stretch; }
+  .dial .btn { font-size: 64px; font-weight: 300; }
+  .dial .mid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+  .dial .mid .h { font-size: 21px; }
+  .dial .mid .temp { font-size: 140px; }
+
+  /* Garage */
+  .door { font-size: 88px; font-weight: 800; line-height: 1; letter-spacing: -1px; }
+  .door.open { color: var(--warn); }
+  .since { font-size: 24px; color: var(--muted); }
+  .gbtn { font-size: 30px; font-weight: 800; }
+  .gbtn.confirm { background: var(--warn); color: #2a1600; }
+  .recent { padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; }
+  .recent .r { font-size: 21px; display: flex; justify-content: space-between; color: var(--muted); }
+  .recent .r b { color: var(--text); font-weight: 600; }
+
+  /* More */
+  .tiles { flex: 1; display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; gap: 12px; }
+  .tile { padding: 18px 20px; display: flex; align-items: center; justify-content: flex-start; gap: 18px; text-align: left; border-radius: 22px; }
+  .tile svg { width: 44px; height: 44px; color: var(--accent); flex: none; }
+  .tile .t { font-size: 26px; font-weight: 700; }
+  .tile .s { font-size: 19px; color: var(--muted); margin-top: 2px; }
+  .tile .s.warn { color: var(--warn); }
+
+  /* Frame */
+  .ftabs { display: flex; gap: 10px; flex: none; }
+  .ftabs .btn { height: 56px; padding: 0 22px; font-size: 22px; font-weight: 700; }
+  .ftabs .btn.on { background: var(--accent); color: var(--ink); }
+  .fbody { flex: 1; display: grid; grid-template-columns: 1fr 210px; gap: 12px; min-height: 0; }
+  .mirror { border-radius: 16px; position: relative;
+    background: linear-gradient(160deg, #d9cfb7, #8c8370 60%, #5d5648); }
+  .mirror span { position: absolute; left: 12px; bottom: 10px; font-size: 19px; color: #1b1b1b;
+    background: rgba(255,255,255,.75); padding: 3px 10px; border-radius: 8px; }
+  .fside { display: flex; flex-direction: column; gap: 10px; }
+  .fside .btn { flex: 1; font-size: 23px; font-weight: 700; }
+
+  /* Gallery */
+  .gal { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; min-height: 0; }
+  .pic { display: flex; flex-direction: column; gap: 8px; cursor: pointer; min-width: 0; }
+  .pic .img { flex: 1; border-radius: 16px; }
+  .pic .t { font-size: 20px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pager { flex: none; display: grid; grid-template-columns: 120px 1fr 120px; gap: 12px; align-items: center; height: 72px; }
+  .pager .btn { height: 72px; }
+  .pager .info { text-align: center; font-size: 21px; color: var(--muted); }
+  .viewer { flex: 1; display: grid; grid-template-columns: 1fr 230px; gap: 12px; min-height: 0; }
+  .viewer .img { border-radius: 16px; }
+  .viewer .side { display: flex; flex-direction: column; gap: 10px; }
+  .viewer .side .t { font-size: 24px; font-weight: 700; line-height: 1.2; }
+  .viewer .side .s { font-size: 20px; color: var(--muted); }
+  .viewer .side .btn { height: 80px; font-size: 23px; font-weight: 700; }
+  .viewer .side .grow { flex: 1; }
+
+  /* Bluetooth */
+  .list { flex: 1; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .item { padding: 14px 16px 14px 22px; display: flex; align-items: center; gap: 12px; }
+  .item .grow { flex: 1; }
+  .item .t { font-size: 26px; font-weight: 700; }
+  .item .s { font-size: 20px; color: var(--muted); }
+  .item .s.ok { color: var(--ok); }
+  .item .btn { height: 72px; font-size: 22px; font-weight: 700; padding: 0 22px; }
+  .pairbig { flex: none; height: 96px; font-size: 28px; font-weight: 800; }
+</style>
+</head>
+<body>
+  <div class="switcher" id="pages"></div>
+  <div class="switcher vars" id="vars"></div>
+  <p class="note" id="note"></p>
+
+  <div class="panel">
+    <nav class="rail" id="rail">
+      <button data-page="music"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Music</button>
+      <button data-page="climate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>Climate</button>
+      <button data-page="garage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l9-6 9 6v12"/><path d="M7 21v-8h10v8"/><path d="M7 17h10"/></svg>Garage</button>
+      <button data-page="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>More</button>
+    </nav>
+
+    <main class="main">
+      <div class="strip" id="strip">
+        <button class="btn back hide" id="back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>More</button>
+        <span><b>68°</b> <span class="dim">cooling to 74°</span></span>
+        <span class="sep"></span>
+        <span>Garage <b style="font-size:24px" id="stripdoor">closed</b></span>
+        <span class="grow"></span>
+        <span class="clock" id="clock">9:41</span>
+      </div>
+
+      <!-- MUSIC -->
+      <section class="view" data-v="music:playing">
+        <div class="card bar">
+          <div class="art"></div>
+          <div class="meta"><div class="title">Song title goes here</div><div class="artist">Artist name</div></div>
+          <button class="btn" aria-label="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM20 6v12L9.5 12z"/></svg></button>
+          <button class="btn primary play" aria-label="Pause"></button>
+          <button class="btn" aria-label="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6v12l10.5-6z"/></svg></button>
+        </div>
+        <div class="cols"></div>
+      </section>
+      <section class="view" data-v="music:idle">
+        <div class="card bar">
+          <div class="meta"><div class="title">Nothing playing</div>
+            <div class="idletxt">On your phone, pick the house in AirPlay or connect over Bluetooth, then press play.</div></div>
+        </div>
+        <div class="cols"></div>
+      </section>
+
+      <!-- CLIMATE -->
+      <section class="view" data-v="climate:split">
+        <div class="grid2">
+          <div class="card big">
+            <div class="h">Inside now</div>
+            <div class="temp">68°</div>
+            <div class="mode"><b>Cooling</b> to 74°</div>
+            <div class="who">Home: <b>you</b></div>
+          </div>
+          <div class="card set">
+            <div class="h">Comfort, when home</div>
+            <div class="value setpt">74°</div>
+            <div class="pm"><button class="btn sp" data-d="-1">−</button><button class="btn sp" data-d="1">+</button></div>
+            <div class="foot">Away rules live on your phone</div>
+          </div>
+        </div>
+      </section>
+      <section class="view" data-v="climate:center">
+        <div class="card dial" style="padding:14px">
+          <button class="btn sp" data-d="-1">−</button>
+          <div class="mid">
+            <div class="h">Inside <b style="color:var(--text)">68°</b>, cooling to</div>
+            <div class="temp setpt">74°</div>
+            <div class="who">Home: <b>you</b></div>
+          </div>
+          <button class="btn sp" data-d="1">+</button>
+        </div>
+      </section>
+
+      <!-- GARAGE -->
+      <section class="view" data-v="garage:split">
+        <div class="grid2">
+          <div class="card big">
+            <div class="h">Garage door</div>
+            <div class="door">CLOSED</div>
+            <div class="since">for 1 h 32 min</div>
+          </div>
+          <div class="card set" style="padding:14px">
+            <button class="btn primary gbtn" style="flex:1">Open</button>
+          </div>
+        </div>
+      </section>
+      <section class="view" data-v="garage:stack">
+        <div class="card big" style="flex:none;flex-direction:row;align-items:center;justify-content:space-between;padding:18px 18px 18px 24px">
+          <div><div class="door">CLOSED</div><div class="since">for 1 h 32 min</div></div>
+          <button class="btn primary gbtn" style="width:230px;height:120px">Open</button>
+        </div>
+        <div class="card recent" style="flex:1">
+          <div class="h">Recent</div>
+          <div class="r"><b>Closed</b><span>7:58 AM</span></div>
+          <div class="r"><b>Opened</b><span>7:55 AM</span></div>
+          <div class="r"><b>Closed</b><span>Yesterday 6:12 PM</span></div>
+        </div>
+      </section>
+
+      <!-- MORE -->
+      <section class="view" data-v="more:grid">
+        <div class="tiles">
+          <button class="btn tile" data-go="frame"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 21h10"/></svg><div><div class="t">Frames</div><div class="s">2 frames</div></div></button>
+          <button class="btn tile" data-go="gallery"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><div><div class="t">Gallery</div><div class="s">143 pictures</div></div></button>
+          <button class="btn tile" data-go="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10-5 4V3l5 4L7 17"/></svg><div><div class="t">Bluetooth</div><div class="s">Pair a phone, devices</div></div></button>
+          <button class="btn tile" data-go="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><div><div class="t">House health</div><div class="s warn">1 needs attention</div></div></button>
+        </div>
+      </section>
+
+      <!-- FRAME -->
+      <section class="view" data-v="frame:main">
+        <div class="ftabs"><button class="btn on">Nightstand</button><button class="btn">Office</button></div>
+        <div class="fbody">
+          <div class="mirror"><span>What the frame shows now</span></div>
+          <div class="fside">
+            <button class="btn">Back</button>
+            <button class="btn primary">Next picture</button>
+            <button class="btn">Keep this one</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- GALLERY -->
+      <section class="view" data-v="gallery:grid">
+        <div class="gal">
+          <div class="pic" data-open><div class="img" style="background:linear-gradient(135deg,#c9b99a,#5e5444)"></div><div class="t">Artwork title</div></div>
+          <div class="pic" data-open><div class="img" style="background:linear-gradient(135deg,#7aa0c4,#2b3a55)"></div><div class="t">Another artwork</div></div>
+          <div class="pic" data-open><div class="img" style="background:linear-gradient(135deg,#d7a46b,#6b3b2a)"></div><div class="t">A third one</div></div>
+        </div>
+        <div class="pager"><button class="btn" aria-label="Previous page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+          <div class="info">1 to 3 of 143</div>
+          <button class="btn" aria-label="Next page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+      </section>
+      <section class="view" data-v="gallery:viewer">
+        <div class="viewer">
+          <div class="img" style="background:linear-gradient(135deg,#c9b99a,#5e5444)"></div>
+          <div class="side">
+            <div class="t">Artwork title</div>
+            <div class="s">Artist name</div>
+            <div class="grow"></div>
+            <button class="btn primary">Show on the frame</button>
+            <button class="btn backgal">Back to gallery</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- BLUETOOTH -->
+      <section class="view" data-v="settings:bt">
+        <button class="btn primary pairbig">Pair a phone</button>
+        <div class="list">
+          <div class="card item"><div class="grow"><div class="t">Phone one</div><div class="s ok">Connected</div></div>
+            <button class="btn">Disconnect</button><button class="btn danger">Forget</button></div>
+          <div class="card item"><div class="grow"><div class="t">Phone two</div><div class="s">Not connected</div></div>
+            <button class="btn">Connect</button><button class="btn danger">Forget</button></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+<script>
+  const PAGES = {
+    music: { label: "Music", vars: { playing: "Playing", idle: "Nothing playing" },
+      note: "Your pick: rooms as columns. Tap a column at any height to set the volume." },
+    climate: { label: "Climate", vars: { split: "A: big number + setpoint card", center: "B: setpoint in the middle" },
+      note: "Away temperature and timing rules stay on the phone." },
+    garage: { label: "Garage", vars: { split: "A: status + big button", stack: "B: status bar + recent" },
+      note: "The button fill shows how closed the door is and follows it as it moves (sped up to 6 s here). Open asks for a second tap within 4 seconds." },
+    more: { label: "More", vars: { grid: "Four big tiles" }, note: "Tap a tile to go there." },
+    frame: { label: "More: Frames", vars: { main: "Mirror + three buttons" },
+      note: "Frame settings (quiet hours, weather, folders) stay on the phone." },
+    gallery: { label: "More: Gallery", vars: { grid: "Pages of 3", viewer: "One picture" },
+      note: "Paged with big arrows instead of a scrolling list. Tap a picture to open it. Uploads and trash stay on the phone." },
+    settings: { label: "More: Bluetooth", vars: { bt: "Pair + devices" }, note: "" },
+  };
+  let page = "music", variant = "playing";
+  try { const s = JSON.parse(localStorage.getItem("panel-mock") || "null"); if (s && PAGES[s.page] && PAGES[s.page].vars[s.variant]) { page = s.page; variant = s.variant; } } catch (e) {}
+  const hp = location.hash.slice(1).split(":"); if (PAGES[hp[0]]) { page = hp[0]; variant = PAGES[hp[0]].vars[hp[1]] ? hp[1] : Object.keys(PAGES[hp[0]].vars)[0]; }
+
+  const PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+  const PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>';
+  const PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg>';
+  const MINUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/></svg>';
+  let playing = true;
+  const rooms = [{ name: "Living room", on: false, vol: 22 }, { name: "Office", on: true, vol: 49 }, { name: "Bedroom", on: true, vol: 30 }];
+
+  function drawPlay() { document.querySelectorAll(".play").forEach((b) => { b.innerHTML = playing ? PAUSE : PLAY; }); }
+  document.querySelectorAll(".play").forEach((b) => b.addEventListener("click", () => { playing = !playing; drawPlay(); }));
+
+  function drawCols() {
+    document.querySelectorAll(".cols").forEach((el) => {
+      el.innerHTML = "";
+      rooms.forEach((r) => {
+        const c = document.createElement("div");
+        c.className = "card col" + (r.on ? "" : " off");
+        c.innerHTML = `<div class="name">${r.name}</div>
+          <div class="row"><div class="fill"><i style="height:${r.vol}%"></i><span>${r.vol}</span></div>
+          <div class="stack"><button class="btn" aria-label="Louder">${PLUS}</button><button class="btn" aria-label="Quieter">${MINUS}</button></div></div>
+          <button class="btn power">${r.on ? "On" : "Off"}</button>`;
+        const fill = c.querySelector(".fill");
+        fill.addEventListener("click", (e) => {
+          const box = fill.getBoundingClientRect();
+          r.vol = Math.round(Math.max(0, Math.min(1, (box.bottom - e.clientY) / box.height)) * 20) * 5; drawCols();
+        });
+        const [plus, minus] = c.querySelectorAll(".stack .btn");
+        plus.addEventListener("click", () => { r.vol = Math.min(100, r.vol + 5); drawCols(); });
+        minus.addEventListener("click", () => { r.vol = Math.max(0, r.vol - 5); drawCols(); });
+        c.querySelector(".power").addEventListener("click", () => { r.on = !r.on; drawCols(); });
+        el.append(c);
+      });
+    });
+  }
+
+  let setpt = 74;
+  document.querySelectorAll(".sp").forEach((b) => b.addEventListener("click", () => {
+    setpt += Number(b.dataset.d); document.querySelectorAll(".setpt").forEach((e) => { e.textContent = setpt + "°"; });
+  }));
+
+  // Garage: two-step open, back to idle after 4 s. The button's fill shows how
+  // closed the door is (full = closed, empty = open), following its position.
+  // Travel is sped up to 6 s here; a real door takes about 15 s.
+  let pos = 0, dir = 0, armed = null, timer = null;
+  function word() { return dir > 0 ? "OPENING" : dir < 0 ? "CLOSING" : pos >= 100 ? "OPEN" : "CLOSED"; }
+  function drawDoor() {
+    const w = word(), closed = 100 - pos;
+    document.querySelectorAll(".door").forEach((d) => { d.textContent = w; d.classList.toggle("open", w !== "CLOSED"); });
+    document.getElementById("stripdoor").textContent = w.toLowerCase();
+    document.querySelectorAll(".since").forEach((s) => { s.textContent = dir ? `${Math.round(pos)}% open` : "for 1 h 32 min"; });
+    document.querySelectorAll(".gbtn").forEach((b) => {
+      b.classList.toggle("confirm", !!armed);
+      b.disabled = !!dir;
+      b.style.background = armed ? "" : `linear-gradient(to top, var(--accent) ${closed}%, var(--card2) ${closed}%)`;
+      b.style.color = armed ? "" : (closed > 45 ? "var(--ink)" : "var(--text)");
+      b.textContent = armed ? (pos >= 100 ? "Tap to close" : "Tap to open")
+        : dir ? `${dir > 0 ? "Opening" : "Closing"}, ${Math.round(pos)}%` : (pos >= 100 ? "Close" : "Open");
+    });
+  }
+  function travel(d) {
+    dir = d; const start = performance.now(), from = pos, to = d > 0 ? 100 : 0;
+    clearInterval(timer);
+    timer = setInterval(() => {
+      const t = Math.min(1, (performance.now() - start) / 6000);
+      pos = from + (to - from) * t;
+      if (t >= 1) { clearInterval(timer); dir = 0; }
+      drawDoor();
+    }, 100);
+  }
+  document.querySelectorAll(".gbtn").forEach((b) => b.addEventListener("click", () => {
+    if (dir) return;
+    if (armed) { clearTimeout(armed); armed = null; travel(pos >= 100 ? -1 : 1); }
+    else { armed = setTimeout(() => { armed = null; drawDoor(); }, 4000); }
+    drawDoor();
+  }));
+
+  document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
+  document.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => go("gallery", "viewer")));
+  document.querySelectorAll(".backgal").forEach((b) => b.addEventListener("click", () => go("gallery", "grid")));
+  document.getElementById("back").addEventListener("click", () => go("more"));
+  document.querySelectorAll(".rail button").forEach((b) => b.addEventListener("click", () => go(b.dataset.page)));
+
+  function go(p, v) {
+    page = p; variant = v || Object.keys(PAGES[p].vars)[0];
+    try { localStorage.setItem("panel-mock", JSON.stringify({ page, variant })); } catch (e) {}
+    render();
+  }
+  function render() {
+    const pages = document.getElementById("pages"); pages.innerHTML = "";
+    Object.entries(PAGES).forEach(([k, v]) => {
+      const b = document.createElement("button"); b.textContent = v.label; b.className = k === page ? "on" : "";
+      b.onclick = () => go(k); pages.append(b);
+    });
+    const vars = document.getElementById("vars"); vars.innerHTML = "";
+    const vs = PAGES[page].vars;
+    if (Object.keys(vs).length > 1) Object.entries(vs).forEach(([k, v]) => {
+      const b = document.createElement("button"); b.textContent = v; b.className = k === variant ? "on" : "";
+      b.onclick = () => go(page, k); vars.append(b);
+    });
+    document.getElementById("note").textContent = PAGES[page].note;
+    document.querySelectorAll("[data-v]").forEach((s) => s.classList.toggle("hide", s.dataset.v !== `${page}:${variant}`));
+    const top = ["frame", "gallery", "settings"].includes(page) ? "more" : page;
+    document.querySelectorAll(".rail button").forEach((b) => b.classList.toggle("on", b.dataset.page === top));
+    const sub = top === "more" && page !== "more";
+    document.getElementById("back").classList.toggle("hide", !sub);
+    document.getElementById("clock").classList.toggle("hide", sub);
+  }
+
+  function tick() { document.getElementById("clock").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+  tick(); setInterval(tick, 15000);
+  drawPlay(); drawCols(); drawDoor(); render();
+</script>
+</body>
+</html>

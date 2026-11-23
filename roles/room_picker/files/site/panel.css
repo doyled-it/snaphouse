@@ -1,0 +1,719 @@
+/* Wall panel (800x480, device scale factor 1). Every rule is scoped under
+   html[data-panel]; phones never load this file. */
+html[data-panel] body {
+  overflow: hidden;
+  margin: 0;
+  background: oklch(0.2 0.02 var(--h, 255));
+  color: oklch(0.95 0.01 var(--h, 255));
+}
+html[data-panel] body > :not(#p-root):not(.screensaver):not(.toast) {
+  display: none;
+}
+html[data-panel] .p-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  width: 800px;
+  height: 480px;
+  overflow: hidden;
+}
+html[data-panel] .p-rail {
+  display: flex;
+  flex-direction: column;
+  width: 96px;
+  flex: none;
+  background: oklch(0.16 0.02 var(--h, 255));
+}
+html[data-panel] .p-rail-item {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: oklch(0.8 0.02 var(--h, 255));
+  font: inherit;
+}
+html[data-panel] .p-rail-item[aria-current="page"] {
+  background: oklch(0.3 0.06 var(--h, 255));
+  color: oklch(0.98 0.01 var(--h, 255));
+}
+html[data-panel] .p-rail-item:active {
+  background: oklch(0.38 0.08 var(--h, 255));
+}
+html[data-panel] .p-rail-label {
+  font-size: 17px;
+  font-weight: 700;
+}
+html[data-panel] .p-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+html[data-panel] .p-strip {
+  height: 48px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  font-size: 22px;
+}
+html[data-panel] .p-strip-status {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+html[data-panel] .p-strip-temp {
+  font-size: 30px;
+  font-weight: 700;
+}
+html[data-panel] .p-strip-mode,
+html[data-panel] .p-strip-garage,
+html[data-panel] .p-strip-time {
+  font-size: 22px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-strip-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  padding: 0 14px 0 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 24px;
+  font-weight: 700;
+}
+html[data-panel] .p-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 14px 10px;
+  overflow: hidden;
+}
+html[data-panel] button:active {
+  filter: brightness(1.3);
+}
+
+/* ---- Music ---- */
+html[data-panel] .p-music {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+html[data-panel] .p-np {
+  position: relative;
+  height: 112px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px;
+  box-sizing: border-box;
+  border-radius: 16px;
+  background: oklch(0.26 0.04 var(--h, 255));
+  overflow: hidden;
+}
+html[data-panel] .p-np-art {
+  width: 86px;
+  height: 86px;
+  flex: none;
+  border-radius: 10px;
+  object-fit: cover;
+}
+html[data-panel] .p-np-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+html[data-panel] .p-np-title {
+  font-size: 26px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-panel] .p-np-artist {
+  font-size: 21px;
+  color: oklch(0.82 0.02 var(--h, 255));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-panel] .p-np[data-mode="idle"] .p-np-artist {
+  white-space: normal;
+  line-height: 1.2;
+}
+html[data-panel] .p-np-transport {
+  display: flex;
+  gap: 10px;
+  flex: none;
+}
+html[data-panel] .p-np-btn {
+  width: 84px;
+  height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 14px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+}
+html[data-panel] .p-np-play {
+  background: oklch(0.72 0.14 var(--h, 255));
+  color: oklch(0.15 0.02 var(--h, 255));
+}
+html[data-panel] .p-np-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: oklch(0.2 0.02 var(--h, 255));
+}
+html[data-panel] .p-np-progress-fill {
+  width: 100%;
+  height: 100%;
+  background: oklch(0.72 0.14 var(--h, 255));
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+html[data-panel] .p-cols {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 16px;
+  background: oklch(0.26 0.04 var(--h, 255));
+}
+html[data-panel] .p-col.is-greyed {
+  opacity: 0.6;
+}
+html[data-panel] .p-col-name {
+  font-size: 24px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-panel] .p-col-status {
+  min-height: 24px;
+  line-height: 24px;
+  font-size: 20px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-col-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-fill {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 60px;
+  border-radius: 12px;
+  background: oklch(0.18 0.02 var(--h, 255));
+  overflow: hidden;
+  touch-action: none;
+}
+html[data-panel] .p-fill-level {
+  position: absolute;
+  inset: 0;
+  background: oklch(0.72 0.14 var(--h, 255));
+  clip-path: inset(100% 0 0 0);
+}
+html[data-panel] .p-col.is-greyed .p-fill-level {
+  background: oklch(0.5 0.02 var(--h, 255));
+}
+html[data-panel] .p-fill-value {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 8px;
+  text-align: center;
+  font-size: 28px;
+  font-weight: 700;
+  color: oklch(0.98 0.01 var(--h, 255));
+  mix-blend-mode: difference;
+}
+html[data-panel] .p-steps {
+  width: 72px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+html[data-panel] .p-step {
+  flex: 1 1 0;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+}
+html[data-panel] .p-power {
+  height: 56px;
+  flex: none;
+  border: 0;
+  border-radius: 12px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+  font-size: 24px;
+  font-weight: 700;
+}
+html[data-panel] .p-power[aria-pressed="true"] {
+  background: oklch(0.72 0.14 var(--h, 255));
+  color: oklch(0.15 0.02 var(--h, 255));
+}
+html[data-panel] button:disabled {
+  opacity: 0.5;
+}
+
+/* ---- Cards, Garage ---- */
+html[data-panel] .p-card {
+  border-radius: 16px;
+  background: oklch(0.26 0.04 var(--h, 255));
+  padding: 14px;
+  box-sizing: border-box;
+}
+html[data-panel] .p-card-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-garage {
+  height: 100%;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-garage-info {
+  container-type: inline-size;
+  flex: 1.15 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+html[data-panel] .p-garage-word {
+  font-size: min(88px, 22cqw);
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0;
+  white-space: nowrap;
+  margin-top: 40px;
+}
+html[data-panel] .p-garage-word[data-state="unknown"] {
+  color: oklch(0.8 0.14 70);
+}
+html[data-panel] .p-garage-line {
+  font-size: 24px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-garage-btn {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  border: 3px solid oklch(0.45 0.07 var(--h, 255));
+  border-radius: 16px;
+  overflow: hidden;
+  background: oklch(0.26 0.04 var(--h, 255));
+  color: oklch(0.98 0.01 var(--h, 255));
+}
+html[data-panel] .p-garage-fill {
+  position: absolute;
+  inset: 0;
+  background: oklch(0.45 0.1 var(--h, 255));
+  clip-path: inset(100% 0 0 0);
+}
+html[data-panel] .p-garage-label {
+  position: relative;
+  font-size: 40px;
+  font-weight: 800;
+}
+html[data-panel] .p-garage-btn[data-armed="true"] {
+  background: oklch(0.78 0.16 75);
+  color: oklch(0.18 0.03 75);
+}
+html[data-panel] .p-garage-btn[data-armed="true"] .p-garage-fill {
+  display: none;
+}
+
+/* ---- Climate ---- */
+html[data-panel] .p-climate {
+  height: 100%;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-inside,
+html[data-panel] .p-comfort {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+html[data-panel] .p-inside-temp {
+  font-size: 112px;
+  line-height: 1.05;
+  font-weight: 800;
+}
+html[data-panel] .p-inside-mode {
+  font-size: 28px;
+  font-weight: 700;
+  color: oklch(0.9 0.02 var(--h, 255));
+}
+html[data-panel] .p-inside-mode[data-accent="true"] {
+  color: oklch(0.8 0.13 var(--h, 255));
+}
+html[data-panel] .p-inside-who {
+  font-size: 24px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-comfort-value {
+  font-size: 64px;
+  line-height: 1.1;
+  font-weight: 800;
+}
+html[data-panel] .p-comfort-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-comfort-btn {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 14px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+}
+html[data-panel] .p-comfort-hint {
+  font-size: 20px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+
+/* ---- More ---- */
+html[data-panel] .p-more {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr;
+  gap: 10px;
+}
+html[data-panel] .p-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px;
+  border: 0;
+  border-radius: 16px;
+  background: oklch(0.26 0.04 var(--h, 255));
+  color: inherit;
+  text-align: left;
+}
+html[data-panel] .p-tile-title {
+  font-size: 26px;
+  font-weight: 700;
+}
+html[data-panel] .p-tile-line {
+  font-size: 19px;
+  color: oklch(0.82 0.02 var(--h, 255));
+  white-space: nowrap;
+}
+html[data-panel] .p-tile[data-warn="true"] .p-tile-line {
+  color: oklch(0.82 0.15 75);
+}
+
+/* ---- Frames ---- */
+html[data-panel] .p-frame {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+html[data-panel] .p-frame-tabs {
+  display: flex;
+  gap: 10px;
+  flex: none;
+}
+html[data-panel] .p-frame-tab {
+  flex: 1 1 0;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 12px;
+  background: oklch(0.26 0.04 var(--h, 255));
+  color: inherit;
+  font-size: 22px;
+  font-weight: 700;
+}
+html[data-panel] .p-frame-tab[aria-current="true"] {
+  background: oklch(0.72 0.14 var(--h, 255));
+  color: oklch(0.15 0.02 var(--h, 255));
+}
+html[data-panel] .p-frame-tab-flag {
+  font-size: 20px;
+  font-weight: 400;
+}
+html[data-panel] .p-frame-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-mirror {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: oklch(0.18 0.02 var(--h, 255));
+  overflow: hidden;
+}
+html[data-panel] .p-mirror-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+html[data-panel] .p-mirror-off {
+  font-size: 24px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-frame-actions {
+  width: 230px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+html[data-panel] .p-big {
+  flex: 1 1 0;
+  min-height: 72px;
+  border: 0;
+  border-radius: 14px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+  font-size: 26px;
+  font-weight: 700;
+}
+html[data-panel] .p-accent {
+  background: oklch(0.72 0.14 var(--h, 255));
+  color: oklch(0.15 0.02 var(--h, 255));
+}
+
+/* ---- Gallery ---- */
+html[data-panel] .p-gallery {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+html[data-panel] .p-gallery-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+html[data-panel] .p-piece {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 0;
+  border-radius: 14px;
+  background: oklch(0.26 0.04 var(--h, 255));
+  color: inherit;
+  overflow: hidden;
+}
+html[data-panel] .p-piece-img {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+}
+html[data-panel] .p-piece-title {
+  flex: none;
+  font-size: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-panel] .p-pager {
+  flex: none;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+html[data-panel] .p-pager-btn {
+  width: 190px;
+  height: 72px;
+  border: 0;
+  border-radius: 14px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+  font-size: 26px;
+  font-weight: 700;
+}
+html[data-panel] .p-pager-label {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 24px;
+}
+html[data-panel] .p-viewer {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-viewer-img {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 14px;
+  background: oklch(0.18 0.02 var(--h, 255));
+}
+html[data-panel] .p-viewer-side {
+  width: 250px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+html[data-panel] .p-viewer-title {
+  font-size: 26px;
+  font-weight: 700;
+}
+html[data-panel] .p-viewer-artist,
+html[data-panel] .p-viewer-note {
+  font-size: 21px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-viewer-buttons {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---- Bluetooth and House health: the page's own sections at panel sizes ---- */
+html[data-panel] .p-bluetooth,
+html[data-panel] .p-health {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+html[data-panel] .p-bluetooth .section,
+html[data-panel] .p-health .section {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  font-size: 22px;
+}
+html[data-panel] .p-bluetooth .section::before,
+html[data-panel] .p-bluetooth .section::after,
+html[data-panel] .p-health .section::before,
+html[data-panel] .p-health .section::after {
+  display: none;
+}
+html[data-panel] .p-bluetooth .row,
+html[data-panel] .p-health .row {
+  display: block;
+  padding: 8px 0;
+}
+html[data-panel] .p-bluetooth .section-h,
+html[data-panel] .p-health .section-h {
+  font-size: 24px;
+}
+html[data-panel] .p-bluetooth .btn {
+  min-height: 96px;
+  width: 100%;
+  font-size: 26px;
+  font-weight: 700;
+}
+html[data-panel] .p-bluetooth .dev-btn {
+  min-height: 72px;
+  width: auto;
+  font-size: 22px;
+}
+html[data-panel] .p-bluetooth .settings-note,
+html[data-panel] .p-bluetooth .empty,
+html[data-panel] .p-bluetooth .row,
+html[data-panel] .p-health .row {
+  font-size: 22px;
+}
+html[data-panel] .p-health-good {
+  font-size: 40px;
+  font-weight: 800;
+  padding: 40px 0;
+}
+html[data-panel] .toast {
+  font-size: 22px;
+  bottom: 16px;
+}
+html[data-panel] .p-garage-btn:disabled {
+  opacity: 1;
+}
+
+/* Pairing in progress, lost or failed: the device list steps aside so the
+   controls fit without scrolling, and the two buttons sit side by side. */
+html[data-panel] .p-bluetooth:has(#pair-open:not([hidden])) #devices,
+html[data-panel] .p-bluetooth:has(#pair-lost:not([hidden])) #devices,
+html[data-panel] .p-bluetooth:has(#pair-error:not([hidden])) #devices {
+  display: none;
+}
+html[data-panel] .p-bluetooth .pair-actions {
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-bluetooth .pair-actions .btn {
+  flex: 1 1 0;
+  width: auto;
+}
+html[data-panel] .p-bluetooth #pair-idle .settings-note {
+  display: none;
+}
+html[data-panel] .p-bluetooth .pair-instruction,
+html[data-panel] .p-bluetooth .pair-progress,
+html[data-panel] .p-bluetooth .pair-count {
+  font-size: 20px;
+}

@@ -252,3 +252,14 @@ test("keyStep table", () => {
   assert.equal(keyStep("End"), null);
   assert.equal(keyStep("a"), null);
 });
+
+import { valueFromPointerVertical } from "../../roles/room_picker/files/site/volume-controller.js";
+
+test("valueFromPointerVertical is 100 at the top of the track and 0 at the bottom", () => {
+  assert.equal(valueFromPointerVertical(100, 100, 200), 100);
+  assert.equal(valueFromPointerVertical(300, 100, 200), 0);
+  assert.equal(valueFromPointerVertical(200, 100, 200), 50);
+  assert.equal(valueFromPointerVertical(0, 100, 200), 100);
+  assert.equal(valueFromPointerVertical(999, 100, 200), 0);
+  assert.equal(valueFromPointerVertical(150, 100, 0), 0);
+});

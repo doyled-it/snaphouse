@@ -73,6 +73,7 @@ import {
   formatCountdown,
   pairPhase,
   pairInstruction,
+  pairInstructionPanel,
   pairProgress,
   pairOutcomeView,
   shouldPollPair,
@@ -148,6 +149,8 @@ const POLL_MS = 30000;
 const HEALTH_MS = 30000;
 const RECONNECT_MS = 3000;
 const haptics = createHaptics();
+// The kiosk URL's panel=1: the panel layout replaces the phone chrome.
+const PANEL_MODE = new URLSearchParams(location.search).get("panel") === "1";
 // The hub writes now-playing.json continuously and play-history.json only when a
 // play lands, so the card polls quickly and the history slowly. The card's
 // progress bar ticks client-side every second from the position anchor.
@@ -369,6 +372,8 @@ const state = {
   // first read has finished, which the Garage tab's visibility waits on.
   garage: null,
   garageProbed: false,
+  // The last classified machines (health-model.js), for the panel's House health.
+  health: { troubled: [], notSetUp: [] },
   config: { rooms: [] },
   cards: new Map(), // room id -> { card, toggle, slider }
   rooms: new Map(), // room id -> latest row from roomsFromStatus
@@ -658,6 +663,10 @@ function syncFrameTab() {
 // Resolve the URL hash to a screen. An alias (#art) or a hidden or unknown
 // screen has its hash rewritten in place, so Back never lands on it.
 function applyHash() {
+  // On the wall panel the panel layout owns routing (panel.js, resolvePanelScreen).
+  if (PANEL_MODE) {
+    return;
+  }
   const { screen, hash } = resolveScreen(window.location.hash, navVisible());
   if (window.location.hash !== hash) {
     history.replaceState(null, "", hash);
@@ -1019,6 +1028,7 @@ async function refreshHealth() {
     return;
   }
   const { troubled, notSetUp } = classifyMachines(entries);
+  state.health = { troubled, notSetUp };
   renderNotSetUp(notSetUp);
   renderNeedsAttention(troubled);
   const message = healthMessage(troubled);
@@ -1792,7 +1802,7 @@ function renderPairing() {
   // A coarse, once-only spoken cue for the active countdown; null elsewhere.
   let cue = null;
   if (phase === "open") {
-    els.pairInstruction.textContent = pairInstruction(state.btName);
+    els.pairInstruction.textContent = PANEL_MODE ? pairInstructionPanel(state.btName) : pairInstruction(state.btName);
     const progress = pairProgress(parsed);
     els.pairProgress.hidden = progress === null;
     els.pairProgress.textContent = progress || "";
@@ -2082,6 +2092,57 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
     .then((m) => {
       screensaver = m.initScreensaver(location.search);
       screensaver?.setHues(currentHues);
+    })
+    .catch(() => {});
+}
+
+// The wall panel's own layout. Same gate as the screensaver: only a URL with
+// panel=1 fetches the module, so phones never carry a panel node or attribute.
+let panelLayout = null;
+if (new URLSearchParams(location.search).get("panel") === "1") {
+  import("./panel.js")
+    .then((m) => {
+      panelLayout = m.initPanel({
+        state,
+        timers,
+        navVisible,
+        rooms: () =>
+          state.config.rooms
+            .map((r) => ({ cfg: r, row: state.rooms.get(r.id) }))
+            .filter((x) => x.row)
+            .map(({ cfg, row }) => ({ id: row.id, label: cfg.label, on: row.on, reachable: row.connected, volume: row.volume })),
+        power: setRoomPower,
+        volume: (id, percent) => sendControl(volumeRequest(id, percent)),
+        playback: onPlayback,
+        comfort: () => climateDraft.comfort_f ?? (state.climate ? state.climate.settings.comfort_f : 0),
+        setComfort: (value) => {
+          const out = editSetting(climateDraft, climateRefused, "comfort_f", value, {});
+          climateRefused = out.refused;
+          climateDraft = out.draft;
+          if (Object.keys(out.accepted).length > 0) climateQueue.edit(out.accepted);
+        },
+        setScreen: showScreen,
+        frames: () => frameList(state.frameControl, state.mirrors),
+        framesVisible: () => navVisible().frame,
+        selectedFrame: () => state.selectedFrame,
+        mirrorSrc: () => state.mirrorSrc,
+        frameCommand: (action) => runArtCommand(action),
+        pinned: () => els.keepToggle.dataset.pinned === "1",
+        keep: toggleKeepShowing,
+        library: () => (state.artIndex ? piecesInFolder(state.artIndex, ALL_FOLDERS) : []),
+        showOnFrame: async (frameId, pieceId) => {
+          const body = artCommandBody(frameId, "show", pieceId);
+          if (!body) return;
+          const result = await postApi("/api/art/command", body);
+          showToast(result.ok ? "Sent to the frame." : result.error);
+          refreshFrame();
+        },
+        health: () => state.health,
+        garageTap: (action) => onGarageTap(action, true),
+        garageBusy: () => garageBusy,
+        garageNotice: () => (garageEls.error.hidden ? "" : garageEls.error.textContent) || garageEls.sent.textContent,
+        progress: () => (state.nowTrack ? progressAt(state.nowTrack, Date.now()) : null),
+      });
     })
     .catch(() => {});
 }
@@ -3806,7 +3867,7 @@ function applyClimate(doc) {
 
 function climateTick() {
   climateTicks += 1;
-  if (state.screen === "climate" || climateTicks % CLIMATE_IDLE_EVERY === 0) {
+  if (PANEL_MODE || state.screen === "climate" || climateTicks % CLIMATE_IDLE_EVERY === 0) {
     refreshClimate();
   }
 }
@@ -4203,7 +4264,7 @@ function applyGarage(doc) {
 
 function garageTick() {
   garageTicks += 1;
-  if (state.screen === "garage" || garageTicks % GARAGE_IDLE_EVERY === 0) {
+  if (PANEL_MODE || state.screen === "garage" || garageTicks % GARAGE_IDLE_EVERY === 0) {
     refreshGarage();
   }
 }
@@ -4308,7 +4369,9 @@ async function postGarage(path, body) {
 
 // A tap on Open or Close: ask the hub for a nonce, then either send the command
 // straight away or wait for the second tap, as the intent reply says.
-async function onGarageTap(action) {
+// `confirmed` is the wall panel's armed first tap: its second tap is the confirm,
+// so a confirm_required reply sends the command straight away (never a third tap).
+async function onGarageTap(action, confirmed = false) {
   if (garageBusy) {
     return;
   }
@@ -4322,7 +4385,7 @@ async function onGarageTap(action) {
     const out = intentOutcome(reply.status, reply.body, action);
     if (out.kind === "error") {
       showFieldError(garageEls.error, out.text);
-    } else if (out.kind === "confirm") {
+    } else if (out.kind === "confirm" && !confirmed) {
       garagePending = { action, nonce: out.nonce };
       garageEls.confirmText.textContent = out.text;
       garageEls.confirmNote.textContent = out.note || "";
