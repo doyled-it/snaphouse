@@ -1,5 +1,8 @@
 // The wall panel's layout rules, pure (no DOM, no network). panel.js draws.
 
+import { howToText, playbackControls, roomState } from "./listen-model.js";
+import { speakerBanner } from "./health-model.js";
+
 // Panel mode is the kiosk URL's panel=1, the same flag the screensaver reads.
 export function isPanel(search) {
   return new URLSearchParams(search || "").get("panel") === "1";
@@ -87,4 +90,83 @@ export function stripParts({ thermostat = null, garage = null, now, locale } = {
 // More's sub-screens put a back button where the status lives and hide the time.
 export function stripBack(screen) {
   return isSubScreen(screen);
+}
+
+// ---- Music ---------------------------------------------------------------- //
+
+const STEP = 5;
+
+// A tapped fill height snapped to steps of 5.
+export function snapVolume(percent) {
+  return Math.max(0, Math.min(100, Math.round(percent / STEP) * STEP));
+}
+
+// Plus and minus: the next multiple of 5 in that direction, clamped.
+export function stepVolume(current, dir) {
+  const next = dir > 0 ? (Math.floor(current / STEP) + 1) * STEP : (Math.ceil(current / STEP) - 1) * STEP;
+  return Math.max(0, Math.min(100, next));
+}
+
+export function progressFraction(progress) {
+  if (!progress || !(progress.total > 0)) return 0;
+  return Math.max(0, Math.min(1, progress.elapsed / progress.total));
+}
+
+// What the now-playing bar shows. The speaker banner takes the bar's place at
+// the same height while the audio server cannot be read.
+export function nowPlayingBar(track, { btName = null, speakersDown = false } = {}) {
+  const banner = speakerBanner(speakersDown ? "down" : "up");
+  if (banner) {
+    return { mode: "banner", title: banner, artist: "", howTo: "", showTransport: false, playing: false };
+  }
+  if (!track) {
+    return {
+      mode: "idle",
+      title: "Nothing playing",
+      artist: "",
+      howTo: howToText(btName),
+      showTransport: false,
+      playing: false,
+    };
+  }
+  const controls = playbackControls(track);
+  return {
+    mode: "track",
+    title: track.title,
+    artist: track.artist || "",
+    howTo: "",
+    showTransport: controls.visible,
+    playing: track.status !== "paused",
+  };
+}
+
+// One room's column. `room` is { id, label, on, reachable, volume }.
+export function roomColumn(room, rooms, { speakersDown = false } = {}) {
+  const st = roomState(room, rooms);
+  const unreachable = !room.reachable;
+  return {
+    id: room.id,
+    name: room.label,
+    valueText: String(Math.round(room.volume)),
+    fillPct: Math.max(0, Math.min(100, Math.round(room.volume))),
+    greyed: unreachable || !room.on,
+    disabled: st.disabled || speakersDown,
+    power: Boolean(room.on) && !unreachable,
+    status: unreachable ? st.label : "",
+  };
+}
+
+const MIN_FILL_PX = 60;
+const COLUMN_GAP = 10;
+const COLUMN_CHROME = 72 + 10 + 16; // plus/minus width, gap, side padding
+// 800 minus the 96 px rail and 14 px padding either side.
+export const CONTENT_WIDTH = 676;
+
+// Columns stay equal; flag (never shrink text) when one would leave under 60 px
+// of fill.
+export function columnFit(count, width = CONTENT_WIDTH) {
+  const n = Math.max(1, count);
+  const column = (width - COLUMN_GAP * (n - 1)) / n;
+  const fillPx = Math.floor(column - COLUMN_CHROME);
+  return { ok: fillPx >= MIN_FILL_PX, fillPx };
 }

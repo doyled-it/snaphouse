@@ -100,3 +100,188 @@ html[data-panel] .p-stage {
 html[data-panel] button:active {
   filter: brightness(1.3);
 }
+
+/* ---- Music ---- */
+html[data-panel] .p-music {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+html[data-panel] .p-np {
+  position: relative;
+  height: 112px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px;
+  box-sizing: border-box;
+  border-radius: 16px;
+  background: oklch(0.26 0.04 var(--h, 255));
+  overflow: hidden;
+}
+html[data-panel] .p-np-art {
+  width: 86px;
+  height: 86px;
+  flex: none;
+  border-radius: 10px;
+  object-fit: cover;
+}
+html[data-panel] .p-np-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+html[data-panel] .p-np-title {
+  font-size: 26px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-panel] .p-np-artist {
+  font-size: 21px;
+  color: oklch(0.82 0.02 var(--h, 255));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-panel] .p-np[data-mode="idle"] .p-np-artist {
+  white-space: normal;
+  line-height: 1.2;
+}
+html[data-panel] .p-np-transport {
+  display: flex;
+  gap: 10px;
+  flex: none;
+}
+html[data-panel] .p-np-btn {
+  width: 84px;
+  height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 14px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+}
+html[data-panel] .p-np-play {
+  background: oklch(0.72 0.14 var(--h, 255));
+  color: oklch(0.15 0.02 var(--h, 255));
+}
+html[data-panel] .p-np-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: oklch(0.2 0.02 var(--h, 255));
+}
+html[data-panel] .p-np-progress-fill {
+  width: 100%;
+  height: 100%;
+  background: oklch(0.72 0.14 var(--h, 255));
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+html[data-panel] .p-cols {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 16px;
+  background: oklch(0.26 0.04 var(--h, 255));
+}
+html[data-panel] .p-col.is-greyed {
+  opacity: 0.6;
+}
+html[data-panel] .p-col-name {
+  font-size: 24px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-panel] .p-col-status {
+  font-size: 20px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-col-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-fill {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 60px;
+  border-radius: 12px;
+  background: oklch(0.18 0.02 var(--h, 255));
+  overflow: hidden;
+  touch-action: none;
+}
+html[data-panel] .p-fill-level {
+  position: absolute;
+  inset: 0;
+  background: oklch(0.72 0.14 var(--h, 255));
+  clip-path: inset(100% 0 0 0);
+}
+html[data-panel] .p-col.is-greyed .p-fill-level {
+  background: oklch(0.5 0.02 var(--h, 255));
+}
+html[data-panel] .p-fill-value {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 8px;
+  text-align: center;
+  font-size: 28px;
+  font-weight: 700;
+  color: oklch(0.98 0.01 var(--h, 255));
+  mix-blend-mode: difference;
+}
+html[data-panel] .p-steps {
+  width: 72px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+html[data-panel] .p-step {
+  flex: 1 1 0;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+}
+html[data-panel] .p-power {
+  height: 56px;
+  flex: none;
+  border: 0;
+  border-radius: 12px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+  font-size: 24px;
+  font-weight: 700;
+}
+html[data-panel] .p-power[aria-pressed="true"] {
+  background: oklch(0.72 0.14 var(--h, 255));
+  color: oklch(0.15 0.02 var(--h, 255));
+}
+html[data-panel] button:disabled {
+  opacity: 0.5;
+}

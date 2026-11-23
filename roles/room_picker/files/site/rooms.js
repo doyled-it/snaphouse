@@ -2098,7 +2098,20 @@ let panelLayout = null;
 if (new URLSearchParams(location.search).get("panel") === "1") {
   import("./panel.js")
     .then((m) => {
-      panelLayout = m.initPanel({ state, timers, navVisible });
+      panelLayout = m.initPanel({
+        state,
+        timers,
+        navVisible,
+        rooms: () =>
+          state.config.rooms
+            .map((r) => ({ cfg: r, row: state.rooms.get(r.id) }))
+            .filter((x) => x.row)
+            .map(({ cfg, row }) => ({ id: row.id, label: cfg.label, on: row.on, reachable: row.connected, volume: row.volume })),
+        power: setRoomPower,
+        volume: (id, percent) => sendControl(volumeRequest(id, percent)),
+        playback: onPlayback,
+        progress: () => (state.nowTrack ? progressAt(state.nowTrack, Date.now()) : null),
+      });
     })
     .catch(() => {});
 }

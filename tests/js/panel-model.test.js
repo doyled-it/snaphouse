@@ -105,3 +105,89 @@ test("stripBack is true on More's sub-screens, which also hide the time", () => 
   assert.equal(stripBack("listen"), false);
   assert.equal(stripBack("more"), false);
 });
+
+import {
+  stepVolume,
+  snapVolume,
+  nowPlayingBar,
+  roomColumn,
+  columnFit,
+  progressFraction,
+} from "../../roles/room_picker/files/site/panel-model.js";
+
+test("stepVolume moves by 5 on the 5 grid and clamps", () => {
+  assert.equal(stepVolume(52, 1), 55);
+  assert.equal(stepVolume(98, 1), 100);
+  assert.equal(stepVolume(2, -1), 0);
+  assert.equal(stepVolume(55, -1), 50);
+  assert.equal(stepVolume(50, 1), 55);
+  assert.equal(stepVolume(0, -1), 0);
+});
+
+test("snapVolume rounds a tapped height to steps of 5", () => {
+  assert.equal(snapVolume(52), 50);
+  assert.equal(snapVolume(53), 55);
+  assert.equal(snapVolume(100), 100);
+  assert.equal(snapVolume(-4), 0);
+});
+
+test("nowPlayingBar with a track shows title, artist, and transport only for Bluetooth", () => {
+  const bt = nowPlayingBar({ title: "T", artist: "A", source: "bluetooth", status: "playing" }, {});
+  assert.deepEqual([bt.mode, bt.title, bt.artist, bt.showTransport, bt.playing], ["track", "T", "A", true, true]);
+  const ap = nowPlayingBar({ title: "T", artist: null, source: "airplay", status: "paused" }, {});
+  assert.deepEqual([ap.showTransport, ap.playing, ap.artist], [false, false, ""]);
+});
+
+test("nowPlayingBar idle follows howToText and shows no transport", () => {
+  const bar = nowPlayingBar(null, { btName: "House" });
+  assert.equal(bar.mode, "idle");
+  assert.equal(bar.title, "Nothing playing");
+  assert.match(bar.howTo, /"House"/);
+  assert.equal(bar.showTransport, false);
+});
+
+test("nowPlayingBar becomes the speaker banner while the audio server is down", () => {
+  const bar = nowPlayingBar({ title: "T", source: "bluetooth" }, { speakersDown: true });
+  assert.equal(bar.mode, "banner");
+  assert.equal(bar.title, "Can't reach the speakers right now. Retrying.");
+  assert.equal(bar.showTransport, false);
+});
+
+test("progressFraction is elapsed over total, clamped, 0 when unknown", () => {
+  assert.equal(progressFraction({ elapsed: 30, total: 120 }), 0.25);
+  assert.equal(progressFraction({ elapsed: 500, total: 120 }), 1);
+  assert.equal(progressFraction(null), 0);
+  assert.equal(progressFraction({ elapsed: 5, total: 0 }), 0);
+});
+
+const ROOM = { id: "a", label: "Office", on: true, reachable: true, volume: 54 };
+
+test("roomColumn for an on room shows the number and the fill", () => {
+  const c = roomColumn(ROOM, [ROOM], {});
+  assert.deepEqual(
+    [c.name, c.valueText, c.fillPct, c.greyed, c.disabled, c.power, c.status],
+    ["Office", "54", 54, false, false, true, ""],
+  );
+});
+
+test("roomColumn for an off room keeps its remembered volume, greyed", () => {
+  const c = roomColumn({ ...ROOM, on: false }, [ROOM], {});
+  assert.deepEqual([c.valueText, c.fillPct, c.greyed, c.disabled, c.power], ["54", 54, true, false, false]);
+});
+
+test("roomColumn for a room that is not responding greys and disables everything", () => {
+  const c = roomColumn({ ...ROOM, reachable: false }, [ROOM], {});
+  assert.deepEqual([c.status, c.greyed, c.disabled], ["Not responding", true, true]);
+});
+
+test("roomColumn disables every control while the speakers are down", () => {
+  const c = roomColumn(ROOM, [ROOM], { speakersDown: true });
+  assert.equal(c.disabled, true);
+});
+
+test("columnFit keeps 60px of fill for up to four rooms and flags a fifth", () => {
+  assert.equal(columnFit(3).ok, true);
+  assert.equal(columnFit(4).ok, true);
+  assert.equal(columnFit(5).ok, false);
+  assert.ok(columnFit(3).fillPx >= 60);
+});
