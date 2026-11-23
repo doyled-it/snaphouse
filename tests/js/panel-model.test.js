@@ -191,3 +191,56 @@ test("columnFit keeps 60px of fill for up to four rooms and flags a fifth", () =
   assert.equal(columnFit(5).ok, false);
   assert.ok(columnFit(3).fillPx >= 60);
 });
+
+import { climateCards, comfortStep, whoLine } from "../../roles/room_picker/files/site/panel-model.js";
+
+const person = (name, state) => ({ name, state, label: "", id: name, removable: false, seen: "", lastKnown: false });
+
+test("whoLine names who is home on one line", () => {
+  assert.equal(whoLine([person("Sam", "home"), person("Alex", "home")]), "Home: Sam and Alex");
+  assert.equal(whoLine([person("Sam", "home"), person("Alex", "away"), person("Jo", "home")]), "Home: Sam and Jo");
+  assert.equal(whoLine([person("Sam", "away")]), "Everyone is away");
+  assert.equal(whoLine([person("Sam", "unknown")]), "Not sure yet");
+  assert.equal(whoLine([]), "No phones are set up for climate yet.");
+});
+
+const CDOC = {
+  enabled: true,
+  settings: { comfort_f: 74, away_f: 82, away_minutes: 30 },
+  thermostat: { reachable: true, mode: "cool", setpointF: 74, temperatureF: 75.6 },
+  people: [{ name: "Sam", state: "home", id: "a", removable: false, lastSeenMs: 0 }],
+  lastChange: null,
+  override: false,
+};
+
+test("climateCards builds the inside and comfort cards", () => {
+  const c = climateCards(CDOC, { now: 0, comfort: 74 });
+  assert.equal(c.inside.temp, "76°");
+  assert.equal(c.inside.modeText, "Cooling to 74°");
+  assert.equal(c.inside.modeAccent, true);
+  assert.equal(c.inside.who, "Home: Sam");
+  assert.equal(c.comfort.value, "74°");
+  assert.equal(c.comfort.minusDisabled, false);
+  assert.equal(c.comfort.plusDisabled, false);
+});
+
+test("climateCards says so when the thermostat cannot be reached or is being checked", () => {
+  const down = climateCards({ ...CDOC, thermostat: { ...CDOC.thermostat, reachable: false } }, { now: 0, comfort: 74 });
+  assert.equal(down.inside.modeText, "Can't reach the thermostat");
+  assert.equal(down.inside.modeAccent, false);
+  const unsure = climateCards({ ...CDOC, thermostat: { ...CDOC.thermostat, reachable: null } }, { now: 0, comfort: 74 });
+  assert.equal(unsure.inside.modeText, "Checking the thermostat");
+});
+
+test("comfortStep moves one degree and refuses the limits and away", () => {
+  assert.equal(comfortStep(74, 1, 82), 75);
+  assert.equal(comfortStep(74, -1, 82), 73);
+  assert.equal(comfortStep(60, -1, 82), null);
+  assert.equal(comfortStep(85, 1, 90), null);
+  assert.equal(comfortStep(81, 1, 82), null);
+});
+
+test("climateCards disables the buttons at the limits", () => {
+  assert.equal(climateCards(CDOC, { now: 0, comfort: 60 }).comfort.minusDisabled, true);
+  assert.equal(climateCards(CDOC, { now: 0, comfort: 81 }).comfort.plusDisabled, true);
+});

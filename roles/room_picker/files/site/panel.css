@@ -352,3 +352,60 @@ html[data-panel] .p-garage-btn[data-armed="true"] {
 html[data-panel] .p-garage-btn[data-armed="true"] .p-garage-fill {
   display: none;
 }
+
+/* ---- Climate ---- */
+html[data-panel] .p-climate {
+  height: 100%;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-inside,
+html[data-panel] .p-comfort {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+html[data-panel] .p-inside-temp {
+  font-size: 112px;
+  line-height: 1.05;
+  font-weight: 800;
+}
+html[data-panel] .p-inside-mode {
+  font-size: 28px;
+  font-weight: 700;
+  color: oklch(0.9 0.02 var(--h, 255));
+}
+html[data-panel] .p-inside-mode[data-accent="true"] {
+  color: oklch(0.8 0.13 var(--h, 255));
+}
+html[data-panel] .p-inside-who {
+  font-size: 24px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-comfort-value {
+  font-size: 64px;
+  line-height: 1.1;
+  font-weight: 800;
+}
+html[data-panel] .p-comfort-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+html[data-panel] .p-comfort-btn {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 14px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+}
+html[data-panel] .p-comfort-hint {
+  font-size: 20px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}

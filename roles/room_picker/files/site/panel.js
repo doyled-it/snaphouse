@@ -4,6 +4,7 @@
 import { BACK_HASH, isSubScreen, railActive, railItems, resolvePanelScreen, stripBack, stripParts } from "./panel-model.js";
 import { garageView } from "./garage-model.js";
 import { createMusicScreen } from "./panel-music.js";
+import { createClimateScreen } from "./panel-climate.js";
 import { createGarageScreen } from "./panel-garage.js";
 import { button, el, icon, setText } from "./panel-dom.js";
 
@@ -122,6 +123,7 @@ export function initPanel(host) {
 
   createMusicScreen(api);
   createGarageScreen(api);
+  createClimateScreen(api);
   window.addEventListener("hashchange", route);
   host.timers.add(render, 500);
   api.isSub = isSubScreen;

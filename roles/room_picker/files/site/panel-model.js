@@ -2,6 +2,7 @@
 
 import { howToText, playbackControls, roomState } from "./listen-model.js";
 import { speakerBanner } from "./health-model.js";
+import { EMPTY_PEOPLE_TEXT, SETTING_LIMITS, peopleLines, thermostatView } from "./climate-model.js";
 
 // Panel mode is the kiosk URL's panel=1, the same flag the screensaver reads.
 export function isPanel(search) {
@@ -169,4 +170,51 @@ export function columnFit(count, width = CONTENT_WIDTH) {
   const column = (width - COLUMN_GAP * (n - 1)) / n;
   const fillPx = Math.floor(column - COLUMN_CHROME);
   return { ok: fillPx >= MIN_FILL_PX, fillPx };
+}
+
+// ---- Climate -------------------------------------------------------------- //
+
+// Who is home, on one line.
+export function whoLine(people) {
+  if (people.length === 0) return EMPTY_PEOPLE_TEXT;
+  const home = people.filter((p) => p.state === "home").map((p) => p.name);
+  if (home.length > 0) {
+    const list = home.length === 2 ? `${home[0]} and ${home[1]}` : home.join(", ");
+    return `Home: ${list}`;
+  }
+  return people.every((p) => p.state === "unknown") ? "Not sure yet" : "Everyone is away";
+}
+
+// The two cards. `doc` is parseClimate's result; `comfort` is the comfort
+// setpoint to show (the draft, so a tap shows at once).
+export function climateCards(doc, { now, comfort }) {
+  const view = thermostatView(doc);
+  const working = view.status === "ok" && (doc.thermostat.mode === "cool" || doc.thermostat.mode === "heat");
+  let modeText = view.message;
+  if (view.status === "ok") {
+    modeText = working ? `${view.mode} to ${view.setpoint}` : `Holding ${view.setpoint}`;
+  }
+  const away = doc.settings.away_f;
+  return {
+    inside: {
+      temp: view.temperature,
+      modeText,
+      modeAccent: working,
+      who: whoLine(peopleLines(doc, now)),
+    },
+    comfort: {
+      value: `${comfort}°`,
+      minusDisabled: comfortStep(comfort, -1, away) === null,
+      plusDisabled: comfortStep(comfort, 1, away) === null,
+    },
+  };
+}
+
+// One degree up or down, or null when it would leave the allowed range or reach
+// the away temperature (comfort must stay below away).
+export function comfortStep(current, dir, away) {
+  const next = current + dir;
+  const { min, max } = SETTING_LIMITS.comfort_f;
+  if (next < min || next > max || next >= away) return null;
+  return next;
 }

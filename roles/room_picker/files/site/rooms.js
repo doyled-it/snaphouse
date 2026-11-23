@@ -2110,6 +2110,13 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
         power: setRoomPower,
         volume: (id, percent) => sendControl(volumeRequest(id, percent)),
         playback: onPlayback,
+        comfort: () => climateDraft.comfort_f ?? (state.climate ? state.climate.settings.comfort_f : 0),
+        setComfort: (value) => {
+          const out = editSetting(climateDraft, climateRefused, "comfort_f", value, {});
+          climateRefused = out.refused;
+          climateDraft = out.draft;
+          if (Object.keys(out.accepted).length > 0) climateQueue.edit(out.accepted);
+        },
         garageTap: (action) => onGarageTap(action, true),
         garageBusy: () => garageBusy,
         garageNotice: () => (garageEls.error.hidden ? "" : garageEls.error.textContent) || garageEls.sent.textContent,
