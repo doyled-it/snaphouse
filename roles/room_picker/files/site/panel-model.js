@@ -1,6 +1,7 @@
 // The wall panel's layout rules, pure (no DOM, no network). panel.js draws.
 
 import { howToText, playbackControls, roomState } from "./listen-model.js";
+import { pairInstruction } from "./rooms-model.js";
 import { speakerBanner } from "./health-model.js";
 import { EMPTY_PEOPLE_TEXT, SETTING_LIMITS, peopleLines, thermostatView } from "./climate-model.js";
 
@@ -217,4 +218,10 @@ export function comfortStep(current, dir, away) {
   const { min, max } = SETTING_LIMITS.comfort_f;
   if (next < min || next > max || next >= away) return null;
   return next;
+}
+
+// The pairing instruction as the panel says it: the panel is not the phone, so
+// "on your phone". The phone page keeps pairInstruction's "on this phone".
+export function pairInstructionPanel(speakerName) {
+  return pairInstruction(speakerName).replace("on this phone", "on your phone");
 }

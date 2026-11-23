@@ -712,3 +712,8 @@ html[data-panel] .p-bluetooth .pair-actions .btn {
 html[data-panel] .p-bluetooth #pair-idle .settings-note {
   display: none;
 }
+html[data-panel] .p-bluetooth .pair-instruction,
+html[data-panel] .p-bluetooth .pair-progress,
+html[data-panel] .p-bluetooth .pair-count {
+  font-size: 20px;
+}

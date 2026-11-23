@@ -139,6 +139,7 @@ import {
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
 import { classifyMachines, healthMessage, reasonLabel, speakerBanner } from "./health-model.js";
 import { applyPlan, everythingOffPlan, heldStatus, howToText, loadBluetoothName, onlyHerePlan, playbackControls, playbackRequest, roomState } from "./listen-model.js";
+import { pairInstructionPanel } from "./panel-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -1801,7 +1802,7 @@ function renderPairing() {
   // A coarse, once-only spoken cue for the active countdown; null elsewhere.
   let cue = null;
   if (phase === "open") {
-    els.pairInstruction.textContent = pairInstruction(state.btName);
+    els.pairInstruction.textContent = PANEL_MODE ? pairInstructionPanel(state.btName) : pairInstruction(state.btName);
     const progress = pairProgress(parsed);
     els.pairProgress.hidden = progress === null;
     els.pairProgress.textContent = progress || "";

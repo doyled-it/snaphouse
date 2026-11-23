@@ -244,3 +244,16 @@ test("climateCards disables the buttons at the limits", () => {
   assert.equal(climateCards(CDOC, { now: 0, comfort: 60 }).comfort.minusDisabled, true);
   assert.equal(climateCards(CDOC, { now: 0, comfort: 81 }).comfort.plusDisabled, true);
 });
+
+import { pairInstructionPanel } from "../../roles/room_picker/files/site/panel-model.js";
+import { pairInstruction } from "../../roles/room_picker/files/site/rooms-model.js";
+
+test("pairInstructionPanel says your phone, names the speaker, and leaves the phone copy alone", () => {
+  assert.equal(
+    pairInstructionPanel("Living Room"),
+    "Now open Bluetooth on your phone, tap Pair new device, choose Living Room, and tap Pair. You can stay there; come back here when it's done.",
+  );
+  assert.match(pairInstructionPanel(null), /choose the house speaker,/);
+  assert.match(pairInstruction("X"), /on this phone/);
+  assert.doesNotMatch(pairInstructionPanel("X"), /this phone/);
+});
