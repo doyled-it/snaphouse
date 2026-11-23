@@ -120,11 +120,19 @@ export function needsPng(previousUpdatedAt, mirror) {
 // What to draw. `lookup(id)` returns { title, thumb } from the page's art index, or
 // null for an id it does not know. Returns { phase, text, thumb, busy, progress,
 // ends }.
-export function viewOf(change, { frameLabel, lookup }) {
+export function viewOf(change, { frameLabel, lookup, nowMs = 0 }) {
   const piece = change && change.targetId && lookup ? lookup(change.targetId) : null;
   const title = piece && typeof piece.title === "string" && piece.title ? piece.title : null;
   const thumb = piece && typeof piece.thumb === "string" && piece.thumb ? piece.thumb : null;
-  const base = { phase: change.phase, thumb: null, busy: false, progress: false, ends: false };
+  const base = {
+    phase: change.phase,
+    action: change.action,
+    thumb: null,
+    busy: false,
+    progress: false,
+    ends: false,
+    fill: progressOf(change, nowMs),
+  };
   switch (change.phase) {
     case "sent":
       return { ...base, text: `Sending to ${frameLabel}...`, busy: true };

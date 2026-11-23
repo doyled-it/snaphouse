@@ -3541,7 +3541,11 @@ function currentChangeView() {
     return null;
   }
   const row = frameList(state.frameControl, state.mirrors).find((r) => r.id === change.frameId);
-  return changeView(change, { frameLabel: row ? row.label : change.frameId, lookup: changeLookup });
+  return changeView(change, {
+    frameLabel: row ? row.label : change.frameId,
+    lookup: changeLookup,
+    nowMs: Date.now(),
+  });
 }
 
 function renderChange() {

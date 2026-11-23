@@ -59,7 +59,19 @@ export function createMoreScreens(panel) {
   const mirrorImg = el("img", "p-mirror-img");
   mirrorImg.alt = "What the frame is showing now";
   const mirrorOff = el("div", "p-mirror-off", "Not responding");
-  mirror.append(mirrorImg, mirrorOff);
+  // The change in flight: sending, the picture it is changing to, then Now showing.
+  const change = el("div", "p-change");
+  change.setAttribute("role", "status");
+  change.setAttribute("aria-live", "polite");
+  const changeThumb = el("img", "p-change-thumb");
+  changeThumb.alt = "";
+  const changeText = el("div", "p-change-text");
+  const changeBar = el("div", "p-change-bar");
+  const changeFill = el("span", "p-change-fill");
+  changeBar.append(changeFill);
+  change.append(changeThumb, changeText, changeBar);
+  change.hidden = true;
+  mirror.append(mirrorImg, mirrorOff, change);
   const actions = el("div", "p-frame-actions");
   const back = button("p-big", "Back", () => host.frameCommand("previous"));
   const nextBtn = button("p-big p-accent", "Next picture", () => host.frameCommand("next"));
@@ -91,6 +103,20 @@ export function createMoreScreens(panel) {
     mirrorOff.hidden = Boolean(src);
     if (src && mirrorImg.getAttribute("src") !== src) mirrorImg.src = src;
     setText(keep, host.pinned() ? "Unpin" : "Keep this one");
+    const view = host.frameChange();
+    change.hidden = !view;
+    if (view) {
+      setText(changeText, view.text);
+      changeThumb.hidden = !view.thumb;
+      if (view.thumb && changeThumb.getAttribute("src") !== view.thumb) changeThumb.src = view.thumb;
+      changeBar.hidden = !view.progress;
+      changeFill.style.transform = `scaleX(${view.fill ?? 0})`;
+    }
+    const busy = view && view.busy ? "true" : null;
+    for (const [btn, action] of [[back, "previous"], [nextBtn, "next"]]) {
+      if (busy && view.action === action) btn.setAttribute("aria-busy", "true");
+      else btn.removeAttribute("aria-busy");
+    }
   }
   panel.register("frame", frame, renderFrame);
 
