@@ -309,6 +309,7 @@ above it) is needed before `garage/command`. The command is sent once, never ret
 failed request shows the hub's own error sentence (`errorLine`); a timeout always shows "No movement
 seen yet. Check the card before trying again." After a command the page polls every 2 s for up to 15 s.
 Both POSTs carry `X-Snaphouse: 1`. UI copy never says ESPHome, board, ntfy, API or homebody.
+The wall panel is the one exception to the hub-decided confirm: its button is always two taps (see Panel layout), and its second tap sends the command straight away.
 
 ## The Bluetooth name is published as a static file
 
@@ -534,6 +535,42 @@ and `panel_backlight.grab_wake_tap` is false, so one tap wakes the screen and di
 overlay. The evdev grab from #184 stays for a panel without the screensaver. `dim_pct` is
 tuned separately on the live panel, never in a screensaver change. Pass mark on the board at
 the 30 fps cap: at most 20 percent total CPU on the Pi 3, 10 percent on the Pi 5.
+
+## Panel layout
+
+The wall panel (800x480, kiosk URL `?panel=1`) gets its own layout from the same page
+(design: `docs/superpowers/specs/2026-11-23-panel-layout-design.md`, plan beside it). `rooms.js`
+fetches `panel.js` by dynamic `import()` only when `panel=1` is present (the screensaver's gate), so
+a phone never gets `html[data-panel]`, `panel.css` or any panel node
+(`tests/js/rooms-panel-wiring.test.js`). `panel.js` builds the shell (a 96 px rail of Music, Climate,
+Garage, More; a 48 px status strip) and the screens: `panel-music.js`, `panel-climate.js`,
+`panel-garage.js`, `panel-more.js` (More, Frames, Gallery, Bluetooth, House health). The phone chrome is
+hidden under `html[data-panel]`; `panel-dom.js` holds the DOM helpers. Bluetooth and House health move the
+page's own pairing, devices and health sections into the panel, so their controllers are unchanged.
+
+Decisions are pure and tested: `panel-model.js` (routes, rail, strip, now-playing bar, room columns,
+climate cards), `panel-garage-model.js` (fill, button, arm), `panel-gallery-model.js` (More tiles, Gallery
+pager, show buttons). Routes on the panel: `#listen` (Music), `#climate`, `#garage`, `#more`, and More's
+sub-screens `#frame`, `#frame/<id>`, `#gallery`, `#gallery/<id>`, `#settings` (Bluetooth), `#health`; a hash
+the panel does not show falls back to `#listen`. While the panel is up, `rooms.js` skips its own
+`applyHash`, tells the page which screen is showing through the `setScreen` hook (so the existing polling
+rules follow), and polls climate and garage at their fast rates from every screen so the strip stays live.
+
+Sizes live in `panel.css`, every rule under `html[data-panel]` (`tests/js/panel-css.test.js`): no text under
+20 px except the rail labels (17 px) and More tile lines (19 px), targets at least 72 px. The existing
+`@media (min-width: 720px) and (max-height: 540px)` block in `style.css` stays for phones held sideways.
+Music has a now-playing bar and one column per room (a vertical fill that takes taps and drags in steps of
+5, plus and minus, On/Off); Only here, Everything off and play history are phone only. `columnFit` flags a
+room count where a column would leave under 60 px of fill (four rooms fit, a fifth does not); the page keeps
+text sizes and the builder is told, not shrunk.
+
+Garage on the panel: the fill is how closed the door is, from `position` when it is a number (also while
+stopped), else full when closed, empty when open, and a fixed 15 s sweep while opening or closing
+(`TRAVEL_MS`). A down link or unknown state shows no fill, UNKNOWN with "Last seen", and a disabled button.
+The first tap arms the button for 4 s (amber, "Tap to open" or "Tap to close"); the second posts
+`garage/intent` and, if the reply says `confirm_required`, sends `garage/command` at once
+(`onGarageTap(action, true)`): never a third tap, one send, the 2 s polling after it. Phones keep the
+hub-decided confirm.
 
 ## Tooling
 
