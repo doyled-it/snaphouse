@@ -85,6 +85,15 @@ import {
   forgetPrompt,
   forgetReminder,
 } from "./rooms-model.js";
+import {
+  FAST_POLL_MS,
+  advance as advanceChange,
+  inFlight as changeInFlight,
+  progressOf,
+  settled as changeSettled,
+  startChange,
+  viewOf as changeView,
+} from "./frame-change-model.js";
 import { createAutosave, changedKeys, saveStatus } from "./autosave-queue.js";
 import { climateTabVisible, frameTabVisible, garageTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
 import {
@@ -225,6 +234,9 @@ const els = {
   mirrorUpdated: document.getElementById("mirror-updated"),
   mirrorCaption: document.getElementById("mirror-caption"),
   frameCaption: document.getElementById("frame-caption"),
+  frameChange: document.getElementById("frame-change"),
+  frameChangeThumb: document.getElementById("frame-change-thumb"),
+  frameChangeText: document.getElementById("frame-change-text"),
   frameControls: document.getElementById("frame-controls"),
   frameBack: document.getElementById("frame-back"),
   frameNext: document.getElementById("frame-next"),
@@ -416,6 +428,8 @@ const state = {
   // built, a held-refresh flag, and the toast timer.
   artIndex: null,
   artControl: null,
+  // The frame change in flight or just finished (frame-change-model.js), or null.
+  change: null,
   artFilter: ALL_FOLDERS,
   libPage: 0,
   artIntervalBuilt: false,
@@ -515,6 +529,7 @@ async function start() {
   refreshHistory();
   timers.add(refreshHealth, HEALTH_MS);
   timers.add(refreshFrame, FRAME_MS);
+  timers.add(changeTick, FAST_POLL_MS);
   timers.add(refreshFrameControl, FRAME_CONTROL_MS);
   timers.add(refreshArt, HEALTH_MS);
   timers.add(() => refreshLibrary({ periodic: true }), LIBRARY_MS);
@@ -1077,6 +1092,12 @@ async function refreshFrame() {
   );
   // Keep only the current frames, so a removed frame does not linger offline.
   state.mirrors = Object.fromEntries(ids.map((id) => [id, mirrors[id] ?? null]));
+  applyMirrors(legacy);
+}
+
+// Draw the chosen frame's mirror from state.mirrors. Shared by the 30 s read of
+// every frame and the 2 s read of one frame while a change is in flight.
+function applyMirrors(legacy) {
   renderFrameSwitcher();
 
   const selMeta = state.mirrors[state.selectedFrame] ?? null;
@@ -2129,13 +2150,13 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
         selectedFrame: () => state.selectedFrame,
         mirrorSrc: () => state.mirrorSrc,
         frameCommand: (action) => runArtCommand(action),
+        frameChange: currentChangeView,
         pinned: () => els.keepToggle.dataset.pinned === "1",
         keep: toggleKeepShowing,
         library: () => (state.artIndex ? piecesInFolder(state.artIndex, ALL_FOLDERS) : []),
         showOnFrame: async (frameId, pieceId) => {
-          const body = artCommandBody(frameId, "show", pieceId);
-          if (!body) return;
-          const result = await postApi("/api/art/command", body);
+          const result = await sendFrameCommand(frameId, "show", pieceId);
+          if (!result) return;
           showToast(result.ok ? "Sent to the frame." : result.error);
           refreshFrame();
         },
@@ -3254,11 +3275,11 @@ async function keepOnFrame(piece) {
   if (!show || !pin) {
     return;
   }
-  let result = await postApi("/api/art/command", show);
-  if (result.ok) {
+  let result = await sendFrameCommand(state.selectedFrame, "show", piece.id);
+  if (result && result.ok) {
     result = await postApi("/api/frame/pin", pin);
   }
-  showToast(result.ok ? "On the frame until you unpin it." : result.error);
+  showToast(result && result.ok ? "On the frame until you unpin it." : (result && result.error) || "");
   refreshArt();
   refreshFrame();
   refreshFrameControl();
@@ -3396,7 +3417,7 @@ async function postApi(path, body) {
       const data = safeJsonParse(await response.text());
       return { ok: false, error: (data && data.error) || `Request failed (${response.status}).` };
     }
-    return { ok: true };
+    return { ok: true, data: safeJsonParse(await response.text()) };
   } catch (err) {
     return { ok: false, error: "Could not reach the art service." };
   }
@@ -3405,12 +3426,155 @@ async function postApi(path, body) {
 // Send a rotation command for the chosen frame. The command always carries the
 // frame id (the design: the page always sends a frame id), so Back, Next, and
 // Show act only on the chosen frame and never move another (Review Focus 2).
-function runArtCommand(action, piece) {
-  const body = artCommandBody(state.selectedFrame, action, piece);
-  if (!body) {
+async function runArtCommand(action, piece) {
+  const result = await sendFrameCommand(state.selectedFrame, action, piece);
+  if (!result) {
     return;
   }
-  runAction("/api/art/command", body);
+  if (!result.ok) {
+    showToast(result.error);
+  }
+  refreshArt();
+  refreshFrame();
+  refreshLibrary();
+}
+
+// --------------------------------------------------------------------------- //
+// Frame change feedback. A tap on Next, Back or Show on the frame shows "Sending
+// to <frame>..." at once; the command reply's seq is then matched against the
+// frame's republished frame.json (frame-change-model.js), which the page reads
+// every 2 s only while the change is in flight. Rules and copy are in the model;
+// this only sends, polls and draws.
+// --------------------------------------------------------------------------- //
+
+// Post one rotation command and track it. Returns the post result, or null when
+// the frame id or action is not one the page may send.
+async function sendFrameCommand(frameId, action, piece) {
+  const body = artCommandBody(frameId, action, piece);
+  if (!body) {
+    return null;
+  }
+  if (!state.artIndex) {
+    refreshLibrary();
+  }
+  const started = startChange({
+    frameId,
+    action,
+    seq: null,
+    targetId: action === "show" ? piece : null,
+    nowMs: Date.now(),
+  });
+  state.change = started;
+  renderChange();
+  const result = await postApi("/api/art/command", body);
+  if (!result.ok) {
+    if (state.change === started) {
+      state.change = null;
+      renderChange();
+    }
+    return result;
+  }
+  // A newer tap has its own change; only the latest one takes this reply's seq.
+  if (state.change === started) {
+    const seq = result.data && result.data.command ? result.data.command.seq : null;
+    state.change = { ...started, seq: Number.isInteger(seq) ? seq : null };
+    renderChange();
+    changeTick();
+  }
+  return result;
+}
+
+let changeReading = false;
+
+async function changeTick() {
+  const change = state.change;
+  if (!change || changeReading) {
+    return;
+  }
+  const nowMs = Date.now();
+  if (!changeInFlight(change)) {
+    if (changeSettled(change, nowMs)) {
+      state.change = null;
+    }
+    renderChange();
+    return;
+  }
+  const urls = frameUrls(change.frameId, controlLegacy());
+  let mirror = null;
+  if (urls) {
+    changeReading = true;
+    try {
+      const response = await fetch(urls.meta, { cache: "no-store" });
+      mirror = response.ok ? safeJsonParse(await response.text()) : null;
+    } catch (err) {
+      mirror = null;
+    } finally {
+      changeReading = false;
+    }
+  }
+  if (state.change !== change) {
+    return;
+  }
+  if (mirror) {
+    // Draws the new picture the moment the frame reports a new updated_at; the
+    // image URL only changes then, so frame.png is fetched only for a new draw.
+    state.mirrors = { ...state.mirrors, [change.frameId]: mirror };
+    applyMirrors(controlLegacy());
+  }
+  const next = advanceChange(change, mirror, Date.now());
+  state.change = next;
+  if (next.phase === "done") {
+    refreshArt();
+  }
+  renderChange();
+}
+
+function changeLookup(id) {
+  const piece = state.artIndex?.pieces?.find((p) => p.id === id);
+  return piece ? { title: piece.title, thumb: piece.thumb } : null;
+}
+
+// The view of the change for the chosen frame, or null when there is none.
+function currentChangeView() {
+  const change = state.change;
+  if (!change || change.frameId !== state.selectedFrame) {
+    return null;
+  }
+  const row = frameList(state.frameControl, state.mirrors).find((r) => r.id === change.frameId);
+  return changeView(change, {
+    frameLabel: row ? row.label : change.frameId,
+    lookup: changeLookup,
+    nowMs: Date.now(),
+  });
+}
+
+function renderChange() {
+  const view = currentChangeView();
+  const box = els.frameChange;
+  box.hidden = !view;
+  els.frameNext.removeAttribute("aria-busy");
+  els.frameBack.removeAttribute("aria-busy");
+  if (!view) {
+    els.frameChangeText.textContent = "";
+    els.frameChangeThumb.hidden = true;
+    return;
+  }
+  box.dataset.phase = view.phase;
+  els.frameChangeText.textContent = view.text;
+  if (view.thumb) {
+    if (els.frameChangeThumb.getAttribute("src") !== view.thumb) {
+      els.frameChangeThumb.src = view.thumb;
+    }
+    els.frameChangeThumb.hidden = false;
+  } else {
+    els.frameChangeThumb.hidden = true;
+  }
+  box.classList.toggle("has-progress", view.progress);
+  box.style.setProperty("--progress", String(progressOf(state.change, Date.now())));
+  const button = state.change.action === "next" ? els.frameNext : state.change.action === "previous" ? els.frameBack : null;
+  if (button && view.busy) {
+    button.setAttribute("aria-busy", "true");
+  }
 }
 
 // Send a write and refresh, showing the server's error text as a toast on

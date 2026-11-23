@@ -2649,3 +2649,73 @@ a.row-title {
     transition-duration: var(--ss-out);
   }
 }
+
+/* Frame change feedback: what the Frame tab says after Next, Back or Show. */
+.frame-change {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.frame-change-thumb {
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  opacity: 0.75;
+}
+
+.frame-change-thumb[hidden] {
+  display: none;
+}
+
+.frame-change-text {
+  grid-column: 2;
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.frame-change-thumb[hidden] + .frame-change-text {
+  grid-column: 1 / -1;
+}
+
+.frame-change-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+  display: none;
+}
+
+.frame-change.has-progress .frame-change-bar {
+  display: block;
+}
+
+/* The push takes about 30 s: rooms.js moves this fill a step at each 2 s read. */
+.frame-change-bar span {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(var(--progress, 0));
+  transition: transform 200ms var(--ease-out);
+}
+
+.frame-controls .btn[aria-busy="true"] {
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame-change-bar span {
+    transition: none;
+  }
+}

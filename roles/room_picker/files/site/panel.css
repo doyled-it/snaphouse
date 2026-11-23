@@ -489,6 +489,7 @@ html[data-panel] .p-frame-body {
   gap: 10px;
 }
 html[data-panel] .p-mirror {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
@@ -780,4 +781,54 @@ html[data-panel] .p-bluetooth .pair-instruction,
 html[data-panel] .p-bluetooth .pair-progress,
 html[data-panel] .p-bluetooth .pair-count {
   font-size: 20px;
+}
+
+/* Frame change feedback over the mirror: sending, changing to, now showing. */
+html[data-panel] .p-change {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: oklch(0.14 0.02 var(--h, 255) / 0.92);
+}
+html[data-panel] .p-change[hidden] {
+  display: none;
+}
+html[data-panel] .p-change-thumb {
+  width: 72px;
+  height: 54px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 6px;
+  opacity: 0.75;
+}
+html[data-panel] .p-change-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 22px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+html[data-panel] .p-change-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: oklch(1 0 0 / 0.08);
+}
+html[data-panel] .p-change-fill {
+  display: block;
+  height: 100%;
+  background: oklch(0.8 0.1 var(--h, 255));
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 200ms ease-out;
+}
+html[data-panel] .p-big[aria-busy="true"] {
+  opacity: 0.6;
 }

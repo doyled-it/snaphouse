@@ -127,6 +127,26 @@
     mode: "0644"
   notify: Reload systemd for room_picker
 
+# The frame follower: a path unit on art-control.json starts a oneshot that
+# republishes the commanded frame's mirror every 2 s while a change is in flight.
+- name: Install the frame follower service unit
+  ansible.builtin.copy:
+    src: snaphouse-frame-follow.service
+    dest: /etc/systemd/system/snaphouse-frame-follow.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for room_picker
+
+- name: Install the frame follower path unit
+  ansible.builtin.copy:
+    src: snaphouse-frame-follow.path
+    dest: /etc/systemd/system/snaphouse-frame-follow.path
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for room_picker
+
 # Make the units known before enabling the timer on a first install. The handler
 # is gated on systemd, so this is a no-op in the CI container.
 - name: Reload systemd now if the units changed
@@ -135,6 +155,15 @@
 - name: Enable and start the house status poll timer
   ansible.builtin.systemd_service:
     name: snaphouse-house-status.timer
+    enabled: true
+    state: started
+  when: common_systemd_init
+  tags:
+    - service
+
+- name: Enable and start the frame follower path unit
+  ansible.builtin.systemd_service:
+    name: snaphouse-frame-follow.path
     enabled: true
     state: started
   when: common_systemd_init
