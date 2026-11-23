@@ -1,6 +1,6 @@
 # Panel layout design
 
-Date: 2026-11-23. Status: draft for owner approval.
+Date: 2026-11-23. Status: draft for owner approval (builder check done).
 
 ## Intent
 
@@ -208,3 +208,57 @@ a 19 px line under it:
   and labels, confirm timing); a check that phone mode is unchanged (no panel
   attribute, no panel-only nodes visible). A visual check on the real panel by
   screenshot after merge.
+
+## Calls made after the builder check
+
+These are level 1's calls, made after a builder read the draft; the owner
+reviews them with the document.
+
+1. **The existing landscape block stays.** `style.css` already has an
+   800x480-ish `@media (min-width: 720px) and (max-height: 540px)` block for Listen
+   (also matched by a phone held sideways). It stays as it is, so phones,
+   sideways or not, see no change. Panel rules live under the panel root
+   attribute and win over it on the panel.
+2. **Panel-only nodes exist only in panel mode.** They are created when `panel=1`
+   is present, never shipped hidden to phones. The phone test pins that no panel
+   attribute and no panel-only node exist without the flag.
+3. **Routes.** Music is `#listen`, then `#climate`, `#garage`, and a new `#more`.
+   More's sub-screens keep their existing hashes and deep links (`#frame`,
+   `#frame/<id>`, `#gallery`, `#gallery/<id>`, `#settings` for Bluetooth), plus a
+   panel-only `#health` for House health. The strip's back button and the rail's
+   More item go to `#more`. A hash the panel does not show (the play-history
+   viewer) falls back to `#listen`.
+4. **Garage confirm on the panel is always two taps.** The owner chose the
+   two-tap button in the mockup. The panel arms locally on the first tap (amber,
+   "Tap to open" or "Tap to close", 4 s). The second tap runs the existing flow:
+   it posts `garage/intent` and, when the reply says `confirm_required`, it sends
+   `garage/command` straight away, because the armed tap was the confirm. There is
+   never a third tap. Errors, the single send and the 2 s polling stay as
+   AGENTS.md describes. Phones keep the hub-decided confirm. AGENTS.md gets a line
+   for the panel exception.
+5. **Garage fill.** Driven by `position` (0 closed, 100 open) whenever it is a
+   number, including while stopped. With no position: full when closed, empty
+   when open, and during opening or closing it moves over a fixed 15 s (a constant
+   in the model), snapping to the final state when the state lands. When the link
+   is down or the state is unknown, the button shows no fill, the word reads
+   UNKNOWN with the existing "Last seen" line, and the button is disabled. Never
+   "closed" unless the link is live.
+6. **Room columns.** The fill takes taps and drags (the existing slider controller
+   in a vertical mode, or a sibling of it). Plus and minus step by 5. An off room
+   keeps its remembered volume, greyed. A room that is not responding greys the
+   whole column, reads "Not responding" under the name, and disables its controls,
+   using the existing listen-model labels.
+7. **Banners and progress on Music.** The speaker banner (which disables room
+   controls) takes the now-playing bar's place at the same height until it
+   clears. The health banner does not show on Music; House health on More shows
+   the count and the strip shows nothing extra. Track progress is a thin line
+   along the bottom edge of the now-playing bar.
+8. **Strip states** reuse the climate and garage models' existing labels: the
+   thermostat unreachable reads "Thermostat offline"; no reading hides the
+   temperature part; idle shows the temperature with "holding 74". The garage
+   with its link down reads "Garage unknown".
+9. **Interim Gallery** uses the same list the phone shows for "All folders"
+   (no trash), and the More tile's count is the library's picture count. A tall
+   piece the frame cannot show gets the same rule as the phone viewer: no show
+   button, with the phone's sentence in its place.
+10. **The clock** is the browser's local time in the locale's own format.
