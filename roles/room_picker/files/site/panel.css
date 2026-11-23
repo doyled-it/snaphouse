@@ -1,0 +1,4 @@
+/* Wall panel (800x480). Every rule is scoped under html[data-panel]. */
+html[data-panel] body {
+  overflow: hidden;
+}

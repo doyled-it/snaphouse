@@ -2086,6 +2086,17 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
     .catch(() => {});
 }
 
+// The wall panel's own layout. Same gate as the screensaver: only a URL with
+// panel=1 fetches the module, so phones never carry a panel node or attribute.
+let panelLayout = null;
+if (new URLSearchParams(location.search).get("panel") === "1") {
+  import("./panel.js")
+    .then((m) => {
+      panelLayout = m.initPanel({});
+    })
+    .catch(() => {});
+}
+
 function updateNowPlayingCard(track) {
   state.nowTrack = track;
   els.np.hidden = !track;
