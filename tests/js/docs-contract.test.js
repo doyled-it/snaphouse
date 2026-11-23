@@ -59,3 +59,9 @@ test("the contract documents the Ente fields in the art index and control sectio
 test("the contract has no em dash", () => {
   assert.ok(!doc.includes("\u2014"));
 });
+
+test("the frame mirror contract documents pending, applied_seq and the follower", () => {
+  for (const word of ["`pending`", "`applied_seq`", "`changing`", "`waiting`", "`failed`", "snaphouse-frame-follow"]) {
+    assert.ok(doc.includes(word), `${word} is missing from the frame mirror contract`);
+  }
+});

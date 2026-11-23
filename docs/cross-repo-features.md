@@ -212,6 +212,41 @@ body is malformed. For one release it also republishes the nightstand's pair at 
 single paths `http://house.local/frame.png` and `/frame.json`. The room-picker page reads the
 same-origin copies and hides a frame's mirror when either is missing.
 
+**Frame change feedback (additive to the Frame mirror file).** `frame.json` may also carry two
+optional fields, so the page can show a change in flight:
+
+```json
+{
+  "updated_at": "2026-11-23T07:00:00-08:00",
+  "screen": "art",
+  "applied_seq": 12,
+  "pending": {"seq": 13, "id": "art/example.jpg", "since": "2026-11-23T07:01:00-08:00",
+              "state": "changing", "reason": null}
+}
+```
+
+`pending` is written by the frame on the cycle it applies a next, previous or show command
+addressed to it, before the e-ink push. `seq` is the command's seq, `id` the piece id the
+rotation moved to, `since` an ISO stamp. `state` is `changing` (the frame will push this piece
+now), `waiting` (the piece is next but the frame is not drawing art now; `reason` is one of
+`music`, `game`, `pin`, `settling`) or `failed` (the push raised; `reason` null). The frame
+clears `pending` on its next mirror write and replaces it when a newer command applies.
+`applied_seq` is the seq of the latest command whose piece is on the panel, written on every
+mirror write after a command push and absent until the first. Confirmation is by seq only
+(`applied_seq >= seq`), never by comparing clocks.
+
+The hub's validator keeps `pending` only when `seq` is a non-negative int, `id` passes the
+piece-id check, `since` is a string of at most 40 characters, and `state` and `reason` are from
+the lists above; otherwise it drops `pending` alone. `applied_seq` must be a non-negative int or
+it is dropped. `POST /api/art/command` already replies `{"command": {"seq", "frame", ...}}`; the
+page matches `pending.seq` and `applied_seq` against that seq. While a change is in flight, the
+path unit `snaphouse-frame-follow.path` (watching `art-control.json`) starts the one-shot
+`snaphouse-frame-follow.service`, which republishes the targeted frame's mirror every 2 s (every
+frame when the command's `frame` is null) until `applied_seq` reaches the seq or 90 s pass from
+the latest command, fetching `frame.png` only when `updated_at` changes. A frame without these
+fields (not yet updated) simply never confirms, and the page ends in its 90 s "did not
+confirm" message.
+
 **Now-playing file.** snaphouse produces, nightstand and the room-picker page consume. The
 hub's `snaphouse-nowplaying` service writes `/var/lib/snaphouse/public/nowplaying/now-playing.json`
 atomically (0644); nginx serves it same-origin at `http://house.local/now-playing.json`. It
