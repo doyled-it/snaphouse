@@ -161,7 +161,8 @@ Variant A from the mockup, with the owner's fill idea:
 A grid of four large tiles (two by two), each with a 44 px icon, a 26 px title and
 a 19 px line under it:
 
-- Frames: "Next or back, keep a picture".
+- Frames: the number of frames ("2 frames"). Tile lines stay short enough not to
+  wrap (owner, 2026-11-23).
 - Gallery: the picture count.
 - Bluetooth: "Pair a phone, devices".
 - House health: "All good" or "N need attention" (amber), from the page's
