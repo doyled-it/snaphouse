@@ -8,6 +8,34 @@ export const ARM_MS = 4000;
 
 const clamp01 = (n) => Math.max(0, Math.min(1, n));
 
+// The glide. The opener reports the door's position in steps a second or more
+// apart; between reports the fill keeps moving at the door's speed so it glides
+// instead of stepping. It runs at most GLIDE_AHEAD (as a fraction of a full
+// travel) past the last report and never moves backwards.
+export const GLIDE_AHEAD = 0.15;
+const FASTEST_MS = 5000; // a full travel faster than this is not believed
+const SLOWEST_MS = 40000; // nor slower than this
+
+// Speed in "open" fraction per ms from the last two reports `{ open, ms }`,
+// falling back to one full travel in TRAVEL_MS.
+export function glideRate(prev, next) {
+  if (!prev || !next) return 1 / TRAVEL_MS;
+  const dt = next.ms - prev.ms;
+  const dOpen = Math.abs(next.open - prev.open);
+  if (!(dt > 0) || !(dOpen > 0)) return 1 / TRAVEL_MS;
+  return Math.min(1 / FASTEST_MS, Math.max(1 / SLOWEST_MS, dOpen / dt));
+}
+
+// Where to draw the door (open fraction) at `nowMs`: the last report moved on by
+// the rate in direction `dir` (1 opening, -1 closing), capped at GLIDE_AHEAD past
+// the report, clamped to 0..1, and never behind `shown` (the last drawn value).
+export function glideOpen(report, dir, rate, nowMs, shown) {
+  const ahead = Math.min(GLIDE_AHEAD, Math.max(0, rate * (nowMs - report.ms)));
+  const est = clamp01(report.open + dir * ahead);
+  if (typeof shown !== "number") return est;
+  return dir > 0 ? Math.max(est, shown) : Math.min(est, shown);
+}
+
 // `doc` is parseGarageText's result, `view` is garageView(doc, now). `startMs` is
 // when the page first saw the door moving (only used with no position).
 // fill: 0 empty (open) to 1 full (closed), or null for no fill (link down or
