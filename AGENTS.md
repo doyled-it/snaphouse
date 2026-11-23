@@ -251,6 +251,40 @@ document the page can parse (`climateTabVisible` in `nav-model.js`, the same sha
 rewritten while it loads) and hidden when the file is missing or malformed. If it
 disappears while the tab is open, `rooms.js` calls `applyHash` and the page returns to Listen.
 
+## Frame change feedback
+
+A tap on Next, Back or Show on the frame (the Frames screen, the gallery viewer, the
+panel) gives feedback at once and then follows the change to the end. The rules are pure
+in `frame-change-model.js` (`startChange`, `advance`, `viewOf`, `settled`, `progressOf`,
+`pollMs`, `needsPng`; tests in `tests/js/frame-change-model.test.js`); `rooms.js`
+(`sendFrameCommand`, `changeTick`, `renderChange`) only sends, polls and draws, and the
+panel draws the same view from `host.frameChange()`.
+
+States: Sending to the frame (at once), Changing to the title (when the republished
+`frame.json` has `pending.seq` equal to the command's seq; Show on the frame starts here
+with the known picture), Up next with what the frame shows instead (`waiting`), "could not
+show it" (`failed`), then Now showing for 3 s when `applied_seq >= seq`. Nothing confirming in
+90 s ends in "did not confirm the change". The seq comes from the `POST /api/art/command`
+reply; confirmation is by seq only, never by comparing clocks. A frame that does not write
+`pending` or `applied_seq` yet always takes the 90 s path. A second tap restarts the flow
+with its own seq. Titles and thumbnails come from the art index (the page loads it if the
+Frames screen has none); an unknown id reads "the next picture" with no thumbnail.
+
+The page reads the one frame's `frame.json` every 2 s only while a change is in flight
+(`FAST_POLL_MS`, registered with `page-timers.js`, so it sleeps while hidden), and never
+fetches `frame.png` itself: the mirror image URL changes only when `updated_at` does.
+
+The hub half is `snaphouse-frame-follow.path` (watching the public `art-control.json`) and
+the one-shot `snaphouse-frame-follow.service` (`lib/snaphouse/framefollow.py`, in the
+`room_picker` role next to the house-status poller, same account and same hardened fetch
+and write helpers). It republishes the commanded frame (every frame when the command has
+none) every 2 s until `applied_seq` reaches the seq or 90 s pass from the latest command,
+fetching `frame.png` only when `updated_at` changed, and keeps the last handled seq in
+`/var/lib/snaphouse/frame-follow/` so a settings-only rewrite of `art-control.json` exits at
+once. `select_frame_meta` passes `pending` and `applied_seq` only when each is valid and
+drops a bad one alone. Panel sizes: change text 22 px, thumbnail 72 px, buttons stay 72 px
+or more. UI copy never says hub, follower or seq.
+
 ## Climate tab
 
 Climate is the page half of the homebody thermostat automation (contract in
