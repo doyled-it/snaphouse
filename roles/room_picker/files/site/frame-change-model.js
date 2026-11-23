@@ -15,6 +15,7 @@ export const CHANGE_TIMEOUT_MS = 90_000;
 export const DONE_MS = 3000;
 export const MESSAGE_MS = 8000;
 export const FAST_POLL_MS = 2000;
+export const PUSH_MS = 35_000;
 
 const WAITING_WHAT = {
   music: "music",
@@ -34,6 +35,7 @@ export function startChange({ frameId, action, seq, targetId, nowMs }) {
     phase: hasTarget ? "changing" : "sent",
     endedMs: null,
     reason: null,
+    changingMs: hasTarget ? nowMs : null,
   };
 }
 
@@ -65,7 +67,7 @@ export function advance(change, mirror, nowMs) {
         };
       }
       if (pending.state === "changing" && (change.phase !== "changing" || change.targetId !== targetId)) {
-        return { ...change, phase: "changing", targetId };
+        return { ...change, phase: "changing", targetId, changingMs: change.changingMs ?? nowMs };
       }
     }
   }
@@ -92,6 +94,15 @@ export function settled(change, nowMs) {
   }
   const hold = change.phase === "done" ? DONE_MS : MESSAGE_MS;
   return nowMs - change.endedMs >= hold;
+}
+
+// How far along the e-ink push looks, 0 to 0.95, counted from when the frame took
+// the command. The push takes about 30 s; this is a gentle guide, never a promise.
+export function progressOf(change, nowMs) {
+  if (!change || change.phase !== "changing" || change.changingMs === null) {
+    return 0;
+  }
+  return Math.min(0.95, Math.max(0, (nowMs - change.changingMs) / PUSH_MS));
 }
 
 export function pollMs(change, idleMs) {

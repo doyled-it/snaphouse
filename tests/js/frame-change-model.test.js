@@ -7,6 +7,7 @@ import {
   inFlight,
   needsPng,
   pollMs,
+  progressOf,
   settled,
   startChange,
   viewOf,
@@ -171,4 +172,16 @@ test("the copy has no em dash", () => {
     viewOf({ ...sent(), phase }, ctx).text
   );
   for (const text of texts) assert.ok(!text.includes("—"));
+});
+
+test("progress is a gentle fill over the 30 s push, from when the frame took the command", () => {
+  const sentOnly = sent();
+  assert.equal(progressOf(sentOnly, T0 + 5000), 0);
+  const changing = advance(sent(), mirror({ pending: pending() }), T0 + 4000);
+  assert.equal(progressOf(changing, T0 + 4000), 0);
+  const half = progressOf(changing, T0 + 4000 + 17_500);
+  assert.ok(half > 0.4 && half < 0.6, String(half));
+  assert.equal(progressOf(changing, T0 + 4000 + 120_000), 0.95);
+  const show = startChange({ frameId: "nightstand", action: "show", seq: 7, targetId: "a.jpg", nowMs: T0 });
+  assert.ok(progressOf(show, T0 + 10_000) > 0);
 });
