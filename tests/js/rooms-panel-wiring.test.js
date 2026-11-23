@@ -8,6 +8,9 @@ const html = readFileSync(new URL("index.html", site), "utf8");
 
 test("rooms.js loads the panel layout only by dynamic import, guarded by panel=1", () => {
   assert.doesNotMatch(rooms, /^import[^;]*\.\/panel\.js/m);
+  // No static import of any panel module (panel-model.js, panel-*.js): phones
+  // must never fetch panel code.
+  assert.doesNotMatch(rooms, /^import[^;(]*from\s+"\.\/panel[-.][^"]*"/m);
   const at = rooms.indexOf('import("./panel.js")');
   assert.ok(at > -1, "dynamic import of panel.js");
   const guard = rooms.lastIndexOf('get("panel") === "1"', at);

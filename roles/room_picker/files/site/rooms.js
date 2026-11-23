@@ -73,6 +73,7 @@ import {
   formatCountdown,
   pairPhase,
   pairInstruction,
+  pairInstructionPanel,
   pairProgress,
   pairOutcomeView,
   shouldPollPair,
@@ -139,7 +140,6 @@ import {
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
 import { classifyMachines, healthMessage, reasonLabel, speakerBanner } from "./health-model.js";
 import { applyPlan, everythingOffPlan, heldStatus, howToText, loadBluetoothName, onlyHerePlan, playbackControls, playbackRequest, roomState } from "./listen-model.js";
-import { pairInstructionPanel } from "./panel-model.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
