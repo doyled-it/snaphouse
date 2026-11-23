@@ -1,4 +1,102 @@
-/* Wall panel (800x480). Every rule is scoped under html[data-panel]. */
+/* Wall panel (800x480, device scale factor 1). Every rule is scoped under
+   html[data-panel]; phones never load this file. */
 html[data-panel] body {
   overflow: hidden;
+  margin: 0;
+  background: oklch(0.2 0.02 var(--h, 255));
+  color: oklch(0.95 0.01 var(--h, 255));
+}
+html[data-panel] body > :not(#p-root):not(.screensaver):not(.toast) {
+  display: none;
+}
+html[data-panel] .p-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  width: 800px;
+  height: 480px;
+  overflow: hidden;
+}
+html[data-panel] .p-rail {
+  display: flex;
+  flex-direction: column;
+  width: 96px;
+  flex: none;
+  background: oklch(0.16 0.02 var(--h, 255));
+}
+html[data-panel] .p-rail-item {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: oklch(0.8 0.02 var(--h, 255));
+  font: inherit;
+}
+html[data-panel] .p-rail-item[aria-current="page"] {
+  background: oklch(0.3 0.06 var(--h, 255));
+  color: oklch(0.98 0.01 var(--h, 255));
+}
+html[data-panel] .p-rail-item:active {
+  background: oklch(0.38 0.08 var(--h, 255));
+}
+html[data-panel] .p-rail-label {
+  font-size: 17px;
+  font-weight: 700;
+}
+html[data-panel] .p-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+html[data-panel] .p-strip {
+  height: 48px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  font-size: 22px;
+}
+html[data-panel] .p-strip-status {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+html[data-panel] .p-strip-temp {
+  font-size: 30px;
+  font-weight: 700;
+}
+html[data-panel] .p-strip-mode,
+html[data-panel] .p-strip-garage,
+html[data-panel] .p-strip-time {
+  font-size: 22px;
+  color: oklch(0.82 0.02 var(--h, 255));
+}
+html[data-panel] .p-strip-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  padding: 0 14px 0 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 24px;
+  font-weight: 700;
+}
+html[data-panel] .p-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 14px 14px;
+  overflow: hidden;
+}
+html[data-panel] button:active {
+  filter: brightness(1.3);
 }

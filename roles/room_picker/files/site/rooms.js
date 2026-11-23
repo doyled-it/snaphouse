@@ -148,6 +148,8 @@ const POLL_MS = 30000;
 const HEALTH_MS = 30000;
 const RECONNECT_MS = 3000;
 const haptics = createHaptics();
+// The kiosk URL's panel=1: the panel layout replaces the phone chrome.
+const PANEL_MODE = new URLSearchParams(location.search).get("panel") === "1";
 // The hub writes now-playing.json continuously and play-history.json only when a
 // play lands, so the card polls quickly and the history slowly. The card's
 // progress bar ticks client-side every second from the position anchor.
@@ -658,6 +660,10 @@ function syncFrameTab() {
 // Resolve the URL hash to a screen. An alias (#art) or a hidden or unknown
 // screen has its hash rewritten in place, so Back never lands on it.
 function applyHash() {
+  // On the wall panel the panel layout owns routing (panel.js, resolvePanelScreen).
+  if (PANEL_MODE) {
+    return;
+  }
   const { screen, hash } = resolveScreen(window.location.hash, navVisible());
   if (window.location.hash !== hash) {
     history.replaceState(null, "", hash);
@@ -2092,7 +2098,7 @@ let panelLayout = null;
 if (new URLSearchParams(location.search).get("panel") === "1") {
   import("./panel.js")
     .then((m) => {
-      panelLayout = m.initPanel({});
+      panelLayout = m.initPanel({ state, timers, navVisible });
     })
     .catch(() => {});
 }

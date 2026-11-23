@@ -47,3 +47,44 @@ export function railActive(screen) {
 export function isSubScreen(screen) {
   return SUB_SCREENS.includes(screen);
 }
+
+const GARAGE_WORDS = { CLOSED: "closed", OPEN: "open", OPENING: "opening", CLOSING: "closing", STOPPED: "stopped", UNKNOWN: "unknown" };
+
+function whole(value) {
+  return typeof value === "number" && Number.isFinite(value) ? String(Math.round(value)) : null;
+}
+
+// The status strip's parts. `thermostat` is the climate document's parsed
+// thermostat ({ reachable, mode, setpointF, temperatureF }) or null when the
+// feature is off; `garage` is garageView's result or null. Each part is null
+// when it should not show. Mode wording: cool and heat name the target, anything
+// else (off, auto, other) is "holding N".
+export function stripParts({ thermostat = null, garage = null, now, locale } = {}) {
+  let temp = null;
+  let mode = null;
+  if (thermostat) {
+    if (thermostat.reachable === false) {
+      mode = "Thermostat offline";
+    } else {
+      temp = whole(thermostat.temperatureF);
+      const target = whole(thermostat.setpointF);
+      if (temp !== null && target !== null) {
+        if (thermostat.mode === "cool") mode = `cooling to ${target}`;
+        else if (thermostat.mode === "heat") mode = `heating to ${target}`;
+        else mode = `holding ${target}`;
+      }
+    }
+  }
+  const word = garage ? GARAGE_WORDS[garage.word] || "unknown" : null;
+  return {
+    temp,
+    mode,
+    garage: word ? `Garage ${word}` : null,
+    time: (now || new Date()).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }),
+  };
+}
+
+// More's sub-screens put a back button where the status lives and hide the time.
+export function stripBack(screen) {
+  return isSubScreen(screen);
+}
