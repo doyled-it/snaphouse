@@ -9,3 +9,51 @@ test("isPanel is true only for panel=1", () => {
   assert.equal(isPanel("?panel=true"), false);
   assert.equal(isPanel(undefined), false);
 });
+
+import {
+  resolvePanelScreen,
+  railItems,
+  railActive,
+  isSubScreen,
+  BACK_HASH,
+} from "../../roles/room_picker/files/site/panel-model.js";
+
+const ALL = { frame: true, climate: true, garage: true };
+
+test("resolvePanelScreen keeps the panel screens and deep links", () => {
+  assert.deepEqual(resolvePanelScreen("#listen", ALL), { screen: "listen", hash: "#listen" });
+  assert.deepEqual(resolvePanelScreen("#more", ALL), { screen: "more", hash: "#more" });
+  assert.deepEqual(resolvePanelScreen("#health", ALL), { screen: "health", hash: "#health" });
+  assert.deepEqual(resolvePanelScreen("#settings", ALL), { screen: "settings", hash: "#settings" });
+  assert.deepEqual(resolvePanelScreen("#frame/nightstand", ALL), { screen: "frame", hash: "#frame/nightstand" });
+  assert.deepEqual(resolvePanelScreen("#gallery/abc", ALL), { screen: "gallery", hash: "#gallery/abc" });
+  assert.deepEqual(resolvePanelScreen("#art/abc", ALL), { screen: "gallery", hash: "#gallery/abc" });
+  assert.deepEqual(resolvePanelScreen("#art", ALL), { screen: "gallery", hash: "#gallery" });
+});
+
+test("resolvePanelScreen falls back to Listen for hidden or unknown hashes", () => {
+  assert.deepEqual(resolvePanelScreen("#garage", { ...ALL, garage: false }), { screen: "listen", hash: "#listen" });
+  assert.deepEqual(resolvePanelScreen("#climate", { ...ALL, climate: false }), { screen: "listen", hash: "#listen" });
+  assert.deepEqual(resolvePanelScreen("#frame", { ...ALL, frame: false }), { screen: "listen", hash: "#listen" });
+  assert.deepEqual(resolvePanelScreen("#nonsense", ALL), { screen: "listen", hash: "#listen" });
+  assert.deepEqual(resolvePanelScreen("", ALL), { screen: "listen", hash: "#listen" });
+  assert.deepEqual(resolvePanelScreen(undefined, ALL), { screen: "listen", hash: "#listen" });
+});
+
+test("railItems lists Music, Climate, Garage, More and hides what is not configured", () => {
+  assert.deepEqual(railItems(ALL).map((i) => i.label), ["Music", "Climate", "Garage", "More"]);
+  assert.deepEqual(railItems(ALL).map((i) => i.screen), ["listen", "climate", "garage", "more"]);
+  assert.deepEqual(railItems({ frame: true, climate: false, garage: false }).map((i) => i.label), ["Music", "More"]);
+});
+
+test("railActive maps More's sub-screens to More", () => {
+  assert.equal(railActive("listen"), "listen");
+  assert.equal(railActive("garage"), "garage");
+  for (const s of ["more", "frame", "gallery", "settings", "health"]) assert.equal(railActive(s), "more");
+});
+
+test("isSubScreen is true for More's sub-screens only, and back goes to #more", () => {
+  for (const s of ["frame", "gallery", "settings", "health"]) assert.equal(isSubScreen(s), true);
+  for (const s of ["listen", "climate", "garage", "more"]) assert.equal(isSubScreen(s), false);
+  assert.equal(BACK_HASH, "#more");
+});
