@@ -84,7 +84,7 @@
 
 **Files:** Modify `AGENTS.md` (frame mirror section: the two fields, when written, the states, that confirmation is by seq), `docs/` contract copy if one exists.
 
-- [ ] **Step 1: Edit** and check with `rg -n "—" AGENTS.md docs` (expect none new).
+- [ ] **Step 1: Edit** and check with a search for the em dash character in the changed docs (expect none new).
 - [ ] **Step 2: Commit** `docs: pending and applied_seq in the frame mirror`.
 
 ### Task 5: hub validator passes pending and applied_seq
@@ -204,7 +204,7 @@
 
 **Files:** Modify `AGENTS.md` (a "Frame change feedback" section: states, follower, 2 s polling, old-frame path; Page navigation text for the Frame tab), `docs/cross-repo-features.md` (finish what Task 1 started: follower seam and the page's use).
 
-- [ ] **Step 1: Edit** and run `rg -n "—" AGENTS.md docs/cross-repo-features.md docs/superpowers/plans/2026-11-23-frame-change-feedback.md` (expect none).
+- [ ] **Step 1: Edit** and search the changed docs for the em dash character (expect none).
 - [ ] **Step 2: Commit** `docs: frame change feedback`.
 
 ### Task 13: full checks and PRs
