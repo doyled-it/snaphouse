@@ -104,3 +104,27 @@ test("user-facing copy avoids jargon", () => {
     assert.doesNotMatch(text, banned, file);
   }
 });
+
+test("healthRows lists every machine: problems first, then OK, then not set up", async () => {
+  const { healthRows } = await import("../../roles/room_picker/files/site/health-model.js");
+  const ok = { verify: "pass", commit: "a", main_commit: "a" };
+  const rows = healthRows([
+    { host: "house", installed: true, status: ok },
+    { host: "office", installed: true, status: null },
+    { host: "panel", installed: false, status: null },
+    { host: "nightstand", installed: true, status: { ...ok, verify: "fail" } },
+    { host: "frame", installed: true, status: { ...ok, commit: "b" } },
+  ]);
+  assert.deepEqual(rows, [
+    { host: "office", state: "attention", text: "Not responding" },
+    { host: "nightstand", state: "attention", text: "Self-check failed" },
+    { host: "frame", state: "attention", text: "Updating" },
+    { host: "house", state: "ok", text: "OK" },
+    { host: "panel", state: "none", text: "Not set up yet" },
+  ]);
+});
+
+test("healthRows is empty for no machines", async () => {
+  const { healthRows } = await import("../../roles/room_picker/files/site/health-model.js");
+  assert.deepEqual(healthRows([]), []);
+});

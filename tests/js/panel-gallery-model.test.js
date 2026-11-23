@@ -55,3 +55,12 @@ test("moreTiles pluralises and warns when something needs attention", () => {
 test("moreTiles leaves out Frames when there are no frames", () => {
   assert.deepEqual(moreTiles({ frames: null, pictureCount: 3, troubled: 0 }).map((x) => x.id), ["gallery", "bluetooth", "health"]);
 });
+
+test("every More tile hash resolves to its own screen, not Music", async () => {
+  const { resolvePanelScreen } = await import("../../roles/room_picker/files/site/panel-model.js");
+  const want = { frames: "frame", gallery: "gallery", bluetooth: "settings", health: "health" };
+  const visible = { frame: true, climate: true, garage: true };
+  for (const t of moreTiles({ frames: 2, pictureCount: 3, troubled: 0 })) {
+    assert.equal(resolvePanelScreen(t.hash, visible).screen, want[t.id], t.id);
+  }
+});

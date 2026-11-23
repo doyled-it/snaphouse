@@ -57,3 +57,18 @@ export function reasonLabel(reason) {
 export function speakerBanner(connection) {
   return connection === "down" ? "Can't reach the speakers right now. Retrying." : null;
 }
+
+// One row per machine for the wall panel's House health: problems first (in
+// the order given), then healthy machines, then machines not set up yet. The
+// verdicts come from classifyMachines; nothing new is decided here. state is
+// "attention", "ok" or "none".
+export function healthRows(entries) {
+  const { troubled, notSetUp } = classifyMachines(entries);
+  const bad = new Set(troubled.map((t) => t.host));
+  const idle = new Set(notSetUp);
+  return [
+    ...troubled.map((t) => ({ host: t.host, state: "attention", text: reasonLabel(t.reason) })),
+    ...entries.filter((e) => !bad.has(e.host) && !idle.has(e.host)).map((e) => ({ host: e.host, state: "ok", text: "OK" })),
+    ...notSetUp.map((host) => ({ host, state: "none", text: "Not set up yet" })),
+  ];
+}

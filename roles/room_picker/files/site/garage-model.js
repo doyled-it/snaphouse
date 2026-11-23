@@ -274,3 +274,15 @@ export function pollMs(screenIsGarage) {
 export function afterCommandPoll() {
   return { everyMs: 2000, forMs: 15000 };
 }
+
+// While the door travels (opening or closing, however it was started) the page
+// reads the document every second so the percentage follows it, for at most 30 s
+// per movement; then the normal cadence resumes. `since` is when this movement
+// was first seen (null when the door is not moving).
+export const MOVE_POLL = { everyMs: 1000, forMs: 30000 };
+
+export function movementPoll({ state, since, now }) {
+  if (state !== "opening" && state !== "closing") return { fast: false, since: null };
+  const start = since === null || since === undefined ? now : since;
+  return { fast: now - start < MOVE_POLL.forMs, since: start };
+}

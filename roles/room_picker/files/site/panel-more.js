@@ -33,7 +33,7 @@ export function createMoreScreens(panel) {
       tileNodes.clear();
       for (const t of tiles) {
         const b = button("p-tile", "", () => {
-          window.location.hash = t.id === "bluetooth" ? "#settings" : `#${t.id}`;
+          window.location.hash = t.hash;
         });
         const title = el("span", "p-tile-title");
         const line = el("span", "p-tile-line");
@@ -186,15 +186,25 @@ export function createMoreScreens(panel) {
   }
   panel.register("settings", bluetooth, () => {});
 
-  // ---- House health: the page's existing lists
+  // ---- House health: one row per machine with its status
   const health = el("section", "p-health");
-  const allGood = el("div", "p-health-good", "All good");
-  health.appendChild(allGood);
-  for (const id of ["needs-attention", "not-set-up"]) {
-    const section = document.getElementById(id);
-    if (section) health.appendChild(section);
-  }
+  const healthList = el("ul", "p-health-list");
+  const allGood = el("div", "p-health-good", "Nothing to show yet");
+  health.append(healthList, allGood);
+  let healthKey = "";
   panel.register("health", health, () => {
-    allGood.hidden = host.health().troubled.length > 0 || host.health().notSetUp.length > 0;
+    const rows = host.health().rows || [];
+    allGood.hidden = rows.length > 0;
+    const key = JSON.stringify(rows);
+    if (key === healthKey) return;
+    healthKey = key;
+    healthList.replaceChildren(
+      ...rows.map((r) => {
+        const li = el("li", "p-health-row");
+        li.dataset.state = r.state;
+        li.append(el("span", "p-health-dot"), el("span", "p-health-name", r.host), el("span", "p-health-status", r.text));
+        return li;
+      }),
+    );
   });
 }
