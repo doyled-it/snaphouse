@@ -152,7 +152,8 @@ Variant A from the mockup, with the owner's fill idea:
 - The button opens or closes with a confirm: the first tap turns it amber and
   reads "Tap to open" (or "Tap to close") for 4 seconds; a second tap in that
   window sends the command through the existing intent and command flow. With
-  no second tap, it goes back.
+  no second tap, it goes back. No hint text around the button: the amber state
+  and its label are the only prompt (owner, 2026-11-23).
 - Not on the panel: alert settings, remote control from away, the recent list.
 
 ### More

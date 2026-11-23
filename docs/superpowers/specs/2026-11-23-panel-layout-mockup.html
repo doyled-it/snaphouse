@@ -237,7 +237,6 @@
           </div>
           <div class="card set" style="padding:14px">
             <button class="btn primary gbtn" style="flex:1">Open</button>
-            <div class="foot gfoot">Tap, then tap again to confirm</div>
           </div>
         </div>
       </section>
@@ -390,7 +389,6 @@
       b.textContent = armed ? (pos >= 100 ? "Tap to close" : "Tap to open")
         : dir ? `${dir > 0 ? "Opening" : "Closing"}, ${Math.round(pos)}%` : (pos >= 100 ? "Close" : "Open");
     });
-    document.querySelectorAll(".gfoot").forEach((f) => { f.textContent = armed ? "Tap again within 4 seconds" : "Tap, then tap again to confirm"; });
   }
   function travel(d) {
     dir = d; const start = performance.now(), from = pos, to = d > 0 ? 100 : 0;
