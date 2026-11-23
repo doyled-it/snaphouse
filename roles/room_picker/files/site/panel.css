@@ -608,25 +608,52 @@ html[data-panel] .p-viewer-img {
 html[data-panel] .p-viewer-side {
   width: 250px;
   flex: none;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+/* A title, artist or note of any length never pushes the buttons off the
+   screen: each is clamped to a few lines, and the buttons never shrink. */
+html[data-panel] .p-viewer-title,
+html[data-panel] .p-viewer-artist,
+html[data-panel] .p-viewer-note {
+  flex: none;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 html[data-panel] .p-viewer-title {
   font-size: 26px;
   font-weight: 700;
+  line-height: 1.2;
+  -webkit-line-clamp: 3;
 }
 html[data-panel] .p-viewer-artist,
 html[data-panel] .p-viewer-note {
   font-size: 21px;
+  line-height: 1.25;
   color: oklch(0.82 0.02 var(--h, 255));
 }
+html[data-panel] .p-viewer-artist {
+  -webkit-line-clamp: 1;
+}
+html[data-panel] .p-viewer-note {
+  -webkit-line-clamp: 2;
+}
 html[data-panel] .p-viewer-buttons {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1 0 auto;
+  margin-top: auto;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   gap: 10px;
+}
+html[data-panel] .p-viewer-buttons > * {
+  min-height: 72px;
+  flex: none;
 }
 
 /* ---- Bluetooth and House health: the page's own sections at panel sizes ---- */
