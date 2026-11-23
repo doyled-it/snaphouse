@@ -342,7 +342,7 @@ html[data-panel] .p-garage-fill {
   position: absolute;
   inset: 0;
   background: oklch(0.45 0.1 var(--h, 255));
-  clip-path: inset(100% 0 0 0);
+  clip-path: inset(0 0 100% 0);
 }
 html[data-panel] .p-garage-label {
   position: relative;

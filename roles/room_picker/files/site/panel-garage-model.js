@@ -8,29 +8,40 @@ export const ARM_MS = 4000;
 
 const clamp01 = (n) => Math.max(0, Math.min(1, n));
 
-// The glide. The opener reports the door's position in steps a second or more
-// apart; between reports the fill keeps moving at the door's speed so it glides
-// instead of stepping. It runs at most GLIDE_AHEAD (as a fraction of a full
-// travel) past the last report and never moves backwards.
-export const GLIDE_AHEAD = 0.15;
+// The glide. The opener reports the door's position about once a second, but
+// the page notices each report on its own poll and render ticks, so the gap
+// between two noticed reports jitters. The speed is therefore the average over
+// the whole movement so far (first moving report to the latest), falling back
+// to this door's measured travel times; between reports the fill moves on at
+// that speed and eases off as it nears GLIDE_AHEAD past the last report, never
+// stopping dead and never moving backwards.
+export const GLIDE_AHEAD = 0.25;
+// Measured on the house door 2026-11-23: about 10.7 s up, 13.5 s down (after the
+// opener's pre-close warning, during which it reports no movement).
+export const OPEN_TRAVEL_MS = 11000;
+export const CLOSE_TRAVEL_MS = 14000;
 const FASTEST_MS = 5000; // a full travel faster than this is not believed
 const SLOWEST_MS = 40000; // nor slower than this
+const MIN_SPAN_MS = 1500; // less movement time than this is too little to average
 
-// Speed in "open" fraction per ms from the last two reports `{ open, ms }`,
-// falling back to one full travel in TRAVEL_MS.
-export function glideRate(prev, next) {
-  if (!prev || !next) return 1 / TRAVEL_MS;
-  const dt = next.ms - prev.ms;
-  const dOpen = Math.abs(next.open - prev.open);
-  if (!(dt > 0) || !(dOpen > 0)) return 1 / TRAVEL_MS;
+// Speed in "open" fraction per ms. `first` is the first report after the door
+// started moving, `latest` the newest, each `{ open, ms }`; `dir` is 1 opening or
+// -1 closing (it picks the fallback).
+export function glideRate(first, latest, dir) {
+  const fallback = 1 / (dir > 0 ? OPEN_TRAVEL_MS : CLOSE_TRAVEL_MS);
+  if (!first || !latest) return fallback;
+  const dt = latest.ms - first.ms;
+  const dOpen = Math.abs(latest.open - first.open);
+  if (!(dt >= MIN_SPAN_MS) || !(dOpen > 0)) return fallback;
   return Math.min(1 / FASTEST_MS, Math.max(1 / SLOWEST_MS, dOpen / dt));
 }
 
 // Where to draw the door (open fraction) at `nowMs`: the last report moved on by
-// the rate in direction `dir` (1 opening, -1 closing), capped at GLIDE_AHEAD past
-// the report, clamped to 0..1, and never behind `shown` (the last drawn value).
+// the rate in direction `dir`, easing toward GLIDE_AHEAD past the report
+// (ahead = A * (1 - e^(-rate * dt / A))), clamped to 0..1, never behind `shown`.
 export function glideOpen(report, dir, rate, nowMs, shown) {
-  const ahead = Math.min(GLIDE_AHEAD, Math.max(0, rate * (nowMs - report.ms)));
+  const dt = Math.max(0, nowMs - report.ms);
+  const ahead = GLIDE_AHEAD * (1 - Math.exp(-(rate * dt) / GLIDE_AHEAD));
   const est = clamp01(report.open + dir * ahead);
   if (typeof shown !== "number") return est;
   return dir > 0 ? Math.max(est, shown) : Math.min(est, shown);
