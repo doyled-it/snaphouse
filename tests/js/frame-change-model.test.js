@@ -171,7 +171,7 @@ test("the copy has no em dash", () => {
   const texts = ["sent", "timeout"].map((phase) =>
     viewOf({ ...sent(), phase }, ctx).text
   );
-  for (const text of texts) assert.ok(!text.includes("—"));
+  for (const text of texts) assert.ok(!text.includes("\u2014"));
 });
 
 test("progress is a gentle fill over the 30 s push, from when the frame took the command", () => {

@@ -270,5 +270,5 @@ def test_follow_units_are_installed_and_the_path_unit_enabled_on_a_real_host():
 def test_follow_units_carry_no_em_dash_or_identifying_data():
     for unit in (FOLLOW_SERVICE, FOLLOW_PATH):
         text = unit.read_text()
-        assert "—" not in text
+        assert "\u2014" not in text
         assert not re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", text)
