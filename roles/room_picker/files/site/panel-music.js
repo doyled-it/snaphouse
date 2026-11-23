@@ -5,8 +5,8 @@ import { swapImage } from "./cover-color.js";
 import { button, el, icon, setText } from "./panel-dom.js";
 
 const TRANSPORT = {
-  previous: "M15.8 5H18v14h-2.2zM5 5.5v13a.6.6 0 0 0 .95.5l8.45-6a1.2 1.2 0 0 0 0-2l-8.45-6A.6.6 0 0 0 5 5.5z",
-  next: "M6 5h2.2v14H6zM19 5.5v13a.6.6 0 0 1-.95.5L9.6 13a1.2 1.2 0 0 1 0-2l8.45-6a.6.6 0 0 1 .95.5z",
+  previous: "M6 5h2.2v14H6zM19 5.5v13a.6.6 0 0 1-.95.5L9.6 13a1.2 1.2 0 0 1 0-2l8.45-6a.6.6 0 0 1 .95.5z",
+  next: "M15.8 5H18v14h-2.2zM5 5.5v13a.6.6 0 0 0 .95.5l8.45-6a1.2 1.2 0 0 0 0-2l-8.45-6A.6.6 0 0 0 5 5.5z",
   play: "M7.5 4.7v14.6a.7.7 0 0 0 1.07.6l11.6-7.3a.7.7 0 0 0 0-1.2L8.57 4.1a.7.7 0 0 0-1.07.6z",
   pause: "M7 4.5h3.4v15H7zM13.6 4.5H17v15h-3.4z",
   plus: "M12 5v14M5 12h14",
@@ -181,7 +181,6 @@ export function createMusicScreen(panel) {
       entry.col.classList.toggle("is-greyed", c.greyed);
       setText(entry.name, c.name);
       setText(entry.status, c.status);
-      entry.status.hidden = !c.status;
       entry.track.setAttribute("aria-label", `${c.name} volume`);
       entry.track.setAttribute("aria-disabled", c.disabled ? "true" : "false");
       entry.plus.disabled = c.disabled;

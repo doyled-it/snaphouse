@@ -94,7 +94,7 @@ html[data-panel] .p-strip-back {
 html[data-panel] .p-stage {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 14px 14px;
+  padding: 0 14px 10px;
   overflow: hidden;
 }
 html[data-panel] button:active {
@@ -196,7 +196,7 @@ html[data-panel] .p-col {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   padding: 8px;
   border-radius: 16px;
   background: oklch(0.26 0.04 var(--h, 255));
@@ -212,6 +212,8 @@ html[data-panel] .p-col-name {
   text-overflow: ellipsis;
 }
 html[data-panel] .p-col-status {
+  min-height: 24px;
+  line-height: 24px;
   font-size: 20px;
   color: oklch(0.82 0.02 var(--h, 255));
 }
@@ -255,7 +257,7 @@ html[data-panel] .p-steps {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 html[data-panel] .p-step {
   flex: 1 1 0;
@@ -304,7 +306,7 @@ html[data-panel] .p-garage {
   gap: 10px;
 }
 html[data-panel] .p-garage-info {
-  flex: 1 1 0;
+  flex: 7 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -314,7 +316,8 @@ html[data-panel] .p-garage-word {
   font-size: 88px;
   line-height: 1;
   font-weight: 800;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
+  white-space: nowrap;
   margin-top: 40px;
 }
 html[data-panel] .p-garage-word[data-state="unknown"] {
@@ -326,7 +329,7 @@ html[data-panel] .p-garage-line {
 }
 html[data-panel] .p-garage-btn {
   position: relative;
-  flex: 1 1 0;
+  flex: 3 1 0;
   min-width: 0;
   border: 0;
   border-radius: 16px;
@@ -640,7 +643,21 @@ html[data-panel] .p-health .section {
   padding: 0;
   background: transparent;
   border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
   font-size: 22px;
+}
+html[data-panel] .p-bluetooth .section::before,
+html[data-panel] .p-bluetooth .section::after,
+html[data-panel] .p-health .section::before,
+html[data-panel] .p-health .section::after {
+  display: none;
+}
+html[data-panel] .p-bluetooth .row,
+html[data-panel] .p-health .row {
+  display: block;
+  padding: 8px 0;
 }
 html[data-panel] .p-bluetooth .section-h,
 html[data-panel] .p-health .section-h {
@@ -671,4 +688,7 @@ html[data-panel] .p-health-good {
 html[data-panel] .toast {
   font-size: 22px;
   bottom: 16px;
+}
+html[data-panel] .p-garage-btn:disabled {
+  opacity: 1;
 }
