@@ -15,10 +15,12 @@ server {
         add_header Access-Control-Allow-Origin "*" always;
         default_type application/json;
     }
-{% if snaphouse_host == "nightstand" %}
+{% if 'nightstand_bootstrap' in (snaphouse_hosts[snaphouse_host].roles | default([])) %}
 
-    # the nightstand host also serves nightstand's own status file. nightstand owns the
-    # directory; snaphouse only exposes it, with the same open-origin header.
+    # every frame host (roles include nightstand_bootstrap: the nightstand and the
+    # office) serves the frame app's own files: status, art history and mirror,
+    # which the hub republishes. nightstand owns the directory; snaphouse only
+    # exposes it, with the same open-origin header.
     location /nightstand/ {
         alias /var/lib/nightstand/public/;
         add_header Access-Control-Allow-Origin "*" always;

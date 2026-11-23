@@ -2,12 +2,11 @@
   What the hub's house-status poll reads, built from the inventory so no hostname
   is hardcoded. An object with two lists:
 
-  "targets": every host's own status file, by its inventory key, plus the
-  nightstand frame's status file that the hub serves on the bedroom machine. The
-  bedroom machine is found by its stable host_id (unchanged by any hostname
-  rename), so this follows a rename of the key automatically. The frame is
-  labelled "nightstand-frame", not "nightstand", so it does not collide with the
-  bedroom machine once that machine's key is renamed to nightstand. The
+  "targets": every host's own status file, by its inventory key, plus each frame
+  app's status file on its frame host (roles include nightstand_bootstrap). The
+  bedroom machine's frame (found by its stable host_id) keeps the label
+  "nightstand-frame"; every other frame is "<host>-frame", so no label collides
+  with a machine's own key. The
   "/nightstand/" path is the nginx alias the web role serves and is unrelated to
   the hostname.
 
@@ -29,8 +28,12 @@
 {% for name, spec in snaphouse_hosts.items() %}
 {% set _ = targets.append({'name': name, 'url': 'http://' ~ name ~ '.local/status.json', 'installed': (spec.installed | default(true))}) %}
 {% endfor %}
-{% set bedroom_host = (snaphouse_hosts | dict2items | selectattr('value.host_id', 'equalto', 'bedroom') | map(attribute='key') | first) %}
-{% set _ = targets.append({'name': 'nightstand-frame', 'url': 'http://' ~ bedroom_host ~ '.local/nightstand/status.json', 'installed': true}) %}
+{% for name, spec in snaphouse_hosts.items() %}
+{% if 'nightstand_bootstrap' in spec.roles %}
+{% set label = 'nightstand-frame' if spec.host_id == 'bedroom' else name ~ '-frame' %}
+{% set _ = targets.append({'name': label, 'url': 'http://' ~ name ~ '.local/nightstand/status.json', 'installed': (spec.installed | default(true))}) %}
+{% endif %}
+{% endfor %}
 {% set frames = [] %}
 {% for name, spec in snaphouse_hosts.items() %}
 {% if 'nightstand_bootstrap' in spec.roles %}
