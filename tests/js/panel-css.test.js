@@ -23,12 +23,13 @@ test("every panel rule is scoped under html[data-panel]", () => {
   }
 });
 
-test("no panel text is under 20px, except the rail labels at 17px", () => {
+test("no panel text is under 20px, except the rail labels (17px) and tile lines (19px), the two numbers the design fixes", () => {
   for (const { selector, body } of all) {
     for (const m of body.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)) {
       const px = Number(m[1]);
       if (px >= 20) continue;
-      assert.ok(/\.p-rail-label/.test(selector) && px === 17, `${selector} uses ${px}px`);
+      const allowed = (/\.p-rail-label/.test(selector) && px === 17) || (/\.p-tile-line/.test(selector) && px === 19);
+      assert.ok(allowed, `${selector} uses ${px}px`);
     }
   }
 });

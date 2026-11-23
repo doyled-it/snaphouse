@@ -371,6 +371,8 @@ const state = {
   // first read has finished, which the Garage tab's visibility waits on.
   garage: null,
   garageProbed: false,
+  // The last classified machines (health-model.js), for the panel's House health.
+  health: { troubled: [], notSetUp: [] },
   config: { rooms: [] },
   cards: new Map(), // room id -> { card, toggle, slider }
   rooms: new Map(), // room id -> latest row from roomsFromStatus
@@ -1025,6 +1027,7 @@ async function refreshHealth() {
     return;
   }
   const { troubled, notSetUp } = classifyMachines(entries);
+  state.health = { troubled, notSetUp };
   renderNotSetUp(notSetUp);
   renderNeedsAttention(troubled);
   const message = healthMessage(troubled);
@@ -2117,6 +2120,23 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
           climateDraft = out.draft;
           if (Object.keys(out.accepted).length > 0) climateQueue.edit(out.accepted);
         },
+        setScreen: showScreen,
+        frames: () => frameList(state.frameControl, state.mirrors),
+        framesVisible: () => navVisible().frame,
+        selectedFrame: () => state.selectedFrame,
+        mirrorSrc: () => state.mirrorSrc,
+        frameCommand: (action) => runArtCommand(action),
+        pinned: () => els.keepToggle.dataset.pinned === "1",
+        keep: toggleKeepShowing,
+        library: () => (state.artIndex ? piecesInFolder(state.artIndex, ALL_FOLDERS) : []),
+        showOnFrame: async (frameId, pieceId) => {
+          const body = artCommandBody(frameId, "show", pieceId);
+          if (!body) return;
+          const result = await postApi("/api/art/command", body);
+          showToast(result.ok ? "Sent to the frame." : result.error);
+          refreshFrame();
+        },
+        health: () => state.health,
         garageTap: (action) => onGarageTap(action, true),
         garageBusy: () => garageBusy,
         garageNotice: () => (garageEls.error.hidden ? "" : garageEls.error.textContent) || garageEls.sent.textContent,

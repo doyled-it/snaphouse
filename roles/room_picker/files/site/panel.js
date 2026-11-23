@@ -5,8 +5,13 @@ import { BACK_HASH, isSubScreen, railActive, railItems, resolvePanelScreen, stri
 import { garageView } from "./garage-model.js";
 import { createMusicScreen } from "./panel-music.js";
 import { createClimateScreen } from "./panel-climate.js";
+import { createMoreScreens } from "./panel-more.js";
 import { createGarageScreen } from "./panel-garage.js";
 import { button, el, icon, setText } from "./panel-dom.js";
+
+// The page's own screen name for each panel screen, so its polling rules (pairing,
+// devices, climate, garage) keep following what is on show.
+const PHONE_SCREEN = { listen: "listen", more: "listen", health: "listen", climate: "climate", garage: "garage", frame: "frame", gallery: "gallery", settings: "settings" };
 
 export function initPanel(host) {
   const root = document.documentElement;
@@ -51,6 +56,7 @@ export function initPanel(host) {
     const { screen, hash } = resolvePanelScreen(window.location.hash, visible());
     if (window.location.hash !== hash) history.replaceState(null, "", hash);
     current = screen;
+    host.setScreen(PHONE_SCREEN[screen] || "listen");
     render();
   }
 
@@ -98,6 +104,12 @@ export function initPanel(host) {
   }
 
   function render() {
+    // A feature that went away (Garage, Climate, Frame) sends the panel to Music.
+    const wanted = resolvePanelScreen(window.location.hash, visible()).screen;
+    if (wanted !== current) {
+      route();
+      return;
+    }
     renderRail();
     renderStrip();
     for (const [name, screen] of screens) {
@@ -124,6 +136,7 @@ export function initPanel(host) {
   createMusicScreen(api);
   createGarageScreen(api);
   createClimateScreen(api);
+  createMoreScreens(api);
   window.addEventListener("hashchange", route);
   host.timers.add(render, 500);
   api.isSub = isSubScreen;
