@@ -119,9 +119,13 @@ search per new album is well inside it.
   (`https://coverartarchive.org/release-group/<id>/front-500`; the release group id
   comes from the search result) before giving up. Preacher's Son is found this way.
 - Image fetches allow 20 s, since CAA redirects to archive.org. Searches keep 10 s.
-- After an error, the same lookup key is not retried for 10 minutes, so one bad
-  album no longer refetches on every track change. Errors still write no miss
-  marker.
+- After an error, the same lookup key is not retried for 60 seconds, so rapid
+  skipping through one bad album does not refetch on every change. Errors still
+  write no miss marker. (Changed from 10 minutes at the owner's request: the hub
+  journal shows failures cluster at the start of an album, Cave World (Deluxe)
+  failed on 10 tracks over about 20 minutes and was then found. Tracks change
+  every 2 to 3 minutes, so a 10 minute rest would leave more opening tracks
+  without a cover.)
 
 **Podcasts (cause 3).** When no show matches its name exactly, accept one whose
 publisher (`artistName`) equals the show name and whose collection name starts with

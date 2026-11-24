@@ -803,9 +803,9 @@ def test_fetch_failure_is_not_cached_as_miss(tmp_path):
     lookup_dir = _lookup_dir(tmp_path)
     assert not (lookup_dir.exists() and list(lookup_dir.glob("*.none")))
 
-    # Not suppressed for good: after the 10 minute rest the lookup reaches the
+    # Not suppressed for good: after the 60 s rest the lookup reaches the
     # network again (the rest itself is covered by the backoff tests).
-    now[0] += 601
+    now[0] += 61
     assert lookup.find("Song", "An Artist", "An Album", "music", None) is None
     assert len(fetch.calls) > first
 
@@ -1757,7 +1757,7 @@ def _ticking_clock(start=1000.0):
     return (lambda: now[0]), now
 
 
-def test_a_failed_music_lookup_is_not_retried_for_ten_minutes(tmp_path):
+def test_a_failed_music_lookup_is_not_retried_for_a_minute(tmp_path):
     fetch = FakeFetch(
         [("itunes.apple.com", lambda url: None), ("musicbrainz.org", lambda url: None)]
     )
@@ -1768,24 +1768,24 @@ def test_a_failed_music_lookup_is_not_retried_for_ten_minutes(tmp_path):
     first = len(fetch.calls)
     assert first > 0
 
-    now[0] += 300
+    now[0] += 30
     assert lookup.find("Another Song", "Artist", "Album", "music", None) is None
     assert len(fetch.calls) == first
 
-    now[0] += 301
+    now[0] += 31
     assert lookup.find("Song", "Artist", "Album", "music", None) is None
     assert len(fetch.calls) > first
     assert not list(_lookup_dir(tmp_path).glob("*.none"))
 
 
-def test_a_failed_podcast_lookup_is_not_retried_for_ten_minutes(tmp_path):
+def test_a_failed_podcast_lookup_is_not_retried_for_a_minute(tmp_path):
     fetch = FakeFetch([])
     clock, now = _ticking_clock()
     lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=lambda _s: None)
 
     lookup.find("Ep", "Show", "Show", "long_form", ["Podcast"])
     first = len(fetch.calls)
-    now[0] += 60
+    now[0] += 30
     lookup.find("Ep 2", "Show", "Show", "long_form", ["Podcast"])
     assert len(fetch.calls) == first
 

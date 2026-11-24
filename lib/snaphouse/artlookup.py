@@ -135,9 +135,9 @@ _NOID_SUFFIX = ".noid"
 _SIDECAR_SUFFIXES = (_ID_SUFFIX, _NOID_SUFFIX)
 _DEFAULT_MISS_TTL = 7 * 86400
 _DEFAULT_MAX_FILES = 300
-# After a failed lookup the same key is left alone for this long, so one bad
+# After a failed lookup the same key is left alone for this long (60 s), so rapid skipping does not refetch; one bad
 # album is not refetched on every track change. Errors still write no marker.
-_ERROR_BACKOFF_S = 600.0
+_ERROR_BACKOFF_S = 60.0
 
 # A lookup resolves to one of three outcomes. FOUND carries the cover bytes. MISS
 # means the search ran, parsed, and matched nothing: a real miss, cached so the
@@ -495,7 +495,7 @@ class ArtLookup:
         resolved = self._resolve(chosen, kind, title, artist, album)
         if resolved.outcome == _ERROR:
             # A fetch failed; transient, so leave no marker. The key rests for
-            # ten minutes, then the next play retries.
+            # a minute, then the next play retries.
             self._note_error(key)
             return (None, "failure", None)
         if resolved.image is None:

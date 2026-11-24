@@ -4,7 +4,7 @@
 
 **Goal:** Find more album covers by searching Apple first, matching names fuzzily on both Apple and MusicBrainz, and stopping transient errors from becoming misses.
 
-**Architecture:** A new pure module `lib/snaphouse/covermatch.py` holds the shared matcher (title and artist rules). `lib/snaphouse/artlookup.py` gains an Apple music search ahead of MusicBrainz, a fetch that reports why it failed, a MusicBrainz 503 retry, release then release-group art, a 10 minute error backoff and one log line per outcome. Cache layout and keys do not change.
+**Architecture:** A new pure module `lib/snaphouse/covermatch.py` holds the shared matcher (title and artist rules). `lib/snaphouse/artlookup.py` gains an Apple music search ahead of MusicBrainz, a fetch that reports why it failed, a MusicBrainz 503 retry, release then release-group art, a 60 second error backoff and one log line per outcome. Cache layout and keys do not change.
 
 **Tech Stack:** Python stdlib, Pillow (already present), pytest with a fake `Fetch` serving recorded fixtures from `tests/python/fixtures/artlookup/`.
 
@@ -27,7 +27,7 @@
 - A "Various Artists" compilation never matches a named artist (Task 3).
 - An Apple outage with MusicBrainz parsing a miss is an error, not a 7 day miss marker (Task 5).
 - A track with no album and no matching song stays a miss, and a song with another title or artist is rejected (Task 3).
-- A bad album does not refetch on every track change for 10 minutes (Task 6).
+- A bad album does not refetch on every track change for 60 seconds (Task 6).
 
 ## File structure
 
@@ -104,14 +104,14 @@
 - [ ] Test `test_apple_error_with_musicbrainz_hit_finds_cover`.
 - [ ] Run, see failures. Implement. Commit `feat(covers): fall back to the next release and release-group art`.
 
-### Task 6: Error backoff
+### Task 6: Error backoff (60 s)
 
 **Files:** Modify `lib/snaphouse/artlookup.py`; test `test_artlookup.py`.
 
-**Interfaces:** `self._error_until: dict[str, float]` keyed by the full-credit key; `_ERROR_BACKOFF_S = 600`. After an `_ERROR` (music, podcast and audiobook) the same key returns a failure with no network call until the clock passes the deadline. No marker is written.
+**Interfaces:** `self._error_until: dict[str, float]` keyed by the full-credit key; `_ERROR_BACKOFF_S = 60`. After an `_ERROR` (music, podcast and audiobook) the same key returns a failure with no network call until the clock passes the deadline. No marker is written.
 
-- [ ] Test: first `find` fails (all fetches None), second `find` 5 minutes later makes zero fetch calls and still returns None, third at 11 minutes fetches again (injected clock).
-- [ ] Run, see failure. Implement. Commit `feat(covers): do not retry a failed lookup for 10 minutes`.
+- [ ] Test: first `find` fails (all fetches None), second `find` 30 s later makes zero fetch calls and still returns None, third at 61 s fetches again (injected clock).
+- [ ] Run, see failure. Implement. Commit `feat(covers): do not retry a failed lookup for 60 seconds`.
 
 ### Task 7: Podcast publisher-prefix match
 
