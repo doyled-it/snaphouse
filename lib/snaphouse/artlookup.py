@@ -135,6 +135,9 @@ _NOID_SUFFIX = ".noid"
 _SIDECAR_SUFFIXES = (_ID_SUFFIX, _NOID_SUFFIX)
 _DEFAULT_MISS_TTL = 7 * 86400
 _DEFAULT_MAX_FILES = 300
+# After a failed lookup the same key is left alone for this long, so one bad
+# album is not refetched on every track change. Errors still write no marker.
+_ERROR_BACKOFF_S = 600.0
 
 # A lookup resolves to one of three outcomes. FOUND carries the cover bytes. MISS
 # means the search ran, parsed, and matched nothing: a real miss, cached so the
@@ -389,6 +392,16 @@ class ArtLookup:
         self._log = log if log is not None else logging.getLogger("snaphouse.artlookup")
         self._last_musicbrainz: float | None = None
         self._last_reason: str = ""
+        self._error_until: dict[str, float] = {}
+
+    def _backing_off(self, key: str) -> bool:
+        return self._clock() < self._error_until.get(key, 0.0)
+
+    def _note_error(self, key: str) -> None:
+        self._error_until[key] = self._clock() + _ERROR_BACKOFF_S
+        if len(self._error_until) > 512:
+            now = self._clock()
+            self._error_until = {k: t for k, t in self._error_until.items() if t > now}
 
     def _get(self, url: str) -> Optional[bytes]:
         """Run the injected fetch; None on failure, with the reason kept."""
@@ -477,9 +490,13 @@ class ArtLookup:
         if self._miss_fresh(miss_path):
             return (None, "miss", None)
 
+        if self._backing_off(key):
+            return (None, "failure", None)
         resolved = self._resolve(chosen, kind, title, artist, album)
         if resolved.outcome == _ERROR:
-            # A fetch failed; transient, so leave no marker and retry next play.
+            # A fetch failed; transient, so leave no marker. The key rests for
+            # ten minutes, then the next play retries.
+            self._note_error(key)
             return (None, "failure", None)
         if resolved.image is None:
             # A real miss: the search ran and matched nothing.
@@ -549,6 +566,8 @@ class ArtLookup:
         # Step 1: Apple first (one search matches the whole credit by any of its
         # names), then MusicBrainz on the full track credit. Skip both when a
         # fresh miss marker already records that this exact credit found nothing.
+        if self._backing_off(full_key):
+            return (None, "failure", None)
         if not self._miss_fresh(full_miss):
             apple = self._apple_music(title, artist, album)
             resolved = apple
@@ -568,6 +587,7 @@ class ArtLookup:
                 return stored
             if _ERROR in (apple.outcome, resolved.outcome):
                 # One source failed to answer, so "no cover" is not proven.
+                self._note_error(full_key)
                 return (None, "failure", None)
             self._write_miss(full_miss)
 
@@ -580,6 +600,7 @@ class ArtLookup:
             return (None, "miss", None)
         resolved = self._music(lead, album)
         if resolved.outcome == _ERROR:
+            self._note_error(full_key)
             return (None, "failure", None)
         if resolved.image is not None:
             return self._store_cover(lead_key, lead_image, lead_miss, resolved.image)
