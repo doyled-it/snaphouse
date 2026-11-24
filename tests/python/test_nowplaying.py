@@ -1029,3 +1029,20 @@ def test_frame_view_unchanged():
     doc = tracker.now_playing_doc(dt(700))
     assert doc["track"] is None
     assert doc["rooms"] == ["Bedroom", "Office"]
+
+
+def test_new_track_arriving_paused_gets_its_own_hold():
+    tracker = _paused_bluetooth()
+    tracker.tick(dt(900))
+    assert tracker.now_playing_doc(dt(900))["resume"]["title"] == "Song"
+    # A new track arrives already paused: it is a track for its own 600 s hold.
+    tracker.on_properties("House", _bt_props(title="Next", status="paused", position=0.0), dt(1000))
+    doc = tracker.now_playing_doc(dt(1000))
+    assert doc["track"]["title"] == "Next"
+    assert doc["resume"] is None
+    tracker.tick(dt(1000 + 599))
+    assert tracker.now_playing_doc(dt(1599))["track"]["title"] == "Next"
+    tracker.tick(dt(1000 + 601))
+    doc = tracker.now_playing_doc(dt(1601))
+    assert doc["track"] is None
+    assert doc["resume"]["title"] == "Next"

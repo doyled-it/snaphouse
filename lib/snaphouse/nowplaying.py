@@ -565,6 +565,11 @@ class Tracker:
         self._play_s = 0.0
         self._anchor_pos = None
         self._anchor_at = None
+        # A new track gets its own hold: a prior track's resumable state and
+        # not-playing clock must not carry over to it (one that arrives already
+        # paused would otherwise move straight to `resume`, hidden from frames).
+        self._resumable = False
+        self._not_playing_since = None
         # A new track has no podcast id until its own lookup lands.
         self._podcast_id = None
 

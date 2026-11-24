@@ -96,7 +96,8 @@ export function createScreensaver({
   // Draw the track into the ambient layer (kept current even while down, so the
   // first frame after a show is right).
   function drawAmbient() {
-    if (!track) return;
+    // Idle while the page is hidden; the visibility handler redraws on return.
+    if (!track || doc.hidden) return;
     ambTitle.textContent = track.title;
     ambArtist.textContent = track.artist || "";
     const src = track.artUrl || null;

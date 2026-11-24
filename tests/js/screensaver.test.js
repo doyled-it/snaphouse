@@ -348,3 +348,19 @@ test("ambient text follows setTrack after a dismiss", () => {
   assert.equal(byClass(env, "p-amb-title").textContent, "Later");
   assert.equal(before, "Song");
 });
+
+test("the ambient layer is not redrawn while the page is hidden", () => {
+  const env = makeEnv(night());
+  const s = make(env);
+  s.setTrack(track({ position: 10, positionAt: night().toISOString() }));
+  env.clock.advance(61 * 1000);
+  env.doc.hidden = true;
+  env.doc.dispatch("visibilitychange");
+  const fill = byClass(env, "p-amb-fill");
+  const frozen = fill.style.transform;
+  env.clock.advance(20 * 1000);
+  assert.equal(fill.style.transform, frozen);
+  env.doc.hidden = false;
+  env.doc.dispatch("visibilitychange");
+  assert.notEqual(fill.style.transform, frozen);
+});
