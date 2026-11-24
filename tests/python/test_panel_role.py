@@ -501,39 +501,71 @@ def test_dim_level_is_unchanged_by_the_screensaver_work():
 
 
 def test_screensaver_settings_live_in_vars():
-    assert ALL_VARS["panel_screensaver"] == {"enabled": True, "day_idle_s": 60}
+    assert ALL_VARS["panel_screensaver"] == {"enabled": True, "day_idle_s": 60, "brightness_pct": 40}
     assert ALL_VARS["panel_backlight"]["grab_wake_tap"] is False
 
 
-def test_backlight_unit_drops_the_grab_when_the_screensaver_handles_the_tap():
-    unit = _render(
-        "snaphouse-backlight.service.j2",
-        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": False},
-        panel_screensaver={"enabled": True, "day_idle_s": 300},
-    )
-    assert "--no-grab" in unit
-    # The flag ends the ExecStart line; the next directive keeps its own line.
-    exec_line = next(ln for ln in unit.splitlines() if ln.startswith("ExecStart="))
-    assert exec_line.endswith(" --no-grab")
-    assert any(ln.startswith("Restart=") for ln in unit.splitlines())
+def _exec_line(unit: str) -> str:
+    return next(ln for ln in unit.splitlines() if ln.startswith("ExecStart="))
 
 
-def test_backlight_unit_keeps_the_grab_without_the_screensaver():
-    unit = _render(
-        "snaphouse-backlight.service.j2",
-        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": False},
-        panel_screensaver={"enabled": False, "day_idle_s": 300},
-    )
-    assert "--no-grab" not in unit
+def test_backlight_unit_has_no_grab_flags_by_default():
+    # The daemon decides the grab from the live settings: only while dimmed with
+    # the screensaver off. The role no longer bakes --no-grab in.
+    for enabled in (True, False):
+        unit = _render(
+            "snaphouse-backlight.service.j2",
+            panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": False},
+            panel_screensaver={"enabled": enabled, "day_idle_s": 300},
+        )
+        assert "--no-grab" not in unit
+        assert "--force-grab" not in unit
 
 
-def test_backlight_unit_keeps_the_grab_when_grab_wake_tap_is_set():
+def test_backlight_unit_forces_the_grab_only_when_grab_wake_tap_is_set():
     unit = _render(
         "snaphouse-backlight.service.j2",
         panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": True},
         panel_screensaver={"enabled": True, "day_idle_s": 300},
     )
-    assert "--no-grab" not in unit
+    assert _exec_line(unit).endswith(" --force-grab")
+    assert any(ln.startswith("Restart=") for ln in unit.splitlines())
+
+
+def test_backlight_unit_passes_settings_url_panel_id_port_and_origin():
+    unit = _render(
+        "snaphouse-backlight.service.j2",
+        panel_backlight=BACKLIGHT_CTX,
+        panel_screensaver={"enabled": True, "day_idle_s": 300},
+        panel_url="http://hub.example/",
+        snaphouse_host="panel",
+        backlight_local_port=8784,
+    )
+    line = _exec_line(unit)
+    assert "--settings-url ${SNAPHOUSE_HUB_ORIGIN}/panel-settings.json" in line
+    assert "--panel-id panel" in line
+    assert "--local-port 8784" in line
+    assert "--allow-origin ${SNAPHOUSE_HUB_ORIGIN}" in line
+
+
+def test_backlight_unit_passes_the_screensaver_defaults_and_the_single_wait():
+    unit = _render(
+        "snaphouse-backlight.service.j2",
+        panel_backlight={**BACKLIGHT_CTX, "dim_timeout_s": 999},
+        panel_screensaver={"enabled": False, "day_idle_s": 120, "brightness_pct": 25},
+    )
+    line = _exec_line(unit)
+    assert "--screensaver off" in line
+    assert "--screensaver-pct 25" in line
+    # One wait for day and night: day_idle_s, not dim_timeout_s.
+    assert "--dim-timeout 120" in line
+    assert "999" not in line
+
+
+def test_backlight_exec_start_is_one_line():
+    unit = _render("snaphouse-backlight.service.j2", panel_backlight=BACKLIGHT_CTX)
+    assert unit.count("ExecStart=") == 1
+    assert _exec_line(unit).startswith("ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight")
 
 
 # --------------------------------------------------------------------------- #
@@ -544,7 +576,7 @@ SS_CTX = {
     "panel_screensaver": {"enabled": True, "day_idle_s": 300},
     "panel_backlight": {**BACKLIGHT_CTX, "grab_wake_tap": False},
 }
-SS_QUERY = "panel=1&idle=300&nidle=60&qs=22:00&qe=06:00"
+SS_QUERY = "panel=1&pid=panel&ss=1&idle=300&nidle=300&qs=22:00&qe=06:00"
 
 
 def _panel_url(**context) -> str:
@@ -587,20 +619,28 @@ def test_kiosk_url_handles_a_path_without_a_slash_and_a_trailing_question_mark()
     )
 
 
-def test_kiosk_url_uses_the_configured_timing():
+def test_kiosk_url_uses_one_wait_for_day_and_night():
     url = _panel_url(
         panel_screensaver={"enabled": True, "day_idle_s": 120},
         panel_backlight={**BACKLIGHT_CTX, "dim_timeout_s": 45, "quiet_start": "23:30"},
     )
-    assert "idle=120&nidle=45&qs=23:30&qe=06:00" in url
+    assert "idle=120&nidle=120&qs=23:30&qe=06:00" in url
 
 
-def test_kiosk_url_is_unchanged_when_the_screensaver_is_off():
-    assert _panel_url(
+def test_kiosk_url_carries_the_panel_id():
+    assert "&pid=panel&" in _panel_url(snaphouse_host="panel", **SS_CTX)
+    assert "&pid=hall&" in _panel_url(snaphouse_host="hall", **SS_CTX)
+
+
+def test_kiosk_url_is_panel_mode_even_when_the_screensaver_is_off():
+    # The page needs panel=1 and its id for the settings pages; ss=0 is the
+    # fallback for "screensaver off" until the hub's settings arrive.
+    url = _panel_url(
         panel_url="http://h.example/#x",
         panel_screensaver={"enabled": False, "day_idle_s": 300},
         panel_backlight=BACKLIGHT_CTX,
-    ) == "http://h.example/#x"
+    )
+    assert url == "http://h.example/?panel=1&pid=panel&ss=0&idle=300&nidle=300&qs=22:00&qe=06:00#x"
 
 
 def test_kiosk_env_change_restarts_the_kiosk():
@@ -638,13 +678,13 @@ def test_backlight_unit_falls_back_to_the_kiosks_default_origin():
     assert "Environment=SNAPHOUSE_HUB_ORIGIN=http://house.local\n" in unit
 
 
-def test_backlight_unit_keeps_no_grab_last_with_the_music_flag():
+def test_backlight_unit_keeps_the_music_flag_before_the_optional_force_grab():
     unit = _render(
         "snaphouse-backlight.service.j2",
         panel_url="http://hub.example/",
         panel_screensaver={"enabled": True, "day_idle_s": 300},
-        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": False},
+        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": True},
     )
-    exec_line = next(ln for ln in unit.splitlines() if ln.startswith("ExecStart="))
-    assert exec_line.endswith(" --no-grab")
-    assert "--now-playing-url" in exec_line
+    line = _exec_line(unit)
+    assert line.endswith(" --force-grab")
+    assert "--now-playing-url" in line

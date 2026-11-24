@@ -1,14 +1,16 @@
 {#
   The backlight schedule daemon. It runs snaphouse.backlight from the on-device
-  venv, dimming the official DSI display during the shared quiet hours and waking
-  it to full on a touch (then back to dim after the idle timeout), full otherwise.
-  The levels, timeout, and quiet-hours window come from panel_backlight in
-  vars/all.yml, inlined here so one place in the repo owns them. With the page
-  screensaver on (panel_screensaver.enabled) and grab_wake_tap false, the daemon
-  runs with --no-grab: the page swallows the waking tap instead. The daemon also
-  reads the hub's now-playing.json (the origin comes from panel_url, the same URL
-  the kiosk opens) and holds the screen at full while music plays or was paused
-  under five minutes ago; with the hub unreachable it dims as normal.
+  venv, dimming the official DSI display from this panel's own settings and waking
+  it to Brightness on a touch. The settings come from the hub (panel-settings.json,
+  read with the now-playing poll, with the last good copy cached on disk); the flags
+  below are only the fallback for a panel with no cache and no hub, inlined from
+  panel_backlight and panel_screensaver in vars/all.yml so one place in the repo
+  owns the defaults. One wait (panel_screensaver.day_idle_s) covers day and night,
+  so --dim-timeout takes it, not panel_backlight.dim_timeout_s. The daemon grabs the
+  touchscreen only while dimmed to the night level with the screensaver off, unless
+  panel_backlight.grab_wake_tap forces it (--force-grab). It also answers a
+  loopback-only preview and refresh API on backlight_local_port, for the hub origin
+  only (--allow-origin), derived from panel_url, the same URL the kiosk opens.
 #}
 {% set hub_origin = (panel_url | default('http://house.local/')).split('#')[0].split('?')[0].split('/')[0:3] | join('/') -%}
 [Unit]
@@ -27,7 +29,7 @@ Type=simple
 # root-owned device nodes, so it runs as root. It is stdlib only.
 Environment=PYTHONPATH=/opt/snaphouse/lib
 Environment=SNAPHOUSE_HUB_ORIGIN={{ hub_origin }}
-ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight --full-pct {{ panel_backlight.full_pct }} --dim-pct {{ panel_backlight.dim_pct }} --dim-timeout {{ panel_backlight.dim_timeout_s }} --quiet-start {{ panel_backlight.quiet_start }} --quiet-end {{ panel_backlight.quiet_end }} --now-playing-url ${SNAPHOUSE_HUB_ORIGIN}/now-playing.json{{ ' --no-grab' if ((panel_screensaver | default({})).enabled | default(false) and not (panel_backlight.grab_wake_tap | default(false))) else '' }}
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight --full-pct {{ panel_backlight.full_pct }} --dim-pct {{ panel_backlight.dim_pct }} --dim-timeout {{ (panel_screensaver | default({})).day_idle_s | default(panel_backlight.dim_timeout_s) }} --quiet-start {{ panel_backlight.quiet_start }} --quiet-end {{ panel_backlight.quiet_end }} --screensaver {{ 'on' if (panel_screensaver | default({})).enabled | default(false) else 'off' }} --screensaver-pct {{ (panel_screensaver | default({})).brightness_pct | default(40) }} --panel-id {{ snaphouse_host | default('panel') }} --settings-url ${SNAPHOUSE_HUB_ORIGIN}/panel-settings.json --local-port {{ backlight_local_port | default(8784) }} --allow-origin ${SNAPHOUSE_HUB_ORIGIN} --now-playing-url ${SNAPHOUSE_HUB_ORIGIN}/now-playing.json{{ ' --force-grab' if (panel_backlight.grab_wake_tap | default(false)) else '' }}
 Restart=always
 RestartSec=2
 
