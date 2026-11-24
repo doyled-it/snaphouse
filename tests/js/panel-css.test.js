@@ -83,3 +83,11 @@ test("the settings pages and the screensaver preview are styled under html[data-
     assert.ok(typeof rule(sel) === "string", `missing rule for ${sel}`);
   }
 });
+
+test("More tiles put the icon beside the text so three rows fit the 422px stage", () => {
+  const tile = rule(".p-tile");
+  assert.match(tile, /display:\s*grid/);
+  assert.match(tile, /grid-template-columns:\s*auto 1fr/);
+  assert.match(rule(".p-tile > svg"), /grid-row:\s*1 \/ span 2/);
+  assert.match(rule(".p-more"), /grid-auto-rows:\s*minmax\(0, 1fr\)/);
+});

@@ -601,30 +601,41 @@ html[data-panel] .p-more {
   height: 100%;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-auto-rows: 1fr;
+  grid-auto-rows: minmax(0, 1fr);
   gap: 10px;
 }
+/* Icon beside the title and line, so three rows of tiles fit the 422px stage. */
 html[data-panel] .p-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 8px;
-  padding: 18px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 18px;
+  row-gap: 6px;
+  min-height: 0;
+  padding: 18px 22px;
   border: 0;
   border-radius: 16px;
   background: oklch(0.26 0.04 var(--h, 255));
   color: inherit;
   text-align: left;
 }
+html[data-panel] .p-tile > svg {
+  grid-row: 1 / span 2;
+  align-self: center;
+}
 html[data-panel] .p-tile-title {
+  min-width: 0;
   font-size: 26px;
   font-weight: 700;
 }
 html[data-panel] .p-tile-line {
   font-size: 19px;
+  min-width: 0;
   color: oklch(0.82 0.02 var(--h, 255));
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 html[data-panel] .p-tile[data-warn="true"] .p-tile-line {
   color: oklch(0.82 0.15 75);
