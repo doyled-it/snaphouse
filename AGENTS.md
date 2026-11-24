@@ -547,10 +547,12 @@ cover is the single source of color. Tests: `tests/js/cover-color.test.js`.
 
 The wall panel shows a slow Aurora canvas over the room picker when idle (design:
 `docs/superpowers/specs/2026-11-22-panel-screensaver-design.md`). It is panel-only:
-the panel role appends `?panel=1&idle=<s>&nidle=<s>&qs=HH:MM&qe=HH:MM` to `panel_url`
-in `snaphouse-kiosk.env.j2` (query before any `#fragment`, merged with an existing
-query), from `panel_screensaver` and `panel_backlight` in `vars/all.yml`. The page
-reads them once at load, so a changed env file restarts the kiosk. `rooms.js` fetches
+the panel role appends `?panel=1&pid=<id>&ss=<1|0>&lp=<port>&idle=<s>&nidle=<s>&qs=HH:MM&qe=HH:MM`
+to `panel_url` in `snaphouse-kiosk.env.j2` (query before any `#fragment`, merged with an existing
+query, always present, `ss=0` when the screensaver is off), from `panel_screensaver` and
+`panel_backlight` in `vars/all.yml`. `idle` and `nidle` are both `panel_screensaver.day_idle_s`
+(one wait for day and night). They are now only the fallback for the panel's own settings from the hub
+(see Panel settings); the page reads them once at load, so a changed env file restarts the kiosk. `rooms.js` fetches
 `screensaver.js` by dynamic `import()` only when `panel=1` is present, so phones create
 no overlay, canvas, timer or rAF loop (`tests/js/rooms-screensaver-wiring.test.js`).
 
@@ -564,9 +566,11 @@ key event while up and for 400 ms after the last one, so the first tap (with its
 and click) only dismisses. The idle rule is re-checked once a minute: at 22:00 a panel idle
 for 60 s or more shows at once; an overlay already up stays up at 06:00.
 
-At night (when no music is showing, see Panel Now playing) the backlight daemon runs with `--no-grab` while `panel_screensaver.enabled` is true
-and `panel_backlight.grab_wake_tap` is false, so one tap wakes the screen and dismisses the
-overlay. The evdev grab from #184 stays for a panel without the screensaver. `dim_pct` is
+The wake-tap grab follows the live setting (see Panel settings): the daemon grabs input only while
+the screen is dimmed to the night level with the screensaver off, so with the screensaver on one tap
+wakes the screen and dismisses the overlay. The evdev grab from #184 stays for a panel with the
+screensaver off. `panel_backlight.grab_wake_tap: true` becomes `--force-grab` (grab whenever the night
+dim shows); the role no longer passes `--no-grab`. `dim_pct` is
 tuned separately on the live panel, never in a screensaver change. Pass mark on the board at
 the 30 fps cap: at most 20 percent total CPU on the Pi 3, 10 percent on the Pi 5.
 
@@ -598,7 +602,9 @@ Music has a now-playing bar and one column per room (a vertical fill that takes 
 room count where a column would leave under 60 px of fill (four rooms fit, a fifth does not); the page keeps
 text sizes and the builder is told, not shrunk.
 
-More's tile line stays "All good" or "N need attention", but the House health screen lists every machine with a status (`healthRows` in `health-model.js`: OK, Needs attention with the short reason, or Not set up yet; problems first).
+More is a 2 by 3 grid: Frames, Gallery, Bluetooth, House health, Screen and Screensaver (the last two only
+when the kiosk URL carries a `pid`, see Panel settings; `moreTiles` takes a `settings` input and leaves them
+out when it is null). More's tile line stays "All good" or "N need attention", but the House health screen lists every machine with a status (`healthRows` in `health-model.js`: OK, Needs attention with the short reason, or Not set up yet; problems first).
 
 Garage on the panel: the fill is how closed the door is, from `position` when it is a number (also while
 stopped), else full when closed, empty when open, and a fixed 15 s sweep while opening or closing
@@ -607,6 +613,64 @@ The first tap arms the button for 4 s (amber, "Tap to open" or "Tap to close"); 
 `garage/intent` and, if the reply says `confirm_required`, sends `garage/command` at once
 (`onGarageTap(action, true)`): never a third tap, one send, the 2 s polling after it. Phones keep the
 hub-decided confirm.
+
+## Panel settings
+
+The owner changes the panel's screen settings on the panel itself (design:
+`docs/superpowers/specs/2026-11-23-panel-settings-design.md`, plan beside it in `plans/`). More has two
+tiles, **Screen** (`#screen`: Brightness, Night dim, Night starts, Night ends) and **Screensaver**
+(`#screensaver`: On or Off with Preview, Starts after, Style, Brightness). Settings are per panel, stored on
+the hub, and the values in `vars/all.yml` (`panel_backlight`, `panel_screensaver`, new
+`panel_screensaver.brightness_pct: 40`) are only the defaults a panel uses until someone changes them.
+
+**Hub.** `lib/snaphouse/panelsettings.py` (pure, stdlib) validates and stores; `artadmin.py` serves
+`POST /api/panel/settings` (`X-Snaphouse: 1`, body `{"panel": "<id>", ...changed keys}`, reply
+`{"panel", "settings"}`) and publishes `/panel-settings.json`
+(`{"version": 1, "panels": {"<id>": {full settings}}}`, defaults filled in, nginx `no-cache`, served by
+`roles/art_share/files/art.conf`). Keys in an entry: `brightness_pct` (20 to 100, step 5), `night_dim_pct`
+(0 to 100, step 5), `night_start` and `night_end` (`"HH:MM"`, 30 minute steps, never equal),
+`screensaver_on`, `screensaver_wait_s` (30, 60, 120, 300 or 600), `screensaver_style` (`aurora` only),
+`screensaver_pct` (5 to 100, step 5). Strict types (a bool or float is not an int); a bad write stores
+nothing. Unknown panel is 404. Panel ids come from the inventory (hosts whose roles include `panel`, one
+`--panel` flag each in the artadmin unit, like the frame list); the defaults are passed as `--panel-*`
+flags from the vars. **Origin rule:** the nginx `location /api/panel/` sets `X-Snaphouse-Origin` from the
+`$snaphouse_origin` map (homebody's `homebody-origin.conf`, so a host with `art_share` must also have
+`homebody_bootstrap`; a test pins it) and the service refuses a write unless the header is `home` (403,
+a missing header counts as the tunnel). Any device on the home network may change any panel.
+
+**Page.** `panel.js` creates the store (`panel-settings-controller.js`: reads `/panel-settings.json` at load
+and every 30 s, one `autosave-queue.js` queue with `{ delayMs: 0 }`, only the changed keys posted, a poll
+never overwrites a pending, saving or failed queue), draws the two screens (`panel-settings.js`, a thin
+renderer) and tells `rooms.js` through `host.settingsChanged`, which calls `screensaver.setSettings`
+(replayed if the module loads later). The rules are pure in `panel-settings-model.js` (`parsePanelSettings`,
+`checkPatch`, `stepPct`, `stepTime` which skips the other night time, `tileLines`, `barView`). The kiosk URL
+values are the fallback (`settingsFromParams`) when the document is missing, malformed or has no entry for
+`pid`; with no `pid` the page cannot save, so the two tiles and routes are hidden (`visible.settings`).
+"Saved" and "Couldn't save. Retry" use `saveStatus`. The Style row lists Aurora and a dashed disabled
+"More soon" chip (the separate `panel-screensavers` item adds styles). Preview runs the real Aurora full
+screen (ending on a click, or after 15 s) and asks the daemon to hold the screensaver brightness.
+`screensaver.js` takes its wait (one for day and night), hours and on/off from the settings; turning it
+off closes an open overlay without the Now playing jump, and with it off nothing shows, the ambient view
+included.
+
+**Backlight daemon** (`lib/snaphouse/backlight.py`, flags `--panel-id`, `--settings-url`,
+`--settings-cache`, `--local-port`, `--allow-origin`, `--screensaver`, `--screensaver-pct`,
+`--force-grab`; the startup flags stay the fallback). One thread (`poll_loop`) reads now-playing and the
+settings every 10 s (`SettingsWatch`: per-key validation in `parse_settings_entry`, the last good entry
+cached atomically in `/var/lib/snaphouse/backlight/settings.json` and used at start, so an unreachable or
+rebooting hub never changes the screen). The combined rule is `Settings.target_pct`: before the wait it is
+Brightness; after it, music (playing or paused under 5 minutes) gives the screensaver brightness with the
+screensaver on and Brightness with it off (no night dim either way); no music gives the night dim by night
+and, by day, the screensaver brightness (on) or Brightness (off). A touch returns to Brightness. The wake
+tap grab holds only while night-dimmed with the screensaver off (`grab_wanted`). **Local API:** on
+`127.0.0.1` only, `backlight_local_port` (8784) in `vars/all.yml`, passed to the page as `lp`:
+`POST /preview {"pct": 0..100, "seconds": 0..15}` (3 s for a brightness tap, 15 s for the screensaver
+preview, 0 cancels, capped at 15) and `POST /refresh` (read the settings now). Because the page is served
+from the hub, the daemon answers the browser's CORS and Private Network Access preflight
+(`Access-Control-Allow-Private-Network: true`) for the hub origin only (`--allow-origin`, from
+`panel_url`); another `Origin` gets 403, no `Origin` (a local tool) is allowed. The page ignores a failed
+local call; the 10 s read still applies the change. The two threads nudge the main loop through a
+self-pipe in `_ActivityClock` so a preview or a saved change shows at once.
 
 ## Panel Now playing, resume and the music screensaver
 
@@ -638,8 +702,9 @@ from the moment it first sees the track paused (`pausedClock`), never a hub time
 kiosk restart during a pause restarts the count. The first touch only dismisses and lands on
 Now playing (`#listen`, `showNow`) when there is a track.
 
-The backlight stays at full in quiet hours while the same rule holds (`MusicWatch` in
-`backlight.py`, stdlib only). The unit gets `SNAPHOUSE_HUB_ORIGIN` from `panel_url` (the
+While the same rule holds (`MusicWatch` in `backlight.py`, stdlib only) the night dim is skipped and the
+backlight sits at the screensaver brightness (Brightness when the screensaver is off), no longer at full:
+see the combined rule under Panel settings. The unit gets `SNAPHOUSE_HUB_ORIGIN` from `panel_url` (the
 kiosk's own fallback `http://house.local` when unset) and passes `--now-playing-url`; a daemon
 thread reads `now-playing.json` every 10 s (`track`, else the paused `resume` block), keeps its
 last answer for 2 minutes after reads fail, then dims as before. With no URL the daemon behaves

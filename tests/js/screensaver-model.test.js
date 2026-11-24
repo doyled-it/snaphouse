@@ -17,7 +17,7 @@ test("no panel parameter means no screensaver", () => {
 });
 
 test("panel=1 alone gives the defaults", () => {
-  assert.deepEqual(P, { dayIdleMs: 300000, nightIdleMs: 60000, quietStart: "22:00", quietEnd: "06:00" });
+  assert.deepEqual(P, { dayIdleMs: 300000, nightIdleMs: 60000, quietStart: "22:00", quietEnd: "06:00", enabled: true, style: "aurora" });
 });
 
 test("bad values fall back per field", () => {
@@ -68,4 +68,29 @@ test("at 06:00 the day limit applies again", () => {
 
 test("a held input never shows it", () => {
   assert.equal(shouldShow({ idleMs: 9e9, date: at(23), params: P, inputHeld: true }), false);
+});
+
+import { paramsFromSettings } from "../../roles/room_picker/files/site/screensaver-model.js";
+
+test("parsePanelParams reads ss=0 as off and defaults to on", () => {
+  assert.equal(parsePanelParams("?panel=1").enabled, true);
+  assert.equal(parsePanelParams("?panel=1&ss=1").enabled, true);
+  assert.equal(parsePanelParams("?panel=1&ss=0").enabled, false);
+});
+
+test("shouldShow is false when the screensaver is off", () => {
+  const off = { ...P, enabled: false };
+  assert.equal(shouldShow({ idleMs: 9e9, date: at(12), params: off, inputHeld: false }), false);
+  assert.equal(shouldShow({ idleMs: 9e9, date: at(23), params: off, inputHeld: false }), false);
+});
+
+test("paramsFromSettings uses one wait for day and night, and the settings' hours", () => {
+  const p = paramsFromSettings(
+    { screensaver_on: true, screensaver_wait_s: 120, night_start: "21:30", night_end: "07:00", screensaver_style: "aurora" },
+    P,
+  );
+  assert.equal(p.dayIdleMs, 120000);
+  assert.equal(p.nightIdleMs, 120000);
+  assert.deepEqual([p.quietStart, p.quietEnd, p.enabled, p.style], ["21:30", "07:00", true, "aurora"]);
+  assert.equal(paramsFromSettings({ screensaver_on: false, screensaver_wait_s: 30, night_start: "22:00", night_end: "06:00" }, P).enabled, false);
 });

@@ -33,3 +33,35 @@ test("the Music tab reads the phone name from the devices list and the now-model
   const model = readFileSync(new URL("rooms-model.js", site), "utf8");
   assert.match(model, /raw\.resume/);
 });
+
+test("the settings modules load only through panel.js, never from rooms.js", () => {
+  assert.doesNotMatch(rooms, /panel-settings/);
+  const panel = readFileSync(new URL("panel.js", site), "utf8");
+  assert.match(panel, /from "\.\/panel-settings-controller\.js"/);
+  assert.match(panel, /from "\.\/panel-settings\.js"/);
+  assert.match(panel, /createPanelSettings\(/);
+  assert.match(panel, /createSettingsScreens\(/);
+});
+
+test("rooms.js hands settings to the screensaver through the panel host, and replays them", () => {
+  assert.match(rooms, /settingsChanged:\s*\(/);
+  assert.match(rooms, /screensaver\??\.setSettings\(/);
+  // Replayed when the screensaver module finishes loading after the first read.
+  const init = rooms.slice(rooms.indexOf('import("./screensaver.js")'));
+  assert.match(init.slice(0, 900), /setSettings\(/);
+});
+
+test("the panel's More screen asks for the Screen and Screensaver tiles", () => {
+  const more = readFileSync(new URL("panel-more.js", site), "utf8");
+  assert.match(more, /settings:/);
+  assert.match(more, /screen:/);
+  assert.match(more, /screensaver:/);
+});
+
+test("the page shows the settings pages only with a panel id, and previews through the local port", () => {
+  const panel = readFileSync(new URL("panel.js", site), "utf8");
+  assert.match(panel, /get\("pid"\)/);
+  assert.match(panel, /get\("lp"\)/);
+  assert.match(panel, /settings:\s*settings\.available\(\)/);
+  assert.match(panel, /127\.0\.0\.1/);
+});

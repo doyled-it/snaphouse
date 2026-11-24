@@ -1,21 +1,25 @@
 // The panel's More screen and its sub-screens: Frames, Gallery, Bluetooth and
-// House health. Bluetooth and health move the page's existing sections in, so
-// the existing pairing, devices and health code keeps drawing them.
+// House health (Screen and Screensaver live in panel-settings.js). Bluetooth and
+// health move the page's existing sections in, so the existing pairing, devices and
+// health code keeps drawing them.
 import { galleryHash, pieceIdFromHash } from "./gallery-viewer.js";
 import { galleryPage, moreTiles, showButtons } from "./panel-gallery-model.js";
 import { button, el, icon, setText } from "./panel-dom.js";
+import { tileLines } from "./panel-settings-model.js";
 
 const TILE_ICONS = {
   frames: "M4 5h16v14H4zM8 15l3-3 2 2 3-3",
   gallery: "M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z",
   bluetooth: "M7 7l10 10-5 4V3l5 4L7 17",
   health: "M12 21s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 11c0 5.5-7 10-7 10z",
+  screen: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
+  screensaver: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z",
 };
 
 export function createMoreScreens(panel) {
   const host = panel.host;
 
-  // ---- More: four tiles
+  // ---- More: the tiles
   const more = el("section", "p-more");
   const tileNodes = new Map();
   let tileKey = "";
@@ -25,6 +29,10 @@ export function createMoreScreens(panel) {
       frames: host.framesVisible() ? frames.length : null,
       pictureCount: host.library().length,
       troubled: host.health().troubled.length,
+      // Screen and Screensaver, with their lines, once this panel can save settings.
+      settings: panel.settings.available()
+        ? (({ screen, saver }) => ({ screenLine: screen, saverLine: saver }))(tileLines(panel.settings.settings()))
+        : null,
     });
     const key = tiles.map((t) => t.id).join(",");
     if (key !== tileKey) {

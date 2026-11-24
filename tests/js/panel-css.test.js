@@ -69,3 +69,17 @@ test("ambient Now Playing sizes follow the design", () => {
   assert.match(rule(".p-amb-title"), /font-size:\s*40px/);
   assert.match(rule(".p-amb-artist"), /font-size:\s*28px/);
 });
+
+test("settings rows are 72px tall and their buttons at least 72px square", () => {
+  assert.match(rule(".p-srow"), /height:\s*72px/);
+  const btn = rule(".p-sbtn");
+  assert.match(btn, /width:\s*72px/);
+  assert.match(btn, /height:\s*72px/);
+  assert.match(rule(".p-schip"), /height:\s*72px/);
+});
+
+test("the settings pages and the screensaver preview are styled under html[data-panel]", () => {
+  for (const sel of [".p-sset", ".p-hbar", ".p-tval", ".p-schips", ".p-schip.soon", ".p-saver-preview", ".p-sset-status"]) {
+    assert.ok(typeof rule(sel) === "string", `missing rule for ${sel}`);
+  }
+});

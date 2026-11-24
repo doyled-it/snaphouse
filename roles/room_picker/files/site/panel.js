@@ -8,10 +8,15 @@ import { createClimateScreen } from "./panel-climate.js";
 import { createMoreScreens } from "./panel-more.js";
 import { createGarageScreen } from "./panel-garage.js";
 import { button, el, icon, setText } from "./panel-dom.js";
+import { createPanelSettings } from "./panel-settings-controller.js";
+import { createSettingsScreens } from "./panel-settings.js";
+import { settingsFromParams } from "./panel-settings-model.js";
+import { parsePanelParams } from "./screensaver-model.js";
+import { apiRequest } from "./rooms-model.js";
 
 // The page's own screen name for each panel screen, so its polling rules (pairing,
 // devices, climate, garage) keep following what is on show.
-const PHONE_SCREEN = { listen: "listen", more: "listen", health: "listen", climate: "climate", garage: "garage", frame: "frame", gallery: "gallery", settings: "settings" };
+const PHONE_SCREEN = { listen: "listen", more: "listen", health: "listen", climate: "climate", garage: "garage", frame: "frame", gallery: "gallery", settings: "settings", screen: "listen", screensaver: "listen" };
 
 export function initPanel(host) {
   const root = document.documentElement;
@@ -43,13 +48,57 @@ export function initPanel(host) {
   shell.append(rail, content);
   document.body.appendChild(shell);
 
+  // This panel's own settings (Screen and Screensaver), kept on the hub under the
+  // id the kiosk URL carries (pid). The URL's own values are the fallback until the
+  // hub answers; lp is the backlight daemon's loopback port, for brightness previews.
+  const query = new URLSearchParams(window.location.search);
+  const pid = query.get("pid") || "";
+  const localPort = query.get("lp") || "";
+  const withDeadline = (ms) => (typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+  const settings = createPanelSettings({
+    pid,
+    fallback: settingsFromParams(parsePanelParams(window.location.search)),
+    getDoc: async () => {
+      const response = await fetch("panel-settings.json", { cache: "no-store", signal: withDeadline(8000) });
+      if (!response.ok) throw new Error("no settings document");
+      return response.json();
+    },
+    post: async (body) => {
+      const { url, init } = apiRequest("/api/panel/settings", body);
+      const response = await fetch(url, { ...init, signal: withDeadline(8000) });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
+      return { ok: response.ok, status: response.status, data };
+    },
+    local: async (path, body) => {
+      if (!localPort) return;
+      await fetch(`http://127.0.0.1:${localPort}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: withDeadline(2000),
+      });
+    },
+    onChange: (next) => {
+      if (host.settingsChanged) host.settingsChanged(next);
+    },
+    onSaveState: () => {},
+    setTimer: (fn, ms) => window.setTimeout(fn, ms),
+    clearTimer: (id) => window.clearTimeout(id),
+  });
+
   const screens = new Map(); // name -> { node, render(ctx) }
   const railButtons = new Map();
   let current = "listen";
   let railKey = "";
 
   function visible() {
-    return host.navVisible();
+    // Screen and Screensaver need this panel's id to save anything.
+    return { ...host.navVisible(), settings: settings.available() };
   }
 
   function route() {
@@ -121,6 +170,7 @@ export function initPanel(host) {
 
   const api = {
     host,
+    settings,
     stage,
     route,
     render,
@@ -137,8 +187,12 @@ export function initPanel(host) {
   createGarageScreen(api);
   createClimateScreen(api);
   createMoreScreens(api);
+  createSettingsScreens(api);
   window.addEventListener("hashchange", route);
   host.timers.add(render, 500);
+  // The hub's settings, read now and every 30 s (asleep while the tab is hidden).
+  settings.load();
+  host.timers.add(() => settings.load(), 30000);
   api.isSub = isSubScreen;
   route();
   return api;

@@ -39,9 +39,9 @@ export function showButtons(piece, frames) {
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-// The four tiles on More. `frames` is the frame count, or null to leave the
+// The tiles on More (four, plus Screen and Screensaver on a panel that can save). `frames` is the frame count, or null to leave the
 // Frames tile out (no frames, so its hash would fall back to Music).
-export function moreTiles({ frames, pictureCount, troubled }) {
+export function moreTiles({ frames, pictureCount, troubled, settings = null }) {
   const tiles = [];
   if (frames !== null && frames !== undefined) {
     tiles.push({ id: "frames", hash: "#frame", title: "Frames", line: plural(frames, "frame", "frames"), warn: false });
@@ -55,5 +55,11 @@ export function moreTiles({ frames, pictureCount, troubled }) {
     line: troubled === 0 ? "All good" : `${troubled} ${troubled === 1 ? "needs" : "need"} attention`,
     warn: troubled > 0,
   });
+  // Screen and Screensaver, with their tile lines, only when this panel can save
+  // settings (settings is null otherwise, and their hashes would fall back to Music).
+  if (settings) {
+    tiles.push({ id: "screen", hash: "#screen", title: "Screen", line: settings.screenLine, warn: false });
+    tiles.push({ id: "screensaver", hash: "#screensaver", title: "Screensaver", line: settings.saverLine, warn: false });
+  }
   return tiles;
 }

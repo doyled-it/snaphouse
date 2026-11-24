@@ -143,8 +143,11 @@ def test_no_password_or_account_name_in_unit_or_vars():
 def test_artadmin_unit_passes_ente_paths_and_writes_art_ente():
     env = Environment(loader=FileSystemLoader(str(REPO)), keep_trailing_newline=True)
     hosts = yaml.safe_load((REPO / "vars/hosts.yml").read_text())["snaphouse_hosts"]
+    all_vars = yaml.safe_load((REPO / "vars/all.yml").read_text())
     unit = env.get_template("roles/art_share/templates/snaphouse-artadmin.service.j2").render(
-        snaphouse_hosts=hosts
+        snaphouse_hosts=hosts,
+        panel_backlight=all_vars["panel_backlight"],
+        panel_screensaver=all_vars["panel_screensaver"],
     )
     assert "--ente-root /var/lib/snaphouse/ente/mirror" in unit
     assert "--ente-cache /var/lib/snaphouse/public/art-ente" in unit
