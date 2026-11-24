@@ -3,9 +3,17 @@
 A track from AirPlay carries its own cover, but a track from Bluetooth does not.
 This module finds one from public catalogues, keyed by what the track names:
 
-- podcasts from Apple's iTunes Search API,
+- podcasts from Apple's iTunes Search API (a show also matches when its
+  publisher is the show name and the catalogue name starts with it),
 - audiobooks from Open Library,
-- music from MusicBrainz plus the Cover Art Archive.
+- music from Apple's iTunes Search API first (album search, or song search for a
+  track with no album), then MusicBrainz plus the Cover Art Archive (the matching
+  release's picture, the next matching release's, then the album-wide
+  release-group picture).
+
+Both music sources use the one matcher in ``covermatch.py``: "&" reads as "and",
+trailing edition parts are ignored for a core-title match, and an artist matches
+when any name in the split credit appears in both. A weak match loses to a miss.
 
 Nothing identifying goes out. A request carries only the track, show, book, or
 artist names, and a User-Agent naming the public repository. The design is in
@@ -15,7 +23,9 @@ Every looked-up image is cached under ``cover_root/lookup/`` keyed by a hash of
 the lookup, resized to at most 600 px, and written atomically so nginx never
 serves a half-written file. A miss is remembered as a ``<key>.none`` marker and
 suppresses that lookup for seven days, so a track with no findable cover is not
-searched for on every play. Pruning touches only ``cover_root/lookup/``, so it
+searched for on every play. A failed fetch writes no marker; the same key rests
+for 60 seconds so rapid skipping does not refetch, and a MusicBrainz 503 is
+retried once after 2 seconds. Every source attempt logs its outcome and reason. Pruning touches only ``cover_root/lookup/``, so it
 never deletes the AirPlay bridge's own covers that sit directly in
 ``cover_root/``.
 
