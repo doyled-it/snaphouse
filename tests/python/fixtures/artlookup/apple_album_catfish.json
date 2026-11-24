@@ -1,0 +1,33 @@
+{
+ "resultCount": 4,
+ "results": [
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Four Tops",
+   "collectionName": "Catfish",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music128/v4/eb/30/61/eb306143-e9a7-10b8-f4f4-68cd045557a5/00602547480057.rgb.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Four Tops",
+   "collectionName": "Essential Collection: Four Tops",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/f9/b7/7a/f9b77a94-b3c1-7d12-34f8-8135a26f0d66/06UMGIM12280.rgb.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Four Tops",
+   "collectionName": "Keepers of the Castle: Their Best 1972-1978",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music118/v4/47/05/58/470558c2-07e8-f288-e9b3-cc56149c34f4/00008811164720.rgb.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Four Tops",
+   "collectionName": "Fourever",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/58/ae/1f/58ae1f7d-8e43-cf66-a1fd-ec1e186c5a0c/00731455622522.rgb.jpg/100x100bb.jpg"
+  }
+ ]
+}

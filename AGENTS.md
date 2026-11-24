@@ -32,7 +32,8 @@ the last-good commit if the apply or verify fails.
   header means tunnel (`roles/homebody_bootstrap`, contract in
   `docs/cross-repo-features.md`). Outbound is limited per machine (GitHub, OS mirrors,
   NTP; the hub (`house`) also reaches the now-playing cover-lookup catalogues:
-  `itunes.apple.com` and the `*.mzstatic.com` artwork CDN, `musicbrainz.org`,
+  `itunes.apple.com` and the `*.mzstatic.com` artwork CDN (podcasts, and music
+  covers, which Apple answers before MusicBrainz), `musicbrainz.org`,
   `coverartarchive.org` and the `archive.org` hosts it and Open Library covers
   redirect to, `openlibrary.org`, `covers.openlibrary.org`; the hub also reaches
   `geocoding-api.open-meteo.com` to resolve a typed weather city to coordinates;

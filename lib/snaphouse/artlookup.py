@@ -3,9 +3,17 @@
 A track from AirPlay carries its own cover, but a track from Bluetooth does not.
 This module finds one from public catalogues, keyed by what the track names:
 
-- podcasts from Apple's iTunes Search API,
+- podcasts from Apple's iTunes Search API (a show also matches when its
+  publisher is the show name and the catalogue name starts with it),
 - audiobooks from Open Library,
-- music from MusicBrainz plus the Cover Art Archive.
+- music from Apple's iTunes Search API first (album search, or song search for a
+  track with no album), then MusicBrainz plus the Cover Art Archive (the matching
+  release's picture, the next matching release's, then the album-wide
+  release-group picture).
+
+Both music sources use the one matcher in ``covermatch.py``: "&" reads as "and",
+trailing edition parts are ignored for a core-title match, and an artist matches
+when any name in the split credit appears in both. A weak match loses to a miss.
 
 Nothing identifying goes out. A request carries only the track, show, book, or
 artist names, and a User-Agent naming the public repository. The design is in
@@ -15,7 +23,9 @@ Every looked-up image is cached under ``cover_root/lookup/`` keyed by a hash of
 the lookup, resized to at most 600 px, and written atomically so nginx never
 serves a half-written file. A miss is remembered as a ``<key>.none`` marker and
 suppresses that lookup for seven days, so a track with no findable cover is not
-searched for on every play. Pruning touches only ``cover_root/lookup/``, so it
+searched for on every play. A failed fetch writes no marker; the same key rests
+for 60 seconds so rapid skipping does not refetch, and a MusicBrainz 503 is
+retried once after 2 seconds. Every source attempt logs its outcome and reason. Pruning touches only ``cover_root/lookup/``, so it
 never deletes the AirPlay bridge's own covers that sit directly in
 ``cover_root/``.
 
@@ -43,6 +53,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple, Optional
 
 from .airplay_meta import downscale_cover
+from .covermatch import artists_match, core_text, title_score
 
 
 class LookupResult(NamedTuple):
@@ -76,6 +87,7 @@ class _Resolved(NamedTuple):
 Fetch = Callable[[str], Optional[bytes]]
 
 _TIMEOUT = 10.0
+_IMAGE_TIMEOUT = 20.0
 # A cover is small; refuse a body larger than this so a hostile or broken source
 # cannot stream an unbounded response into memory on the appliance.
 _MAX_BYTES = 10 * 1024 * 1024
@@ -85,9 +97,12 @@ _OPEN_LIBRARY_SEARCH = "https://openlibrary.org/search.json"
 _OPEN_LIBRARY_COVER = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
 _MUSICBRAINZ_SEARCH = "https://musicbrainz.org/ws/2/release/"
 _COVER_ART_ARCHIVE = "https://coverartarchive.org/release/{mbid}/front-500"
+_COVER_ART_ARCHIVE_GROUP = "https://coverartarchive.org/release-group/{mbid}/front-500"
 
 # MusicBrainz asks for no more than one request per second.
 _MUSICBRAINZ_MIN_INTERVAL = 1.0
+# A busy MusicBrainz answers 503; one retry after this wait.
+_MUSICBRAINZ_RETRY_WAIT = 2.0
 
 # A feed that carries a show, book, or release under a decorated name ("<Show> -
 # Patreon Feed") hides the public title before one of these separators. When the
@@ -116,6 +131,8 @@ _LEAD_SEPARATOR_RE = re.compile(
     re.IGNORECASE,
 )
 
+_APPLE_ART_SIZE = re.compile(r"/100x100bb(\.\w+)$")
+
 _NONE_SUFFIX = ".none"
 # A podcast cover's iTunes collectionId is cached in a sidecar next to the cover,
 # so a cached hit returns the id without a network call. A ``.noid`` marker beside
@@ -128,6 +145,9 @@ _NOID_SUFFIX = ".noid"
 _SIDECAR_SUFFIXES = (_ID_SUFFIX, _NOID_SUFFIX)
 _DEFAULT_MISS_TTL = 7 * 86400
 _DEFAULT_MAX_FILES = 300
+# After a failed lookup the same key is left alone for this long (60 s), so rapid skipping does not refetch; one bad
+# album is not refetched on every track change. Errors still write no marker.
+_ERROR_BACKOFF_S = 60.0
 
 # A lookup resolves to one of three outcomes. FOUND carries the cover bytes. MISS
 # means the search ran, parsed, and matched nothing: a real miss, cached so the
@@ -161,12 +181,37 @@ def _user_agent() -> str:
     return _user_agent_cache
 
 
+class FetchError(Exception):
+    """A fetch that failed, with the reason: an HTTP status or an exception name."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+_IMAGE_HOST_SUFFIXES = (
+    "mzstatic.com",
+    "coverartarchive.org",
+    "archive.org",
+    "covers.openlibrary.org",
+)
+
+
+def _timeout_for(url: str) -> float:
+    """20 s for an image host (the Cover Art Archive redirects to archive.org), else 10 s."""
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if any(host == s or host.endswith("." + s) for s in _IMAGE_HOST_SUFFIXES):
+        return _IMAGE_TIMEOUT
+    return _TIMEOUT
+
+
 def urllib_fetch(url: str) -> Optional[bytes]:
-    """GET ``url`` with a short timeout, returning the body or None on failure.
+    """GET ``url``, returning the body or raising ``FetchError`` with the reason.
 
     The body is capped at ``_MAX_BYTES`` and compression is refused so a small
-    compressed response cannot amplify past the cap. Any error (bad status,
-    timeout, transport failure, oversize body) resolves to None, so a lookup
+    compressed response cannot amplify past the cap. Any failure (bad status,
+    timeout, transport failure, oversize body) raises ``FetchError`` carrying the
+    HTTP status or the exception class name; ``ArtLookup`` catches it, so a lookup
     never raises into the background thread that calls it.
     """
     request = urllib.request.Request(
@@ -177,12 +222,14 @@ def urllib_fetch(url: str) -> Optional[bytes]:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=_timeout_for(url)) as response:
             data = response.read(_MAX_BYTES + 1)
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
+    except urllib.error.HTTPError as error:
+        raise FetchError(f"HTTP {error.code}") from error
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        raise FetchError(type(error).__name__) from error
     if len(data) > _MAX_BYTES:
-        return None
+        raise FetchError("too large")
     return data
 
 
@@ -354,6 +401,29 @@ class ArtLookup:
         self._miss_ttl_s = miss_ttl_s
         self._log = log if log is not None else logging.getLogger("snaphouse.artlookup")
         self._last_musicbrainz: float | None = None
+        self._last_reason: str = ""
+        self._error_until: dict[str, float] = {}
+        self._matched: str = ""
+
+    def _backing_off(self, key: str) -> bool:
+        return self._clock() < self._error_until.get(key, 0.0)
+
+    def _note_error(self, key: str) -> None:
+        self._error_until[key] = self._clock() + _ERROR_BACKOFF_S
+        if len(self._error_until) > 512:
+            now = self._clock()
+            self._error_until = {k: t for k, t in self._error_until.items() if t > now}
+
+    def _get(self, url: str) -> Optional[bytes]:
+        """Run the injected fetch; None on failure, with the reason kept."""
+        try:
+            data = self._fetch(url)
+        except FetchError as error:
+            self._last_reason = error.reason
+            return None
+        if data is None:
+            self._last_reason = "no data"
+        return data
 
     def find(
         self,
@@ -431,9 +501,13 @@ class ArtLookup:
         if self._miss_fresh(miss_path):
             return (None, "miss", None)
 
+        if self._backing_off(key):
+            return (None, "failure", None)
         resolved = self._resolve(chosen, kind, title, artist, album)
         if resolved.outcome == _ERROR:
-            # A fetch failed; transient, so leave no marker and retry next play.
+            # A fetch failed; transient, so leave no marker. The key rests for
+            # a minute, then the next play retries.
+            self._note_error(key)
             return (None, "failure", None)
         if resolved.image is None:
             # A real miss: the search ran and matched nothing.
@@ -478,11 +552,6 @@ class ArtLookup:
         lookup. Each step keeps its own miss marker, so neither suppresses the
         other.
         """
-        if not album:
-            # Music needs an album to search a release on; a track with neither an
-            # album nor the means to find one has nothing to look up.
-            return (None, "miss", None)
-
         full_key = _lookup_key("music", title, artist, album)
         full_image = self._lookup_dir() / f"{full_key}.jpg"
         full_miss = self._lookup_dir() / f"{full_key}{_NONE_SUFFIX}"
@@ -505,23 +574,44 @@ class ArtLookup:
         if lead_image is not None and lead_image.is_file():
             return (_lookup_url(lead_key), "cover found", None)
 
-        # Step 1: the full track credit. Skip the search when a fresh miss marker
-        # already records that this exact credit found nothing.
+        # Step 1: Apple first (one search matches the whole credit by any of its
+        # names), then MusicBrainz on the full track credit. Skip both when a
+        # fresh miss marker already records that this exact credit found nothing.
+        if self._backing_off(full_key):
+            return (None, "failure", None)
         if not self._miss_fresh(full_miss):
-            resolved = self._music(artist, album)
-            if resolved.outcome == _ERROR:
-                return (None, "failure", None)
+            apple = self._apple_music(title, artist, album)
+            resolved = apple
+            if apple.outcome != _FOUND:
+                resolved = self._music(artist, album)
             if resolved.image is not None:
-                return self._store_cover(full_key, full_image, full_miss, resolved.image)
+                stored = self._store_cover(
+                    full_key, full_image, full_miss, resolved.image
+                )
+                if lead_image is not None and full_image.is_file():
+                    # Share the cover with the rest of the album: a later track
+                    # with another guest finds the lead copy with no network call.
+                    try:
+                        _atomic_write(lead_image, full_image.read_bytes())
+                    except OSError:
+                        pass
+                return stored
+            if _ERROR in (apple.outcome, resolved.outcome):
+                # One source failed to answer, so "no cover" is not proven.
+                self._note_error(full_key)
+                return (None, "failure", None)
             self._write_miss(full_miss)
 
         # Step 2: fall back to the lead, only when the credit named extra artists.
+        # Apple already matched the whole credit by any of its names, so only
+        # MusicBrainz is asked again.
         if lead_key is None:
             return (None, "miss", None)
         if self._miss_fresh(lead_miss):
             return (None, "miss", None)
         resolved = self._music(lead, album)
         if resolved.outcome == _ERROR:
+            self._note_error(full_key)
             return (None, "failure", None)
         if resolved.image is not None:
             return self._store_cover(lead_key, lead_image, lead_miss, resolved.image)
@@ -671,23 +761,25 @@ class ArtLookup:
         url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
             {"media": "podcast", "entity": "podcast", "term": show}
         )
-        results = _search_list(self._fetch(url), "results")
+        results = _search_list(self._get(url), "results")
         if results is None:
             return _Resolved(_ERROR, None)
-        for result in results:
-            if not isinstance(result, dict):
-                continue
-            if _names_match(result.get("collectionName"), show):
-                artwork = result.get("artworkUrl600")
-                if isinstance(artwork, str):
-                    image = self._fetch(artwork)
-                    if image is None:
-                        return _Resolved(_ERROR, None)
-                    # The id is validated here and again on the way out of
-                    # _find, so a non-integer or non-positive value never
-                    # reaches the cache or the published shape.
-                    podcast_id = _valid_podcast_id(result.get("collectionId"))
-                    return _Resolved(_FOUND, image, podcast_id)
+        # Only a show whose artwork is on Apple's artwork CDN can be used; one
+        # pointing anywhere else is skipped as if it had no artwork.
+        usable = [
+            r for r in results
+            if isinstance(r, dict) and _apple_artwork_ok(r.get("artworkUrl600"))
+        ]
+        result = _pick_show(usable, show)
+        if result is not None:
+            image = self._get(result["artworkUrl600"])
+            if image is None:
+                return _Resolved(_ERROR, None)
+            # The id is validated here and again on the way out of
+            # _find, so a non-integer or non-positive value never
+            # reaches the cache or the published shape.
+            podcast_id = _valid_podcast_id(result.get("collectionId"))
+            return _Resolved(_FOUND, image, podcast_id)
         return _Resolved(_MISS, None)
 
     def _podcast_id(
@@ -710,18 +802,15 @@ class ArtLookup:
         url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
             {"media": "podcast", "entity": "podcast", "term": show}
         )
-        results = _search_list(self._fetch(url), "results")
+        results = _search_list(self._get(url), "results")
         if results is None:
             return _Resolved(_ERROR, None)
-        for result in results:
-            if not isinstance(result, dict):
-                continue
-            if _names_match(result.get("collectionName"), show):
-                podcast_id = _valid_podcast_id(result.get("collectionId"))
-                if podcast_id is not None:
-                    return _Resolved(_FOUND, None, podcast_id)
-                # The show matched but carries no usable id: a real miss.
-                return _Resolved(_MISS, None)
+        result = _pick_show(results, show)
+        if result is not None:
+            podcast_id = _valid_podcast_id(result.get("collectionId"))
+            if podcast_id is not None:
+                return _Resolved(_FOUND, None, podcast_id)
+        # No show matched, or it carries no usable id: a real miss.
         return _Resolved(_MISS, None)
 
     def _open_library(
@@ -741,7 +830,7 @@ class ArtLookup:
         if artist:
             params["author"] = artist
         url = _OPEN_LIBRARY_SEARCH + "?" + urllib.parse.urlencode(params)
-        docs = _search_list(self._fetch(url), "docs")
+        docs = _search_list(self._get(url), "docs")
         if docs is None:
             return _Resolved(_ERROR, None)
         for doc in docs:
@@ -750,13 +839,82 @@ class ArtLookup:
             if _names_match(doc.get("title"), album):
                 cover_id = doc.get("cover_i")
                 if isinstance(cover_id, int):
-                    image = self._fetch(_OPEN_LIBRARY_COVER.format(cover_id=cover_id))
+                    image = self._get(_OPEN_LIBRARY_COVER.format(cover_id=cover_id))
                     if image is None:
                         return _Resolved(_ERROR, None)
                     return _Resolved(_FOUND, image)
         return _Resolved(_MISS, None)
 
+    def _log_source(self, source: str, resolved: _Resolved) -> _Resolved:
+        """One INFO line per source attempt: source, outcome, then reason or names."""
+        if resolved.outcome == _FOUND:
+            detail = self._matched
+        elif resolved.outcome == _ERROR:
+            detail = self._last_reason
+        else:
+            detail = "no match"
+        self._log.info("art lookup %s: %s (%s)", source, resolved.outcome, detail)
+        return resolved
+
+    def _apple_music(
+        self, title: str, artist: Optional[str], album: Optional[str]
+    ) -> _Resolved:
+        self._matched = ""
+        return self._log_source("apple", self._apple_search(title, artist, album))
+
+    def _apple_search(
+        self, title: str, artist: Optional[str], album: Optional[str]
+    ) -> _Resolved:
+        """Search Apple's catalogue for the track's album, or its song with no album.
+
+        The term is the lead artist plus the album's core title (a term carrying
+        "(Deluxe)" came back empty in testing). A candidate must match the album
+        (or, with no album, the song title) and the artist; the best title score
+        wins and Apple's order breaks ties. The artwork is the 100 px URL
+        rewritten to 600 px.
+        """
+        if not artist:
+            return _Resolved(_MISS, None)
+        lead = _lead_artist(artist) or artist
+        if album:
+            entity, wanted, field = "album", album, "collectionName"
+            term = f"{lead} {core_text(album)}"
+        else:
+            entity, wanted, field = "song", title, "trackName"
+            term = f"{lead} {title}"
+        url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
+            {"media": "music", "entity": entity, "term": term, "limit": 10}
+        )
+        results = _search_list(self._get(url), "results")
+        if results is None:
+            return _Resolved(_ERROR, None)
+        best_score, best_art, best_names = 0, None, ""
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            score = title_score(wanted, result.get(field))
+            art = result.get("artworkUrl100")
+            if score <= best_score or not _apple_artwork_ok(art):
+                continue
+            if not artists_match(artist, result.get("artistName")):
+                continue
+            best_score, best_art = score, art
+            best_names = f"{result.get('artistName')}, {result.get(field)}"
+        if best_art is None:
+            return _Resolved(_MISS, None)
+        image = self._get(_APPLE_ART_SIZE.sub(r"/600x600bb\1", best_art))
+        if image is None:
+            return _Resolved(_ERROR, None)
+        self._matched = best_names
+        return _Resolved(_FOUND, image)
+
     def _music(
+        self, name: Optional[str], album: Optional[str]
+    ) -> _Resolved:
+        self._matched = ""
+        return self._log_source("musicbrainz", self._music_lookup(name, album))
+
+    def _music_lookup(
         self, name: Optional[str], album: Optional[str]
     ) -> _Resolved:
         """Search MusicBrainz for a release ``album`` credited exactly to ``name``.
@@ -787,25 +945,50 @@ class ArtLookup:
             {"query": query, "fmt": "json", "limit": 5}
         )
         try:
-            releases = _search_list(self._fetch(url), "releases")
+            body = self._get(url)
+            if body is None and self._last_reason == "HTTP 503":
+                # MusicBrainz is busy: wait 2 s and ask once more before this
+                # counts as an error.
+                self._sleep(_MUSICBRAINZ_RETRY_WAIT)
+                body = self._get(url)
+            releases = _search_list(body, "releases")
         finally:
             self._last_musicbrainz = self._clock()
         if releases is None:
             return _Resolved(_ERROR, None)
+        matches: list[tuple[int, dict]] = []
         for release in releases:
             if not isinstance(release, dict):
                 continue
-            if not _names_match(release.get("title"), album):
+            score = title_score(album, release.get("title"))
+            if score == 0:
                 continue
-            if not _credit_equals(release.get("artist-credit"), name):
+            if not artists_match(name, _credit_names(release.get("artist-credit"))):
                 continue
-            mbid = release.get("id")
-            if isinstance(mbid, str):
-                image = self._fetch(_COVER_ART_ARCHIVE.format(mbid=mbid))
-                if image is None:
-                    return _Resolved(_ERROR, None)
+            if isinstance(release.get("id"), str):
+                matches.append((score, release))
+        if not matches:
+            return _Resolved(_MISS, None)
+        # Exact full-title matches rank above core matches; the sort is stable,
+        # so MusicBrainz's own order breaks ties.
+        matches.sort(key=lambda match: -match[0])
+        urls = [_COVER_ART_ARCHIVE.format(mbid=release["id"]) for _, release in matches]
+        group = matches[0][1].get("release-group")
+        group_id = group.get("id") if isinstance(group, dict) else None
+        if isinstance(group_id, str):
+            urls.append(_COVER_ART_ARCHIVE_GROUP.format(mbid=group_id))
+        # A release with no picture is a miss for that release only: try the next
+        # matching release, then the album-wide picture. If every fetch was a 404
+        # there is no art to find (a miss); any other failure is transient.
+        transient = False
+        for art_url in urls:
+            image = self._get(art_url)
+            if image is not None:
+                self._matched = f"{_credit_names(matches[0][1].get('artist-credit'))}, {matches[0][1].get('title')}"
                 return _Resolved(_FOUND, image)
-        return _Resolved(_MISS, None)
+            if self._last_reason != "HTTP 404":
+                transient = True
+        return _Resolved(_ERROR if transient else _MISS, None)
 
     def _await_musicbrainz_gate(self) -> None:
         """Wait, if needed, so MusicBrainz is called at most once per second."""
@@ -895,6 +1078,10 @@ def _lookup_key(chosen: str, title: str, artist: Optional[str], album: Optional[
         parts = ["audiobook", _normalize(album), _normalize(artist)]
     else:
         parts = ["music", _normalize(artist), _normalize(album)]
+        if not album:
+            # With no album the track title is the only thing that tells one
+            # song from another, so it joins the key (an album key never has it).
+            parts.append(_normalize(title))
     raw = "\x1f".join(parts)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
@@ -949,6 +1136,45 @@ def _search_list(data: Optional[bytes], field: str) -> Optional[list]:
     return value if isinstance(value, list) else []
 
 
+def _apple_artwork_ok(url: object) -> bool:
+    """Whether ``url`` is an https URL on Apple's artwork CDN (``mzstatic.com``).
+
+    The host is parsed, not substring-matched, so "evilmzstatic.com" and
+    "mzstatic.com.evil.host" are refused. A reply never names an arbitrary host
+    for the lookup to fetch.
+    """
+    if not isinstance(url, str):
+        return False
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname
+    except ValueError:
+        return False
+    if parts.scheme != "https" or not host:
+        return False
+    return host == "mzstatic.com" or host.endswith(".mzstatic.com")
+
+
+def _pick_show(results: list, show: str) -> Optional[dict]:
+    """The result for ``show``: an exact name match, else the publisher's own show.
+
+    The second rule accepts a show whose publisher (``artistName``) is the show
+    name and whose collection name starts with it ("Democracy Now!" to
+    "Democracy Now! Audio"). An exact match always wins.
+    """
+    shows = [result for result in results if isinstance(result, dict)]
+    for result in shows:
+        if _names_match(result.get("collectionName"), show):
+            return result
+    wanted = _normalize(show)
+    for result in shows:
+        if _names_match(result.get("artistName"), show) and _normalize(
+            result.get("collectionName")
+        ).startswith(wanted):
+            return result
+    return None
+
+
 def _lead_artist(credit: Optional[str]) -> Optional[str]:
     """The lead artist cut from a track credit, or None when the credit is one name.
 
@@ -970,17 +1196,12 @@ def _lead_artist(credit: Optional[str]) -> Optional[str]:
     return lead
 
 
-def _credit_equals(credit, name: Optional[str]) -> bool:
-    """Whether a MusicBrainz ``artist-credit`` equals ``name`` exactly.
-
-    With no name there is nothing to match against, so a release never matches
-    (its cover would be a guess). The credit is a list of parts; their joined
-    names are compared as one name, so a release stands only when its whole artist
-    credit is the searched name, never when it merely contains it.
-    """
-    if not name:
-        return False
+def _credit_names(credit) -> str:
+    """A MusicBrainz ``artist-credit`` list joined into one credit string."""
     if not isinstance(credit, list):
-        return False
-    names = "".join(part.get("name", "") for part in credit if isinstance(part, dict))
-    return _names_match(names, name)
+        return ""
+    return "".join(
+        part.get("name", "") + part.get("joinphrase", "")
+        for part in credit
+        if isinstance(part, dict)
+    )

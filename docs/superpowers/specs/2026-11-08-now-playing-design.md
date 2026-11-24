@@ -149,15 +149,23 @@ A new long-running hub service, `snaphouse-nowplaying`, in
    - Genre names an audiobook, or the podcast search found nothing for a
      long-form track: Open Library search by title (the album) and author (the
      artist), then `https://covers.openlibrary.org/b/id/<cover_i>-L.jpg`.
-   - Music: MusicBrainz release search by artist and album, then the Cover Art
-     Archive front image (port the frame's `sources/coverart.py` logic,
-     including its 1 request per second gate and User-Agent).
+   - Music (see `2026-11-23-cover-matching-design.md`): Apple's iTunes Search
+     API first (`entity=album`, or `entity=song` for a track with no album, term
+     = lead artist plus the album's core title), then MusicBrainz release search
+     by artist and album and the Cover Art Archive front image (the release,
+     the next matching release, then the album-wide release-group picture; 1
+     request per second gate, one retry after 2 s on a 503, User-Agent). Both
+     sources use one matcher: "&" reads as "and", trailing edition parts
+     ("(Deluxe)", " - Single") are ignored for a core-title match, and an
+     artist matches when any one name in the split credit appears in both. A
+     failed lookup is not retried for 60 seconds and writes no miss marker.
    - When the genre is present and names neither a podcast nor an audiobook
      (a long DJ mix tagged as music, say), it goes to the music lookup despite
      its length: genre outranks duration for choosing the lookup.
-   - No exact match means no art. A result counts only when its name matches
+   - No match means no art. A result counts only when its name matches
      the searched name case-insensitively after trimming punctuation and
-     whitespace (and, for music, the artist matches too). A wrong cover in the
+     whitespace (for music, by the shared matcher above, and the artist
+     matches too; a podcast may also match its publisher's own "<Show> Audio"). A wrong cover in the
      history is worse than the placeholder.
    - Looked-up images go in their own subdirectory, `/cover/lookup/`, keyed by
      a hash of the lookup and resized to at most 600 px. A miss is cached for 7

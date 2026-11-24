@@ -16,7 +16,13 @@ from pathlib import Path
 import pytest
 
 from snaphouse import artlookup
-from snaphouse.artlookup import ArtLookup, keep_for_history, prune_history_covers, route
+from snaphouse.artlookup import (
+    ArtLookup,
+    FetchError,
+    keep_for_history,
+    prune_history_covers,
+    route,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "artlookup"
 
@@ -50,6 +56,10 @@ class FakeFetch:
         for substring, response in self.routes:
             if substring in url:
                 return response(url) if callable(response) else response
+        if "itunes.apple.com" in url and "media=music" in url:
+            # A music test that names no Apple route sees Apple answer with an
+            # empty result; a test that wants an Apple failure routes one.
+            return _fixture_bytes("apple_album_empty.json")
         return None
 
 
@@ -376,21 +386,21 @@ def test_music_suffix_finds_base_release(tmp_path):
 
     assert url is not None
     mb_calls = [c for c in fetch.calls if "musicbrainz.org" in c]
-    assert len(mb_calls) == 2
+    # The shared matcher reads "Night Harbor" as the core of the decorated title,
+    # so the first search already finds it and no base search is needed.
+    assert len(mb_calls) == 1
     queries = [
         urllib.parse.parse_qs(urllib.parse.urlsplit(c).query)["query"][0]
         for c in mb_calls
     ]
     assert queries == [
         'artist:"The Lantern Keepers" AND release:"Night Harbor (Deluxe Edition)"',
-        'artist:"The Lantern Keepers" AND release:"Night Harbor"',
     ]
     # Each MusicBrainz request keeps only the query, format, and limit fields.
     for call in mb_calls:
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(call).query)
         assert set(query) == {"query", "fmt", "limit"}
-    # The base attempt waited out the one-per-second gate after the full name.
-    assert slept == pytest.approx([1.0], abs=0.01)
+    assert slept == []
 
 
 def test_music_base_miss_writes_marker_once(tmp_path):
@@ -539,13 +549,29 @@ def _mb_queries(fetch):
     ]
 
 
+def _only_for_artist(body, artist):
+    """A MusicBrainz response that holds the release only for one artist query.
+
+    Real MusicBrainz phrase search does not return a release for a long credit
+    that is not its exact artist, so the lead search is still needed.
+    """
+
+    def respond(url):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["query"][0]
+        if f'artist:"{artist}"' in query:
+            return body
+        return json.dumps({"count": 0, "releases": []}).encode("utf-8")
+
+    return respond
+
+
 def test_music_searches_full_credit_before_lead(tmp_path):
     # The full track credit is searched first; the lead is searched only after the
     # full credit finds nothing, and the lead is the plain part before the first
     # list separator, never a mangled name.
     fetch = FakeFetch(
         [
-            ("musicbrainz.org", _musicbrainz_release("Album", ["Headliner"])),
+            ("musicbrainz.org", _only_for_artist(_musicbrainz_release("Album", ["Headliner"]), "Headliner")),
             ("coverartarchive.org", _jpeg()),
         ]
     )
@@ -589,7 +615,7 @@ def test_featured_album_shares_cover_with_one_fallback_lookup(tmp_path):
     # included, reuses the shared lead cover with no further network call.
     fetch = FakeFetch(
         [
-            ("musicbrainz.org", _musicbrainz_release("Un Verano Sin Ti", ["Bad Bunny"])),
+            ("musicbrainz.org", _only_for_artist(_musicbrainz_release("Un Verano Sin Ti", ["Bad Bunny"]), "Bad Bunny")),
             ("coverartarchive.org", _jpeg()),
         ]
     )
@@ -642,7 +668,7 @@ def test_lil_nas_x_keeps_the_x_in_the_lead(tmp_path):
     # fallback lead is "Lil Nas X", cut at the " & ", not "Lil Nas".
     fetch = FakeFetch(
         [
-            ("musicbrainz.org", _musicbrainz_release("Montero", ["Lil Nas X"])),
+            ("musicbrainz.org", _only_for_artist(_musicbrainz_release("Montero", ["Lil Nas X"]), "Lil Nas X")),
             ("coverartarchive.org", _jpeg()),
         ]
     )
@@ -659,8 +685,10 @@ def test_lil_nas_x_keeps_the_x_in_the_lead(tmp_path):
 
 
 def test_solo_lead_album_key_does_not_collide_with_band(tmp_path):
-    # The band's cover is cached under its full credit, so a solo artist who is
-    # only the band's first word does not borrow it, and its miss is its own.
+    # The band's cover is cached under its full credit. A solo artist who is the
+    # band's first word shares a name with it, so with the same album title the
+    # shared matcher now accepts the release (a design change), but the cover is
+    # served from the shared lead key, a different key from the band's own.
     fetch = FakeFetch(
         [
             ("musicbrainz.org", _musicbrainz_release("Bookends", ["Simon & Garfunkel"])),
@@ -672,8 +700,11 @@ def test_solo_lead_album_key_does_not_collide_with_band(tmp_path):
     band = lookup.find("Track", "Simon & Garfunkel", "Bookends", "music", None)
     assert band is not None
 
+    searches = len(_mb_queries(fetch))
     solo = lookup.find("Track", "Simon", "Bookends", "music", None)
-    assert solo is None
+    assert solo is not None and solo != band
+    # The band's cover was also shared under the lead key, so no new search runs.
+    assert len(_mb_queries(fetch)) == searches
 
 
 def test_lead_artist_not_matching_release_is_miss(tmp_path):
@@ -704,7 +735,7 @@ def test_musicbrainz_gate_holds_across_full_and_lead(tmp_path):
 
     fetch = FakeFetch(
         [
-            ("musicbrainz.org", _musicbrainz_release("Album", ["Lead"])),
+            ("musicbrainz.org", _only_for_artist(_musicbrainz_release("Album", ["Lead"]), "Lead")),
             ("coverartarchive.org", _jpeg()),
         ]
     )
@@ -762,7 +793,8 @@ def test_fetch_failure_is_not_cached_as_miss(tmp_path):
     # A search fetch that fails (returns None, a Wi-Fi blip) must not be cached as
     # a 7-day miss. The next lookup tries the network again.
     fetch = FakeFetch([])  # every URL is unmatched, so the fetch returns None
-    lookup = ArtLookup(tmp_path, fetch)
+    now = [1000.0]
+    lookup = ArtLookup(tmp_path, fetch, clock=lambda: now[0], sleep=lambda _s: None)
 
     assert lookup.find("Song", "An Artist", "An Album", "music", None) is None
     first = len(fetch.calls)
@@ -771,7 +803,9 @@ def test_fetch_failure_is_not_cached_as_miss(tmp_path):
     lookup_dir = _lookup_dir(tmp_path)
     assert not (lookup_dir.exists() and list(lookup_dir.glob("*.none")))
 
-    # Not suppressed: the second lookup reaches the network again.
+    # Not suppressed for good: after the 60 s rest the lookup reaches the
+    # network again (the rest itself is covered by the backoff tests).
+    now[0] += 61
     assert lookup.find("Song", "An Artist", "An Album", "music", None) is None
     assert len(fetch.calls) > first
 
@@ -940,8 +974,9 @@ def test_request_urls_carry_only_names(tmp_path):
     assert itunes_calls
     for call in itunes_calls:
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(call).query)
-        # The only free-text field is the show name.
-        assert query.get("term") == ["This American Life"]
+        # The only free-text field is the show name, or the artist and album
+        # for the music search (Apple is searched first for music now).
+        assert query.get("term") in (["This American Life"], ["Radiohead OK Computer"])
 
     mb_calls = [c for c in fetch.calls if "musicbrainz.org" in c]
     assert mb_calls
@@ -1268,3 +1303,688 @@ def test_prune_removes_noid_marker_with_its_cover(tmp_path):
     )
     assert not (_lookup_dir(tmp_path) / f"{key}.jpg").exists()
     assert not noid.exists()
+
+
+# --------------------------------------------------------------------------- #
+# fetch failure reasons
+# --------------------------------------------------------------------------- #
+
+
+def test_timeout_for_images_is_twenty_seconds():
+    assert artlookup._timeout_for("https://coverartarchive.org/release/x/front-500") == 20.0
+    assert artlookup._timeout_for("https://is1-ssl.mzstatic.com/a.jpg") == 20.0
+    assert artlookup._timeout_for("https://musicbrainz.org/ws/2/release/") == 10.0
+    assert artlookup._timeout_for("https://itunes.apple.com/search") == 10.0
+
+
+def test_urllib_fetch_reports_http_status(monkeypatch):
+    import urllib.error
+
+    def boom(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 503, "busy", {}, None)
+
+    monkeypatch.setattr(artlookup.urllib.request, "urlopen", boom)
+    with pytest.raises(FetchError) as caught:
+        artlookup.urllib_fetch("https://musicbrainz.org/ws/2/release/")
+    assert caught.value.reason == "HTTP 503"
+
+    def slow(request, timeout):
+        raise TimeoutError()
+
+    monkeypatch.setattr(artlookup.urllib.request, "urlopen", slow)
+    with pytest.raises(FetchError) as caught:
+        artlookup.urllib_fetch("https://musicbrainz.org/ws/2/release/")
+    assert caught.value.reason == "TimeoutError"
+
+
+def test_fetch_error_reason_is_kept(tmp_path):
+    def failing(url):
+        raise FetchError("HTTP 503")
+
+    lookup = ArtLookup(tmp_path, failing)
+    assert lookup._get("https://musicbrainz.org/x") is None
+    assert lookup._last_reason == "HTTP 503"
+
+    lookup = ArtLookup(tmp_path, lambda url: None)
+    assert lookup._get("https://musicbrainz.org/x") is None
+    assert lookup._last_reason == "no data"
+
+
+# --------------------------------------------------------------------------- #
+# Apple first for music
+# --------------------------------------------------------------------------- #
+
+
+def _apple_fetch(fixture, extra=()):
+    return FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes(fixture)),
+            ("mzstatic.com", _jpeg()),
+            *extra,
+        ]
+    )
+
+
+def _apple_calls(fetch):
+    return [c for c in fetch.calls if "itunes.apple.com" in c]
+
+
+def _apple_params(call):
+    return {
+        k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(call).query).items()
+    }
+
+
+@pytest.mark.parametrize(
+    "fixture, title, artist, album, term",
+    [
+        ("apple_album_catfish.json", "Strung Out For Your Love", "Four Tops", "Catfish",
+         "Four Tops Catfish"),
+        ("apple_album_clanton.json", "Keep a Secret", "George Clanton", "100% Electronica",
+         "George Clanton 100% Electronica"),
+        ("apple_album_special_herbs.json", "Arrow Root", "MF DOOM",
+         "Metal Fingers Presents: Special Herbs, Vol. 1 & 2",
+         "MF DOOM Metal Fingers Presents: Special Herbs, Vol. 1 & 2"),
+        ("apple_album_nehruviandoom.json", "First Day of Class (Edit)",
+         "MF DOOM & Bishop Nehru", "NEHRUVIANDOOM (REDUX)", "MF DOOM NEHRUVIANDOOM"),
+        ("apple_album_kaya.json", "Kaya", "Bob Marley & The Wailers",
+         "Kaya (Remastered 2013)", "Bob Marley Kaya"),
+        ("apple_album_mouse_and_mask.json", "Sofa King",
+         "DANGERDOOM, MF DOOM & Danger Mouse",
+         "THE MOUSE AND THE MASK (METALFACE EDITION)",
+         "DANGERDOOM THE MOUSE AND THE MASK"),
+    ],
+)
+def test_apple_album_search_finds_recorded_misses(
+    tmp_path, fixture, title, artist, album, term
+):
+    fetch = _apple_fetch(fixture)
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+
+    url = lookup.find(title, artist, album, "music", None)
+
+    assert url is not None and url.startswith("/cover/lookup/")
+    assert not any("musicbrainz.org" in c for c in fetch.calls)
+    calls = _apple_calls(fetch)
+    assert len(calls) == 1
+    params = _apple_params(calls[0])
+    assert params["term"] == term
+    assert (params["media"], params["entity"], params["limit"]) == ("music", "album", "10")
+    art = [c for c in fetch.calls if "mzstatic.com" in c]
+    assert len(art) == 1 and art[0].endswith("/600x600bb.jpg")
+    # The cover is cached under the full-credit key, as before.
+    assert (_lookup_dir(tmp_path) / Path(url).name).is_file()
+
+
+def test_apple_prefers_the_exact_redux_release(tmp_path):
+    fetch = _apple_fetch("apple_album_nehruviandoom.json")
+    lookup = ArtLookup(tmp_path, fetch)
+    lookup.find("First Day of Class", "MF DOOM & Bishop Nehru", "NEHRUVIANDOOM (REDUX)",
+                "music", None)
+    art = [c for c in fetch.calls if "mzstatic.com" in c][0]
+    redux = json.loads(_fixture_bytes("apple_album_nehruviandoom.json"))["results"][0]
+    assert art == redux["artworkUrl100"].replace("100x100bb", "600x600bb")
+
+
+def test_apple_does_not_take_a_different_volume_or_edition_number(tmp_path):
+    # "100% Electronica" must not match "200% Electronica" by another act.
+    fetch = _apple_fetch("apple_album_clanton.json")
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    lookup.find("x", "George Clanton", "300% Electronica", "music", None)
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+
+
+def test_apple_song_search_finds_a_track_with_no_album(tmp_path):
+    fetch = _apple_fetch("apple_song_catfish.json")
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find("Strung Out For Your Love", "Four Tops", None, "music", None)
+
+    assert url is not None
+    params = _apple_params(_apple_calls(fetch)[0])
+    assert params["entity"] == "song"
+    assert params["term"] == "Four Tops Strung Out For Your Love"
+    assert not any("musicbrainz.org" in c for c in fetch.calls)
+
+
+def test_apple_song_with_another_title_or_artist_is_a_miss(tmp_path):
+    fetch = _apple_fetch("apple_song_catfish.json")
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    assert lookup.find("A Different Song", "Four Tops", None, "music", None) is None
+    assert lookup.find("Strung Out For Your Love", "Another Band", None, "music", None) is None
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+
+
+def test_apple_covers_by_unrelated_acts_stay_a_miss(tmp_path):
+    # Apple's results for "House of Balloons" are covers by other acts.
+    fetch = _apple_fetch("apple_album_house_of_balloons.json")
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    url = lookup.find("Glass Table Girls", "The Weeknd", "House of Balloons (Original)",
+                      "music", None)
+    assert url is None
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+
+
+def test_apple_various_artists_compilation_stays_a_miss(tmp_path):
+    # The song fixture holds "Smooth Sax Tribute to the Four Tops", credited to
+    # Various Artists: a named artist must not match it.
+    fetch = _apple_fetch("apple_song_catfish.json")
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    url = lookup.find("x", "Four Tops", "Smooth Sax Tribute to the Four Tops", "music", None)
+    assert url is None
+
+
+def test_video_with_no_album_and_no_song_stays_a_miss(tmp_path):
+    fetch = _apple_fetch("apple_album_empty.json")
+    lookup = ArtLookup(tmp_path, fetch)
+    url = lookup.find("Dan Soder on 9 11 | On The Road", "Vacuum Wars", None, "music", None)
+    assert url is None
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_no_album_keys_differ_by_track_title():
+    from snaphouse.artlookup import _lookup_key
+
+    assert _lookup_key("music", "Song A", "Artist", None) != _lookup_key(
+        "music", "Song B", "Artist", None
+    )
+    # With an album the key is unchanged and ignores the track title.
+    assert _lookup_key("music", "Song A", "Artist", "Album") == _lookup_key(
+        "music", "Song B", "Artist", "Album"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# MusicBrainz: shared matcher and the 503 retry
+# --------------------------------------------------------------------------- #
+
+
+def _music_fetch(musicbrainz, extra=()):
+    return FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", musicbrainz),
+            ("coverartarchive.org", _jpeg()),
+            *extra,
+        ]
+    )
+
+
+def test_musicbrainz_503_retries_once_after_two_seconds(tmp_path):
+    calls = {"n": 0}
+
+    def musicbrainz(url):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise FetchError("HTTP 503")
+        return _fixture_bytes("musicbrainz.json")
+
+    clock, sleep, slept = _gate_recorder()
+    fetch = _music_fetch(musicbrainz)
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find("Airbag", "Radiohead", "OK Computer", "music", None)
+
+    assert url is not None
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 2
+    assert 2.0 in slept
+
+
+def test_musicbrainz_503_twice_is_an_error_not_a_miss(tmp_path):
+    def musicbrainz(url):
+        raise FetchError("HTTP 503")
+
+    clock, sleep, slept = _gate_recorder()
+    fetch = _music_fetch(musicbrainz)
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find("Airbag", "Radiohead", "OK Computer", "music", None)
+
+    assert url is None
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 2
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_musicbrainz_other_errors_are_not_retried(tmp_path):
+    def musicbrainz(url):
+        raise FetchError("HTTP 500")
+
+    fetch = _music_fetch(musicbrainz)
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    assert lookup.find("Airbag", "Radiohead", "OK Computer", "music", None) is None
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 1
+
+
+def test_musicbrainz_matches_an_edition_by_core_title(tmp_path):
+    # The track says "Remastered 2013"; MusicBrainz has "Deluxe Edition". Only
+    # the shared core-title rule connects them.
+    body = _musicbrainz_release("Kaya (Deluxe Edition)", ["Bob Marley & The Wailers"])
+    fetch = _music_fetch(body)
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("Kaya", "Bob Marley & The Wailers", "Kaya (Remastered 2013)",
+                       "music", None) is not None
+
+
+def test_musicbrainz_reads_ampersand_as_and_in_credits(tmp_path):
+    body = _musicbrainz_release("Kaya", ["Bob Marley and the Wailers"])
+    fetch = _music_fetch(body)
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("Kaya", "Bob Marley & The Wailers", "Kaya", "music", None) is not None
+
+
+def test_musicbrainz_unrelated_artist_with_same_title_stays_a_miss(tmp_path):
+    body = _musicbrainz_release("House of Balloons", ["Goomp"])
+    fetch = _music_fetch(body)
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("x", "The Weeknd", "House of Balloons (Original)", "music", None) is None
+    assert not any("coverartarchive.org" in c for c in fetch.calls)
+
+
+def test_a_full_credit_hit_is_shared_with_the_albums_lead_key(tmp_path):
+    # Apple matches the first featured track under its full credit. A later track
+    # of the same album with another guest finds the shared lead copy with no
+    # network call, as the lead-key sharing worked before.
+    apple = json.dumps(
+        {
+            "results": [
+                {
+                    "artistName": "Bad Bunny",
+                    "collectionName": "Un Verano Sin Ti",
+                    "artworkUrl100": "https://is1-ssl.mzstatic.com/x/100x100bb.jpg",
+                }
+            ]
+        }
+    ).encode("utf-8")
+    fetch = FakeFetch([("itunes.apple.com", apple), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    first = lookup.find("A", "Bad Bunny & Ñengo Flow", "Un Verano Sin Ti", "music", None)
+    calls = len(fetch.calls)
+    second = lookup.find("B", "Bad Bunny, Chencho Corleone", "Un Verano Sin Ti", "music", None)
+
+    assert first is not None and second is not None
+    assert len(fetch.calls) == calls
+
+
+# --------------------------------------------------------------------------- #
+# MusicBrainz art fallbacks, and an Apple error is not a miss
+# --------------------------------------------------------------------------- #
+
+
+def _caa(responses):
+    """A Cover Art Archive route: URL substring to bytes or None, in a dict."""
+
+    def respond(url):
+        for needle, body in responses.items():
+            if needle in url:
+                return body
+        return None
+
+    return ("coverartarchive.org", respond)
+
+
+def _caa_calls(fetch):
+    return [c for c in fetch.calls if "coverartarchive.org" in c]
+
+
+def test_preachers_son_falls_back_to_release_group_art(tmp_path):
+    release = "1bae7e13-4f1c-486e-8432-7aacb835a9f1"
+    group = "72ac2c3b-a935-4748-a649-d01b1f1831c9"
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_preachers_son.json")),
+            _caa({f"/release-group/{group}/": _jpeg()}),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find("Sheba With Angel Mae", "YGTUT", "Preacher's Son", "music", None)
+
+    assert url is not None
+    assert _caa_calls(fetch) == [
+        f"https://coverartarchive.org/release/{release}/front-500",
+        f"https://coverartarchive.org/release-group/{group}/front-500",
+    ]
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_special_herbs_falls_back_to_release_group_art(tmp_path):
+    group = "f4d95efb-f5d0-3222-bf9d-2045cb3389f2"
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_special_herbs.json")),
+            _caa({f"/release-group/{group}/": _jpeg()}),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    url = lookup.find("Arrow Root", "MF DOOM",
+                      "Metal Fingers Presents: Special Herbs, Vol. 1 & 2", "music", None)
+    assert url is not None
+
+
+def test_next_matching_release_is_tried_before_release_group_art(tmp_path):
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_cave_world.json")),
+            _caa({"/release/0baa1bb0-9314-4d58-abec-316d39b1f1cb/": _jpeg()}),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find("Track", "Viagra Boys", "Cave World (Deluxe)", "music", None)
+
+    assert url is not None
+    assert [c.split("/")[4] for c in _caa_calls(fetch)] == ["67020dff-2c0b-470f-8104-e157f168e035", "0baa1bb0-9314-4d58-abec-316d39b1f1cb"]
+    assert not any("release-group" in c for c in fetch.calls)
+
+
+def test_every_art_fetch_a_404_is_a_cached_miss(tmp_path):
+    def missing(url):
+        raise FetchError("HTTP 404")
+
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_preachers_son.json")),
+            ("coverartarchive.org", missing),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("x", "YGTUT", "Preacher's Son", "music", None) is None
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_art_fetch_that_times_out_is_an_error_not_a_miss(tmp_path):
+    def slow(url):
+        raise FetchError("TimeoutError")
+
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_preachers_son.json")),
+            ("coverartarchive.org", slow),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("x", "YGTUT", "Preacher's Son", "music", None) is None
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_apple_error_with_musicbrainz_miss_is_a_failure_not_a_miss(tmp_path):
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", lambda url: None),
+            ("musicbrainz.org", _empty_musicbrainz()),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("x", "Radiohead", "OK Computer", "music", None) is None
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_apple_error_with_musicbrainz_hit_still_finds_the_cover(tmp_path):
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", lambda url: None),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz.json")),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("Airbag", "Radiohead", "OK Computer", "music", None) is not None
+
+
+# --------------------------------------------------------------------------- #
+# error backoff
+# --------------------------------------------------------------------------- #
+
+
+def _ticking_clock(start=1000.0):
+    now = [start]
+    return (lambda: now[0]), now
+
+
+def test_a_failed_music_lookup_is_not_retried_for_a_minute(tmp_path):
+    fetch = FakeFetch(
+        [("itunes.apple.com", lambda url: None), ("musicbrainz.org", lambda url: None)]
+    )
+    clock, now = _ticking_clock()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=lambda _s: None)
+
+    assert lookup.find("Song", "Artist", "Album", "music", None) is None
+    first = len(fetch.calls)
+    assert first > 0
+
+    now[0] += 30
+    assert lookup.find("Another Song", "Artist", "Album", "music", None) is None
+    assert len(fetch.calls) == first
+
+    now[0] += 31
+    assert lookup.find("Song", "Artist", "Album", "music", None) is None
+    assert len(fetch.calls) > first
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_a_failed_podcast_lookup_is_not_retried_for_a_minute(tmp_path):
+    fetch = FakeFetch([])
+    clock, now = _ticking_clock()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=lambda _s: None)
+
+    lookup.find("Ep", "Show", "Show", "long_form", ["Podcast"])
+    first = len(fetch.calls)
+    now[0] += 30
+    lookup.find("Ep 2", "Show", "Show", "long_form", ["Podcast"])
+    assert len(fetch.calls) == first
+
+
+# --------------------------------------------------------------------------- #
+# podcasts under the publisher's name
+# --------------------------------------------------------------------------- #
+
+
+def test_podcast_found_under_its_publisher_name(tmp_path):
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_podcast_democracy_now.json")),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    result = lookup.find_with_id(
+        "Headlines", "Democracy Now!", "Democracy Now!", "long_form", ["Podcast"]
+    )
+
+    assert result.art_url is not None
+    audio = json.loads(_fixture_bytes("apple_podcast_democracy_now.json"))["results"][0]
+    assert result.podcast_id == audio["collectionId"]
+    assert audio["artworkUrl600"] in fetch.calls
+
+
+def test_podcast_prefix_needs_the_publisher_to_be_the_show_name(tmp_path):
+    body = json.dumps(
+        {
+            "results": [
+                {
+                    "artistName": "Some Other Network",
+                    "collectionName": "Democracy Now! Audio",
+                    "collectionId": 5,
+                    "artworkUrl600": "https://is1-ssl.mzstatic.com/x/600x600bb.jpg",
+                }
+            ]
+        }
+    ).encode("utf-8")
+    fetch = FakeFetch([("itunes.apple.com", body), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+    assert lookup.find("Ep", "Democracy Now!", "Democracy Now!", "long_form", ["Podcast"]) is None
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+
+
+def test_podcast_exact_name_beats_the_publisher_prefix(tmp_path):
+    body = json.dumps(
+        {
+            "results": [
+                {
+                    "artistName": "Show",
+                    "collectionName": "Show Extra",
+                    "collectionId": 1,
+                    "artworkUrl600": "https://is1-ssl.mzstatic.com/x/prefix.jpg",
+                },
+                {
+                    "artistName": "Show",
+                    "collectionName": "Show",
+                    "collectionId": 2,
+                    "artworkUrl600": "https://is1-ssl.mzstatic.com/x/exact.jpg",
+                },
+            ]
+        }
+    ).encode("utf-8")
+    fetch = FakeFetch([("itunes.apple.com", body), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+    result = lookup.find_with_id("Ep", "Show", "Show", "long_form", ["Podcast"])
+    assert result.podcast_id == 2
+
+
+# --------------------------------------------------------------------------- #
+# logging: source, reason and outcome
+# --------------------------------------------------------------------------- #
+
+
+def _source_lines(caplog):
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("art lookup apple")
+            or r.getMessage().startswith("art lookup musicbrainz")]
+
+
+def test_each_source_logs_its_outcome_and_reason(tmp_path, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="snaphouse.artlookup")
+
+    def busy(url):
+        raise FetchError("HTTP 503")
+
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", busy),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    lookup.find("x", "Four Tops", "Catfish", "music", None)
+
+    lines = _source_lines(caplog)
+    assert "art lookup apple: miss (no match)" in lines
+    assert "art lookup musicbrainz: error (HTTP 503)" in lines
+
+
+def test_a_found_cover_logs_the_matched_names(tmp_path, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="snaphouse.artlookup")
+    fetch = _apple_fetch("apple_album_catfish.json")
+    lookup = ArtLookup(tmp_path, fetch)
+    lookup.find("x", "Four Tops", "Catfish", "music", None)
+    assert "art lookup apple: found (Four Tops, Catfish)" in _source_lines(caplog)
+
+
+# --------------------------------------------------------------------------- #
+# artwork is accepted only from Apple's artwork CDN
+# --------------------------------------------------------------------------- #
+
+_BAD_ART_URLS = [
+    "https://elsewhere.example/a/100x100bb.jpg",
+    "https://evilmzstatic.com/a/100x100bb.jpg",
+    "https://mzstatic.com.evil.host/a/100x100bb.jpg",
+    "http://is1-ssl.mzstatic.com/a/100x100bb.jpg",
+    "https://user@evil.host/mzstatic.com/100x100bb.jpg",
+]
+
+
+def _apple_body(*entries):
+    return json.dumps({"results": list(entries)}).encode("utf-8")
+
+
+@pytest.mark.parametrize("bad", _BAD_ART_URLS)
+def test_album_artwork_off_the_apple_cdn_is_never_fetched(tmp_path, bad):
+    body = _apple_body(
+        {"artistName": "Four Tops", "collectionName": "Catfish", "artworkUrl100": bad}
+    )
+    fetch = FakeFetch([("itunes.apple.com", body)])
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+
+    url = lookup.find("x", "Four Tops", "Catfish", "music", None)
+
+    assert url is None
+    assert [c for c in fetch.calls if "itunes.apple.com" not in c and "musicbrainz" not in c] == []
+
+
+def test_album_with_bad_artwork_falls_to_the_next_valid_candidate(tmp_path):
+    good = "https://is1-ssl.mzstatic.com/image/good/100x100bb.jpg"
+    body = _apple_body(
+        {"artistName": "Four Tops", "collectionName": "Catfish",
+         "artworkUrl100": "https://evil.example/100x100bb.jpg"},
+        {"artistName": "Four Tops", "collectionName": "Catfish - Single",
+         "artworkUrl100": good},
+    )
+    fetch = FakeFetch([("itunes.apple.com", body), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    assert lookup.find("x", "Four Tops", "Catfish", "music", None) is not None
+    assert "https://is1-ssl.mzstatic.com/image/good/600x600bb.jpg" in fetch.calls
+    assert not any("evil.example" in c for c in fetch.calls)
+
+
+def test_song_artwork_off_the_apple_cdn_is_never_fetched(tmp_path):
+    body = _apple_body(
+        {"artistName": "Four Tops", "trackName": "Strung Out", "collectionName": "Catfish",
+         "artworkUrl100": "https://evilmzstatic.com/a/100x100bb.jpg"}
+    )
+    fetch = FakeFetch([("itunes.apple.com", body)])
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    assert lookup.find("Strung Out", "Four Tops", None, "music", None) is None
+    assert not any("evilmzstatic" in c for c in fetch.calls)
+
+
+@pytest.mark.parametrize("bad", _BAD_ART_URLS)
+def test_podcast_artwork_off_the_apple_cdn_is_never_fetched(tmp_path, bad):
+    body = _apple_body(
+        {"artistName": "Show", "collectionName": "Show", "collectionId": 9,
+         "artworkUrl600": bad.replace("100x100bb", "600x600bb")}
+    )
+    fetch = FakeFetch([("itunes.apple.com", body)])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    # kind "music" with a podcast genre keeps the lookup on the podcast route only.
+    assert lookup.find("Ep", "Show", "Show", "music", ["Podcast"]) is None
+    assert [c for c in fetch.calls if "itunes.apple.com" not in c] == []
+    # A real miss, not a transient failure.
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_podcast_with_bad_artwork_takes_the_next_valid_show(tmp_path):
+    good = "https://is1-ssl.mzstatic.com/image/good/600x600bb.jpg"
+    body = _apple_body(
+        {"artistName": "Show", "collectionName": "Show", "collectionId": 1,
+         "artworkUrl600": "https://evil.example/600x600bb.jpg"},
+        {"artistName": "Show", "collectionName": "Show", "collectionId": 2,
+         "artworkUrl600": good},
+    )
+    fetch = FakeFetch([("itunes.apple.com", body), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+    result = lookup.find_with_id("Ep", "Show", "Show", "long_form", ["Podcast"])
+    assert result.podcast_id == 2
+    assert good in fetch.calls

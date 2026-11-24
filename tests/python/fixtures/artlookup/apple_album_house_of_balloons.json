@@ -1,0 +1,68 @@
+{
+ "resultCount": 9,
+ "results": [
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Goomp",
+   "collectionName": "House Of Balloons (Instrumental) - Single",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/82/cf/14/82cf1418-6b05-e5c8-36e1-bfc7226a4512/663918671641.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Ceyhun Tercan",
+   "collectionName": "House of Balloons (Cover) - Single",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/e5/18/ad/e518adc0-dbcc-d9b9-5249-71d82e40dfed/artwork.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "The Weeknd",
+   "collectionName": "Live At SoFi Stadium",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/03/2d/c1/032dc13a-dce4-672a-b501-d16d3b31be07/23UMGIM20988.rgb.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Late Arc",
+   "collectionName": "The Weeknd - House of Balloons (Lofi Version) - Single",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/7f/be/9c/7fbe9c8b-39ec-1e75-269a-f3d778eca462/artwork.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "ViralityX",
+   "collectionName": "House of Balloons (Sped Up Remix) - Single",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/63/60/5f/63605fef-19e5-49d0-f034-835d3631f3be/3701624044728_cover.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Self Made",
+   "collectionName": "House of Balloons / Glass Table Girls - Single",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/07/0c/54/070c5442-c151-a33b-27da-ac0758d8aa35/cover.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Feralcat and the Wild",
+   "collectionName": "Soundcastle Sessions - Single",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/dc/c8/49/dcc849a3-33f9-a51d-bdba-644e20053387/artwork.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "VXLLAIN & iGRES",
+   "collectionName": "house of balloons (synthwave) - EP",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/23/c7/1b/23c71b36-4ca2-e234-9732-b1bc54630da8/5064149668434_cover.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "Areeb Shahjahan",
+   "collectionName": "House of Balloons: Piano",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/58/03/55/580355b5-e37c-1922-344f-e6622b1a750c/859749817222_cover.jpg/100x100bb.jpg"
+  }
+ ]
+}

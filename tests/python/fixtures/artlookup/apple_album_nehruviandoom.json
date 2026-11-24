@@ -1,0 +1,19 @@
+{
+ "resultCount": 2,
+ "results": [
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "MF DOOM & Bishop Nehru",
+   "collectionName": "NEHRUVIANDOOM (REDUX)",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/12/cf/45/12cf4582-4d1e-4680-51ad-13846a9ede32/0878390006120_cover.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "NehruvianDOOM",
+   "collectionName": "NEHRUVIANDOOM",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/22/38/1c/22381cd2-3e90-bd60-eb09-e4184da82d58/0878390002726_cover.jpg/100x100bb.jpg"
+  }
+ ]
+}
