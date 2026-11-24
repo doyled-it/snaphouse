@@ -12,7 +12,8 @@ Keys inside a panel's entry:
   night_end           "HH:MM", 30 minute steps, never equal to night_start
   screensaver_on      bool
   screensaver_wait_s  30, 60, 120, 300 or 600
-  screensaver_style   "aurora"
+  screensaver_styles  non-empty list of style ids, registry order, no duplicates
+  screensaver_change_min  0 (off), 5, 15, 30 or 60: minutes between styles
   screensaver_pct     5 to 100, steps of 5
 """
 
@@ -27,7 +28,14 @@ from pathlib import Path
 
 VERSION = 1
 WAIT_CHOICES = (30, 60, 120, 300, 600)
-STYLES = ("aurora",)
+CHANGE_CHOICES = (0, 5, 15, 30, 60)
+# The fixed style ids, in the page's registry order. The hub accepts all twelve from
+# the start; the page shows only the ones it has a module for.
+STYLES = (
+    "aurora", "facts", "quotes", "covers", "clock", "sky",
+    "planets", "moon", "flow", "contours", "life", "harmonograph",
+)
+DEFAULT_STYLES = ["aurora"]
 KEYS = (
     "brightness_pct",
     "night_dim_pct",
@@ -35,7 +43,8 @@ KEYS = (
     "night_end",
     "screensaver_on",
     "screensaver_wait_s",
-    "screensaver_style",
+    "screensaver_styles",
+    "screensaver_change_min",
     "screensaver_pct",
 )
 
@@ -60,6 +69,15 @@ def _pct(low: int):
     return check
 
 
+def _styles(value) -> bool:
+    if type(value) is not list or not value:
+        return False
+    if not all(type(v) is str and v in STYLES for v in value):
+        return False
+    order = [STYLES.index(v) for v in value]
+    return all(a < b for a, b in zip(order, order[1:]))
+
+
 def _time(value) -> bool:
     if not isinstance(value, str) or len(value) != 5 or value[2] != ":":
         return False
@@ -76,7 +94,8 @@ _CHECKS = {
     "night_end": _time,
     "screensaver_on": lambda v: type(v) is bool,
     "screensaver_wait_s": lambda v: _is_int(v) and v in WAIT_CHOICES,
-    "screensaver_style": lambda v: isinstance(v, str) and v in STYLES,
+    "screensaver_styles": _styles,
+    "screensaver_change_min": lambda v: _is_int(v) and v in CHANGE_CHOICES,
     "screensaver_pct": _pct(5),
 }
 
@@ -87,7 +106,8 @@ _BAD = {
     "night_end": "Night ends must be a time on the hour or half hour.",
     "screensaver_on": "Screensaver must be on or off.",
     "screensaver_wait_s": "Starts after must be 30 s, 1, 2, 5 or 10 min.",
-    "screensaver_style": "That screensaver style is not available.",
+    "screensaver_styles": "Pick at least one screensaver style from the list.",
+    "screensaver_change_min": "Change every must be Off, 5, 15, 30 or 60 min.",
     "screensaver_pct": "Screensaver brightness must be 5 to 100 in steps of 5.",
 }
 
@@ -142,6 +162,9 @@ class PanelSettings:
             if not isinstance(entry, dict):
                 continue
             good = {k: v for k, v in entry.items() if k in _CHECKS and _CHECKS[k](v)}
+            # Migration: the old single style reads as a one-item list.
+            if "screensaver_styles" not in good and _CHECKS["screensaver_styles"]([entry.get("screensaver_style")]):
+                good["screensaver_styles"] = [entry["screensaver_style"]]
             merged = {**self._defaults, **good}
             if merged["night_start"] == merged["night_end"]:
                 good.pop("night_start", None)

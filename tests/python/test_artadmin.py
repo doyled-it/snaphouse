@@ -36,7 +36,8 @@ PANEL_DEFAULTS = {
     "night_end": "06:00",
     "screensaver_on": True,
     "screensaver_wait_s": 60,
-    "screensaver_style": "aurora",
+    "screensaver_styles": ["aurora"],
+    "screensaver_change_min": 15,
     "screensaver_pct": 40,
 }
 
@@ -1194,6 +1195,7 @@ def test_main_builds_panels_from_flags(tmp_path, monkeypatch):
     assert doc["hall"] == {
         "brightness_pct": 90, "night_dim_pct": 10, "night_start": "21:30",
         "night_end": "07:00", "screensaver_on": False, "screensaver_wait_s": 120,
-        "screensaver_style": "aurora", "screensaver_pct": 25,
+        "screensaver_styles": ["aurora"], "screensaver_change_min": 15,
+        "screensaver_pct": 25,
     }
     assert captured["app"].panel_settings_path == tmp_path / "p" / "art" / "panel-settings.json"
