@@ -859,6 +859,11 @@ function onMessage(data) {
       render(one.result);
       continue;
     }
+    if (statusRefresher.owns(one.id)) {
+      // The status read itself failed: free the gate so later reads can go out.
+      statusRefresher.answered();
+      continue;
+    }
     if (one.method && one.id === undefined) {
       requestStatus();
       continue;
@@ -876,7 +881,12 @@ function clearStatusMessage() {
 }
 
 const statusRefresher = createStatusRefresher({
-  send: () => state.socket.send(envelope("Server.GetStatus", {})),
+  send: () => {
+    const id = state.nextId;
+    state.socket.send(envelope("Server.GetStatus", {}));
+    return id;
+  },
+  now: () => Date.now(),
 });
 
 function requestStatus() {

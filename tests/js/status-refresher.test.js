@@ -4,8 +4,16 @@ import { createStatusRefresher } from "../../roles/room_picker/files/site/status
 
 function make() {
   const sent = [];
-  const r = createStatusRefresher({ send: () => sent.push("GetStatus") });
-  return { r, sent };
+  const clock = { t: 0 };
+  let id = 100;
+  const r = createStatusRefresher({
+    send: () => {
+      sent.push("GetStatus");
+      return ++id;
+    },
+    now: () => clock.t,
+  });
+  return { r, sent, clock };
 }
 
 test("a first want sends one status request", () => {
@@ -54,6 +62,50 @@ test("a drag's last write is followed by a refresh after the earlier one answers
 });
 
 import { readFileSync } from "node:fs";
+
+test("owns recognises the id of the request in flight, and only that", () => {
+  const { r } = make();
+  assert.equal(r.owns(101), false);
+  r.want();
+  assert.equal(r.owns(101), true);
+  assert.equal(r.owns(102), false);
+  r.answered();
+  assert.equal(r.owns(101), false);
+});
+
+test("a request in flight under 5 s still coalesces", () => {
+  const { r, sent, clock } = make();
+  r.want();
+  clock.t = 4999;
+  r.want();
+  assert.equal(sent.length, 1);
+});
+
+test("a request in flight past 5 s no longer blocks the next want", () => {
+  const { r, sent, clock } = make();
+  r.want();
+  clock.t = 5001;
+  r.want();
+  assert.equal(sent.length, 2);
+  assert.equal(r.owns(102), true);
+  assert.equal(r.owns(101), false);
+});
+
+test("a lost request does not leave a trailing want behind after recovery", () => {
+  const { r, sent, clock } = make();
+  r.want();
+  r.want();
+  clock.t = 6000;
+  r.want();
+  assert.equal(sent.length, 2);
+  r.answered();
+  assert.equal(sent.length, 2);
+});
+
+test("rooms.js counts an error reply to the status request as answered", () => {
+  const body = rooms.slice(rooms.indexOf("function onMessage("), rooms.indexOf("function clearStatusMessage"));
+  assert.match(body, /statusRefresher\.owns\(one\.id\)[\s\S]*statusRefresher\.answered\(\)/);
+});
 
 const rooms = readFileSync(
   new URL("../../roles/room_picker/files/site/rooms.js", import.meta.url),

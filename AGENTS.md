@@ -460,7 +460,7 @@ Snapserver sends its change notifications to every control connection except the
 that made the change, so a page never hears about its own write. When the WebSocket
 answers a control request (a reply with an `id` and no `server`), `rooms.js` asks for
 `Server.GetStatus` through `status-refresher.js` (pure, `tests/js/status-refresher.test.js`):
-at most one status request in flight, plus one trailing request after it answers, so a
+at most one status request in flight (one unanswered for 5 s counts as lost, and an error reply to it frees the slot), plus one trailing request after it answers, so a
 drag costs two at most. This is what keeps the panel's room columns, which read
 `state.rooms`, in step with a tap or drag on the panel itself (the HTTP fallback always
 did this after each request).
