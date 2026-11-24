@@ -54,8 +54,13 @@ def _hosts() -> dict:
 def _unit() -> str:
     # The unit derives its --frame list from the inventory, so it is rendered with
     # snaphouse_hosts in scope, the way site.yml renders it on the hub.
-    env = Environment(loader=FileSystemLoader(str(REPO)), keep_trailing_newline=True)
-    return env.get_template(UNIT_TEMPLATE).render(snaphouse_hosts=_hosts())
+    env = Environment(loader=FileSystemLoader(str(REPO)), keep_trailing_newline=True, trim_blocks=True)
+    all_vars = yaml.safe_load((REPO / "vars/all.yml").read_text())
+    return env.get_template(UNIT_TEMPLATE).render(
+        snaphouse_hosts=_hosts(),
+        panel_backlight=all_vars["panel_backlight"],
+        panel_screensaver=all_vars["panel_screensaver"],
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -354,3 +359,75 @@ def test_nginx_keeps_the_read_only_listing():
     conf = ART_CONF.read_text()
     assert "location /art/ {" in conf
     assert "autoindex on;" in conf
+
+
+# --------------------------------------------------------------------------- #
+# panel settings: nginx, unit arguments, vars and the verify probe
+# --------------------------------------------------------------------------- #
+
+
+def _block(conf: str, marker: str) -> str:
+    assert marker in conf, f"no {marker}"
+    return conf.split(marker, 1)[1].split("}", 1)[0]
+
+
+def test_nginx_proxies_panel_api_with_the_origin_header():
+    block = _block(ART_CONF.read_text(), "location /api/panel/ {")
+    assert "proxy_pass http://127.0.0.1:8781;" in block
+    # Always set (so overwritten), never passed through from the client.
+    assert "proxy_set_header X-Snaphouse-Origin $snaphouse_origin;" in block
+    assert "client_max_body_size 64k;" in block
+
+
+def test_nginx_serves_panel_settings_exact_match_no_cache():
+    block = _block(ART_CONF.read_text(), "location = /panel-settings.json {")
+    assert f"root {PUBLIC_DOCS_DIR};" in block
+    assert "application/json" in block
+    assert 'add_header Cache-Control "no-cache";' in block
+
+
+def test_hosts_with_art_share_also_define_the_origin_map():
+    # $snaphouse_origin comes from homebody_bootstrap's http-level map; a host
+    # that served art.conf without it would fail nginx -t.
+    for name, host in _hosts().items():
+        if "art_share" in host["roles"]:
+            assert "homebody_bootstrap" in host["roles"], name
+
+
+def test_unit_passes_a_panel_id_per_inventory_panel():
+    unit = _unit()
+    ids = sorted(n for n, h in _hosts().items() if "panel" in h["roles"])
+    assert ids
+    for pid in ids:
+        assert f"--panel {pid} " in unit
+    assert "--panel-state /var/lib/snaphouse/artadmin/panel-settings.json" in unit
+
+
+def test_unit_passes_the_panel_defaults_from_vars():
+    unit = _unit()
+    all_vars = yaml.safe_load((REPO / "vars/all.yml").read_text())
+    b, s = all_vars["panel_backlight"], all_vars["panel_screensaver"]
+    assert f"--panel-brightness {b['full_pct']}" in unit
+    assert f"--panel-night-dim {b['dim_pct']}" in unit
+    assert f"--panel-night-start {b['quiet_start']}" in unit
+    assert f"--panel-night-end {b['quiet_end']}" in unit
+    assert f"--panel-screensaver {'on' if s['enabled'] else 'off'}" in unit
+    assert f"--panel-wait {s['day_idle_s']}" in unit
+    assert f"--panel-screensaver-brightness {s['brightness_pct']}" in unit
+
+
+def test_unit_exec_start_is_one_line():
+    lines = [l for l in _unit().splitlines() if l.startswith("ExecStart=")]
+    assert len(lines) == 1 and "--panel-state" in lines[0]
+
+
+def test_screensaver_brightness_default_is_40_and_the_local_port_is_pinned():
+    all_vars = yaml.safe_load((REPO / "vars/all.yml").read_text())
+    assert all_vars["panel_screensaver"]["brightness_pct"] == 40
+    assert all_vars["backlight_local_port"] == 8784
+
+
+def test_verify_check_probes_panel_settings_json():
+    text = VERIFY_CHECK.read_text()
+    assert "curl -fsS http://localhost/panel-settings.json" in text
+    assert ".version == 1" in text

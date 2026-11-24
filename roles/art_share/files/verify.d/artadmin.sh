@@ -28,6 +28,10 @@ ready() {
     curl -fsS http://localhost/frame-control.json \
         | jq -e 'type == "object" and (.settings | type == "object") and (.frames | type == "object")' \
         >/dev/null 2>&1 || return 1
+    # And panel-settings.json (every panel's screen settings, defaults filled in).
+    curl -fsS http://localhost/panel-settings.json \
+        | jq -e '.version == 1 and (.panels | type == "object")' \
+        >/dev/null 2>&1 || return 1
     return 0
 }
 
@@ -41,6 +45,8 @@ while ! ready; do
             | jq -e 'type == "object" and (.folders | type == "array") and (.pieces | type == "array")' >/dev/null
         curl -fsS http://localhost/frame-control.json \
             | jq -e 'type == "object" and (.settings | type == "object") and (.frames | type == "object")' >/dev/null
+        curl -fsS http://localhost/panel-settings.json \
+            | jq -e '.version == 1 and (.panels | type == "object")' >/dev/null
         exit 1
     fi
     sleep 2

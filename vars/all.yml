@@ -115,6 +115,14 @@ panel_backlight:
 panel_screensaver:
   enabled: true
   day_idle_s: 60
+  # The brightness the screen dims to while the screensaver (or the ambient Now
+  # Playing view) shows. The default for each panel's Screensaver brightness setting.
+  brightness_pct: 40
+
+# The backlight daemon's loopback-only API (the panel page calls it to preview a
+# brightness and to apply a saved setting at once). 8781 art admin, 8782 pairing,
+# 8783 homebody.
+backlight_local_port: 8784
 
 # Pinned Snapcast release. Chosen as the newest release (v0.35.0, 2026-03-10) that
 # supports everything the hub needs: the meta stream (meta:// priority/merge
