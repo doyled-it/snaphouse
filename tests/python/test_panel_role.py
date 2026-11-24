@@ -501,7 +501,7 @@ def test_dim_level_is_unchanged_by_the_screensaver_work():
 
 
 def test_screensaver_settings_live_in_vars():
-    assert ALL_VARS["panel_screensaver"] == {"enabled": True, "day_idle_s": 300}
+    assert ALL_VARS["panel_screensaver"] == {"enabled": True, "day_idle_s": 60}
     assert ALL_VARS["panel_backlight"]["grab_wake_tap"] is False
 
 
