@@ -235,3 +235,17 @@ test("moon: the photo box is inside the screen and the photo is dimmer at night"
   assert.ok(night.alpha < 0.5, `night alpha ${night.alpha}`);
   assert.equal(night.fills, 3, "text still shows at night");
 });
+
+test("planets: the rings and sun are drawn at a drifted centre that moves with the clock", () => {
+  const { env, state, tick } = fakeEnv();
+  const s = createPlanetsStyle(env);
+  s.start();
+  tick(0);
+  const centre = () => callsOf(s).find((c) => c[0] === "ellipse").slice(1, 3);
+  const first = centre();
+  callsOf(s).length = 0;
+  state.clock += 3 * 60 * 1000;
+  tick(1500);
+  const later = centre();
+  assert.ok(Math.hypot(later[0] - first[0], later[1] - first[1]) >= 1);
+});

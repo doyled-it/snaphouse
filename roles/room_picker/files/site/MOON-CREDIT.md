@@ -11,7 +11,7 @@ the sky.
   ("Full Moon"), https://images.nasa.gov/details/GSFC_20171208_Archive_e000868
 - Original file: https://images-assets.nasa.gov/image/GSFC_20171208_Archive_e000868/GSFC_20171208_Archive_e000868~orig.jpg
 - Credit: NASA's Scientific Visualization Studio. Visualization by Ernie Wright
-  (USRA). Scientists John Keller and Noah Petro (NASA/GSFC).
+  (STC). Scientists John Keller and Noah Petro (NASA/GSFC).
 - Changes: cropped to the lunar disc with a 1 percent margin and resized to 600 by
   600 pixels (JPEG, about 75 KB). Nothing was retouched.
 

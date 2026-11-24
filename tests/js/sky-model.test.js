@@ -59,7 +59,7 @@ test("stars sit in a ring around the pole that covers the whole screen at every 
   }
 });
 
-test("starPosition turns counterclockwise about the pole and moves little in a minute", () => {
+test("starPosition turns about the pole (clockwise on screen) and moves little in a minute", () => {
   const s = { r: 300, a: 0, size: 1, bright: 1, tint: 0 };
   const p0 = starPosition(s, 0);
   assert.ok(Math.abs(p0.x - (SKY.poleX + 300)) < 1e-9 && Math.abs(p0.y - SKY.poleY) < 1e-9);

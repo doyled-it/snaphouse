@@ -5,7 +5,7 @@
 
 import { createCanvasStyle } from "./canvas-style.js";
 import { lerp } from "./gen-color.js";
-import { ORRERY, PLANETS, placeLabels, ringLayout, dateLabel } from "./planets-model.js";
+import { ORRERY, PLANETS, DATE_SPOT, placeLabels, ringLayout, dateLabel, driftAt } from "./planets-model.js";
 
 const BG_DAY = [10, 14, 24];
 const FONT = '"Instrument Sans", system-ui, sans-serif';
@@ -23,25 +23,28 @@ export function createPlanetsStyle(env) {
           const dim = lerp(1, 0.5, night);
           const ms = env.now();
           ctx.font = `${ORRERY.fontPx}px ${FONT}`;
-          const spots = placeLabels({ ms, measure: (n) => ctx.measureText(n).width || n.length * 10, fontPx: ORRERY.fontPx });
+          const { dx, dy } = driftAt(ms);
+          const cx = ORRERY.cx + dx;
+          const cy = ORRERY.cy + dy;
+          const spots = placeLabels({ ms, measure: (n) => ctx.measureText(n).width || n.length * 10, fontPx: ORRERY.fontPx, cx, cy });
 
           const bg = BG_DAY.map((v) => Math.round(lerp(v, 0, night)));
           ctx.globalAlpha = 1;
           ctx.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`;
           ctx.fillRect(0, 0, width, height);
 
-          const glow = ctx.createRadialGradient(ORRERY.cx, ORRERY.cy, 0, ORRERY.cx, ORRERY.cy, 40);
+          const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 40);
           glow.addColorStop(0, `rgba(255,240,200,${(0.95 * dim).toFixed(3)})`);
           glow.addColorStop(0.3, `rgba(255,200,110,${(0.6 * dim).toFixed(3)})`);
           glow.addColorStop(1, "rgba(0,0,0,0)");
           ctx.fillStyle = glow;
-          ctx.fillRect(ORRERY.cx - 40, ORRERY.cy - 40, 80, 80);
+          ctx.fillRect(cx - 40, cy - 40, 80, 80);
 
           ctx.strokeStyle = `rgba(110,125,150,${lerp(0.3, 0.15, night).toFixed(3)})`;
           ctx.lineWidth = 1;
           for (const r of rings) {
             ctx.beginPath();
-            ctx.ellipse(ORRERY.cx, ORRERY.cy, r.rx, r.ry, 0, 0, Math.PI * 2);
+            ctx.ellipse(cx, cy, r.rx, r.ry, 0, 0, Math.PI * 2);
             ctx.stroke();
           }
 
@@ -62,7 +65,7 @@ export function createPlanetsStyle(env) {
           const grey = Math.round(lerp(175, 90, night));
           ctx.fillStyle = `rgb(${grey},${grey + 5},${grey + 18})`;
           ctx.font = `20px ${FONT}`;
-          ctx.fillText(dateLabel(new Date(ms)), 20, height - 24);
+          ctx.fillText(dateLabel(new Date(ms)), DATE_SPOT.x + dx, DATE_SPOT.y + dy);
         },
       };
     },

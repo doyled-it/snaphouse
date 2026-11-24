@@ -35,6 +35,7 @@ export const ORRERY = Object.freeze({
   gap: 44,
   tilt: 0.42, // ry = rx * tilt, seen from slightly above
   fontPx: 18,
+  drift: { x: { amp: 20, periodS: 420 }, y: { amp: 14, periodS: 310 } }, // anti burn-in, px and seconds
   fps: 1, // the inner planets creep: one redraw a second is plenty
 });
 
@@ -64,15 +65,15 @@ const overlapArea = (a, b) => {
 };
 const outside = (b) => Math.max(0, -b.x) + Math.max(0, b.x + b.w - ORRERY.width) + Math.max(0, -b.y) + Math.max(0, b.y + b.h - ORRERY.height);
 
-// Each planet's dot position and the box its name takes. `measure(name)` gives the text
+// Each planet's dot position (around the centre cx, cy, which drifts) and the box its name takes. `measure(name)` gives the text
 // width in px. Labels are placed inner to outer, trying right, left, above and below
 // the dot (and the corners) until one touches no earlier label, no dot and no edge;
 // when none is free the least bad one is used.
-export function placeLabels({ ms, measure, fontPx = ORRERY.fontPx }) {
+export function placeLabels({ ms, measure, fontPx = ORRERY.fontPx, cx = ORRERY.cx, cy = ORRERY.cy }) {
   const rings = ringLayout();
   const dots = PLANETS.map((p, i) => {
     const a = longitudeAt(p, ms) * RAD;
-    return { name: p.name, size: p.size, x: ORRERY.cx + rings[i].rx * Math.cos(a), y: ORRERY.cy - rings[i].ry * Math.sin(a) };
+    return { name: p.name, size: p.size, x: cx + rings[i].rx * Math.cos(a), y: cy - rings[i].ry * Math.sin(a) };
   });
   const dotBoxes = dots.map((d) => ({ x: d.x - d.size - 1, y: d.y - d.size - 1, w: 2 * d.size + 2, h: 2 * d.size + 2 }));
   const h = fontPx;
@@ -113,3 +114,15 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 
 // "November 24, 2026" from a Date, in the panel's local time.
 export const dateLabel = (date) => `${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+
+// Where the date's middle line starts, before the drift.
+export const DATE_SPOT = Object.freeze({ x: 36, y: ORRERY.height - 40 });
+
+// The whole composition (sun, rings, dots, names, date) shifts by { dx, dy } px at a
+// clock time in ms: two slow sines of different periods, so nothing rests in one place
+// long enough to burn in. About 0.3 px a second at most, so one redraw a second is smooth.
+export function driftAt(ms) {
+  const t = ms / 1000;
+  const { x, y } = ORRERY.drift;
+  return { dx: x.amp * Math.sin((2 * Math.PI * t) / x.periodS), dy: y.amp * Math.sin((2 * Math.PI * t) / y.periodS) };
+}

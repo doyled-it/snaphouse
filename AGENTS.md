@@ -660,7 +660,8 @@ clears the shell's `started` flag, so a night change while stopped snaps instead
   precession since 2000 (about 0.4 degree) is ignored. Checked against astropy's built-in ephemeris on six dates: worst
   error 0.33 degree (Mercury), the others under 0.2. Rings 46 px apart from 46 px, tilted to 0.42, not to scale.
   `placeLabels` puts each name right, left, above or below its dot (and the corners) so no name overlaps another name,
-  a dot or the edge; a 120 year sweep in the test pins it. Night: names off, rings and dots dimmed to half.
+  a dot or the edge; a 120 year sweep in the test pins it. The whole composition (sun, rings, dots, names, date) drifts
+  on two slow sines (`driftAt`: 20 and 14 px, 420 and 310 s periods) against burn-in, and a day sweep keeps it on screen. Night: names off, rings and dots dimmed to half.
 - **Moon** (`moon-model.js`, `moon-style.js`, `moon.jpg`, `MOON-CREDIT.md`): 800x480 canvas at 2 fps, and a frame
   draws only when the drift pixel, the phase pixel, the text or the night mix changed. The phase is the mean synodic
   month (29.530588 days) from the new moon of 2000-01-06 18:14 UTC; the real moon is up to about 14 hours off the mean,

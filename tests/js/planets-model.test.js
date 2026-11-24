@@ -7,6 +7,8 @@ import {
   ringLayout,
   placeLabels,
   dateLabel,
+  driftAt,
+  DATE_SPOT,
 } from "../../roles/room_picker/files/site/planets-model.js";
 
 // Heliocentric ecliptic longitudes (J2000 frame) from astropy's built-in planetary
@@ -110,4 +112,44 @@ test("labels never overlap each other or the screen edge, at any date over 120 y
 test("the date reads as month day, year, in local time", () => {
   assert.equal(dateLabel(new Date(2026, 10, 24, 15, 0)), "November 24, 2026");
   assert.equal(dateLabel(new Date(2027, 0, 5, 0, 1)), "January 5, 2027");
+});
+
+test("the composition drifts slowly: at least 1 px in 3 minutes, smooth", () => {
+  const min = 60000;
+  let least = Infinity;
+  let maxStep = 0;
+  let prev = driftAt(0);
+  for (let t = 0; t < 86400000; t += 20000) {
+    const p = driftAt(t);
+    const q = driftAt(t + 3 * min);
+    least = Math.min(least, Math.hypot(q.dx - p.dx, q.dy - p.dy));
+  }
+  for (let t = 1000; t < 3600000; t += 1000) {
+    const p = driftAt(t);
+    maxStep = Math.max(maxStep, Math.hypot(p.dx - prev.dx, p.dy - prev.dy));
+    prev = p;
+  }
+  assert.ok(least >= 1, `least 3 minute move ${least.toFixed(2)} px`);
+  assert.ok(maxStep < 0.5, `${maxStep.toFixed(2)} px a second, smooth at one redraw a second`);
+});
+
+test("sun, rings, names and date stay on screen across a day of drift", () => {
+  const measure = (n) => Math.ceil(n.length * 18 * 0.58);
+  const rings = ringLayout();
+  const last = rings.at(-1);
+  const dateW = 280; // generous width of the longest date at 20 px
+  for (let t = 0; t < 86400000; t += 61000) {
+    const { dx, dy } = driftAt(t);
+    const cx = ORRERY.cx + dx;
+    const cy = ORRERY.cy + dy;
+    assert.ok(cx - last.rx - 1 >= 0 && cx + last.rx + 1 <= ORRERY.width, `rings x at ${t}`);
+    assert.ok(cy - last.ry - 1 >= 0 && cy + last.ry + 1 <= ORRERY.height, `rings y at ${t}`);
+    assert.ok(cx - 40 >= 0 && cy - 40 >= 0, "sun glow");
+    for (const spot of placeLabels({ ms: Date.UTC(2026, 10, 24) + t * 37, measure, cx, cy })) {
+      const b = spot.label;
+      assert.ok(b.x >= 0 && b.y >= 0 && b.x + b.w <= ORRERY.width && b.y + b.h <= ORRERY.height, `${spot.name} at ${t}`);
+    }
+    assert.ok(DATE_SPOT.x + dx >= 0 && DATE_SPOT.x + dx + dateW <= ORRERY.width, "date x");
+    assert.ok(DATE_SPOT.y + dy - 20 >= 0 && DATE_SPOT.y + dy + 6 <= ORRERY.height, "date y");
+  }
 });

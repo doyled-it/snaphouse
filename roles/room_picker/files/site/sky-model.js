@@ -34,7 +34,7 @@ export function seededRandom(seed) {
   };
 }
 
-// The turn of the sky, in radians, at a clock time in ms. Counterclockwise.
+// The turn of the sky, in radians, at a clock time in ms. It increases the angle, which is clockwise on screen (y runs down).
 export const rotationAt = (ms) => ((ms / 3600000) * SKY.degPerHour * Math.PI) / 180;
 
 const FAR_CORNER = Math.max(
