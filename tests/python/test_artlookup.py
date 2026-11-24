@@ -684,7 +684,7 @@ def test_solo_lead_album_key_does_not_collide_with_band(tmp_path):
     # The band's cover is cached under its full credit. A solo artist who is the
     # band's first word shares a name with it, so with the same album title the
     # shared matcher now accepts the release (a design change), but the cover is
-    # looked up and cached under the solo artist's own key.
+    # served from the shared lead key, a different key from the band's own.
     fetch = FakeFetch(
         [
             ("musicbrainz.org", _musicbrainz_release("Bookends", ["Simon & Garfunkel"])),
@@ -699,7 +699,8 @@ def test_solo_lead_album_key_does_not_collide_with_band(tmp_path):
     searches = len(_mb_queries(fetch))
     solo = lookup.find("Track", "Simon", "Bookends", "music", None)
     assert solo is not None and solo != band
-    assert len(_mb_queries(fetch)) == searches + 1
+    # The band's cover was also shared under the lead key, so no new search runs.
+    assert len(_mb_queries(fetch)) == searches
 
 
 def test_lead_artist_not_matching_release_is_miss(tmp_path):
