@@ -209,3 +209,16 @@ for (const [name, factory, size] of [
     assert.equal(state.timers, 0);
   });
 }
+
+test("after a stop, setNight snaps again until the next frame has run", () => {
+  const { env, tick } = fakeEnv();
+  const rec = [];
+  const s = createCanvasStyle(env, spec(rec));
+  s.start();
+  tick(0);
+  s.stop();
+  s.setNight(true);
+  s.start();
+  tick(100);
+  assert.equal(rec.at(-1).view.night, 1, "snapped, not eased from 0");
+});

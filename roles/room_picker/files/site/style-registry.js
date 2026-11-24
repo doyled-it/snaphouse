@@ -10,13 +10,19 @@ import { createContoursStyle } from "./contours-style.js";
 import { createFlowStyle } from "./flow-style.js";
 import { createHarmonographStyle } from "./harmonograph-style.js";
 import { createLifeStyle } from "./life-style.js";
+import { createMoonStyle } from "./moon-style.js";
+import { createPlanetsStyle } from "./planets-style.js";
 import { createFactsStyle, createQuotesStyle } from "./reader-style.js";
+import { createSkyStyle } from "./sky-style.js";
 
 export const FACTORIES = {
   aurora: createAuroraStyle,
   facts: createFactsStyle,
   quotes: createQuotesStyle,
   clock: createClockStyle,
+  sky: createSkyStyle,
+  planets: createPlanetsStyle,
+  moon: createMoonStyle,
   flow: createFlowStyle,
   contours: createContoursStyle,
   life: createLifeStyle,

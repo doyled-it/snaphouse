@@ -23,7 +23,7 @@ test("the registry order is the twelve fixed ids", () => {
 });
 
 test("Aurora, Weird facts, Quotes and Clock are shipped in this PR", () => {
-  assert.deepEqual([...SHIPPED_IDS], ["aurora", "facts", "quotes", "clock", "flow", "contours", "life", "harmonograph"]);
+  assert.deepEqual([...SHIPPED_IDS], ["aurora", "facts", "quotes", "clock", "sky", "planets", "moon", "flow", "contours", "life", "harmonograph"]);
 });
 
 test("change choices are Off, 5, 15, 30, 60", () => {
@@ -41,7 +41,7 @@ test("checkStyles mirrors the hub: non-empty, known ids, registry order, no dupl
 
 test("shippedPicks drops ids with no module and falls back to Aurora", () => {
   assert.deepEqual(shippedPicks(["aurora", "covers", "clock"]), ["aurora", "clock"]);
-  assert.deepEqual(shippedPicks(["covers", "sky"]), ["aurora"]);
+  assert.deepEqual(shippedPicks(["covers"]), ["aurora"]);
   assert.deepEqual(shippedPicks([]), ["aurora"]);
   assert.deepEqual(shippedPicks(undefined), ["aurora"]);
 });
@@ -57,8 +57,10 @@ test("nextPick skips ids with no module and handles a last id that is no longer 
   assert.equal(nextPick(["aurora", "covers", "clock"], "aurora"), "clock");
   assert.equal(nextPick(["covers"], null), "aurora");
   // clock was shown, then the owner unpicked it: continue after it in registry order
-  assert.equal(nextPick(["aurora", "moon"], "clock"), "aurora");
+  assert.equal(nextPick(["aurora", "moon"], "clock"), "moon");
   assert.equal(nextPick(["aurora", "clock"], "aurora"), "clock");
+  assert.equal(nextPick(["aurora", "flow"], "moon"), "flow");
+  assert.equal(nextPick(["aurora", "clock"], "moon"), "aurora");
 });
 
 test("togglePick adds in registry order and removes", () => {
