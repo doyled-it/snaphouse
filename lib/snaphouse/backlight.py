@@ -42,7 +42,7 @@ import sys
 import threading
 import time as time_module
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time
 from pathlib import Path
 
@@ -92,21 +92,44 @@ def parse_hhmm(value: str) -> time:
     return time(hour, minute)
 
 
-@dataclass(frozen=True)
-class Schedule:
-    """The dim/wake policy, independent of any clock or device.
+# The values a panel's document may carry, checked the same way the hub checks a
+# write (lib/snaphouse/panelsettings.py). A bad value never reaches the screen:
+# parse_settings_entry falls back per key.
+WAIT_CHOICES = (30, 60, 120, 300, 600)
 
-    quiet_start/quiet_end bound the low-light window (it may wrap past midnight,
-    like the house default 22:00 to 06:00). full_pct/dim_pct are percentages of
-    the panel's max brightness. dim_timeout_s is how long after the last touch
-    the screen returns to dim while inside quiet hours.
+
+def _valid_pct(value, low: int) -> bool:
+    return type(value) is int and low <= value <= 100 and value % 5 == 0
+
+
+def _valid_time(value) -> bool:
+    if not isinstance(value, str) or len(value) != 5:
+        return False
+    try:
+        parsed = parse_hhmm(value)
+    except ValueError:
+        return False
+    return parsed.minute in (0, 30)
+
+
+@dataclass(frozen=True)
+class Settings:
+    """The panel's screen policy, independent of any clock or device.
+
+    quiet_start/quiet_end bound the night window (it may wrap past midnight, like
+    the house default 22:00 to 06:00). full_pct is Brightness, dim_pct the night
+    dim, screensaver_pct the level while the screensaver (or the ambient Now
+    Playing view) shows; all are percentages of the panel's max brightness.
+    wait_s is the one wait after the last touch, for day and night.
     """
 
     quiet_start: time
     quiet_end: time
     full_pct: int
     dim_pct: int
-    dim_timeout_s: float
+    wait_s: float
+    screensaver_on: bool = False
+    screensaver_pct: int = 40
 
     def in_quiet_hours(self, now: time) -> bool:
         start, end = self.quiet_start, self.quiet_end
@@ -116,25 +139,67 @@ class Schedule:
         # A window that wraps past midnight, for example 22:00 to 06:00.
         return now >= start or now < end
 
-    def target_pct(self, now: time, idle_s: float, music: bool = False) -> int:
-        """The brightness percentage for this moment.
+    def target_pct(
+        self, now: time, idle_s: float, music: bool = False, preview_pct: int | None = None
+    ) -> int:
+        """The brightness percentage for this moment (the combined rule).
 
-        Outside quiet hours the screen is always full. Inside quiet hours it is
-        full for dim_timeout_s after the last touch, then dim, unless music is
-        showing on the panel (playing, or paused under five minutes): then it
-        stays full.
+        A preview wins. Before the wait it is Brightness. After it: music (playing,
+        or paused under five minutes) shows the screensaver level when the
+        screensaver is on and Brightness when it is off (no night dim either way);
+        otherwise night is the night dim, and day is the screensaver level when the
+        screensaver is on and Brightness when it is off.
         """
-        if music or not self.in_quiet_hours(now):
+        if preview_pct is not None:
+            return max(0, min(100, preview_pct))
+        if idle_s < self.wait_s:
             return self.full_pct
-        if idle_s < self.dim_timeout_s:
-            return self.full_pct
-        return self.dim_pct
+        saver = self.screensaver_pct if self.screensaver_on else self.full_pct
+        if music:
+            return saver
+        if self.in_quiet_hours(now):
+            return self.dim_pct
+        return saver
+
+    def night_dimmed(self, now: time, idle_s: float, music: bool) -> bool:
+        """True when the level is the night dim (a real dim: a dim level equal to
+        Brightness leaves nothing to wake from)."""
+        return (
+            self.dim_pct != self.full_pct
+            and not music
+            and idle_s >= self.wait_s
+            and self.in_quiet_hours(now)
+        )
 
 
-    def is_dim(self, now: time, idle_s: float, music: bool = False) -> bool:
-        """True when the scheduled level is the dim level (a real dim: a dim
-        level equal to full leaves nothing to wake from)."""
-        return self.dim_pct != self.full_pct and self.target_pct(now, idle_s, music) == self.dim_pct
+def parse_settings_entry(entry, fallback: Settings) -> Settings:
+    """One panel's entry from panel-settings.json over a fallback.
+
+    Each key is validated alone; an invalid or missing one keeps the fallback's
+    value, so a half-bad document still applies what it can. Equal night start and
+    end are refused as a pair.
+    """
+    if not isinstance(entry, dict):
+        return fallback
+    changes: dict = {}
+    if _valid_pct(entry.get("brightness_pct"), 20):
+        changes["full_pct"] = entry["brightness_pct"]
+    if _valid_pct(entry.get("night_dim_pct"), 0):
+        changes["dim_pct"] = entry["night_dim_pct"]
+    if _valid_pct(entry.get("screensaver_pct"), 5):
+        changes["screensaver_pct"] = entry["screensaver_pct"]
+    if type(entry.get("screensaver_on")) is bool:
+        changes["screensaver_on"] = entry["screensaver_on"]
+    wait = entry.get("screensaver_wait_s")
+    if type(wait) is int and wait in WAIT_CHOICES:
+        changes["wait_s"] = float(wait)
+    start = entry.get("night_start", None)
+    end = entry.get("night_end", None)
+    new_start = parse_hhmm(start) if _valid_time(start) else fallback.quiet_start
+    new_end = parse_hhmm(end) if _valid_time(end) else fallback.quiet_end
+    if new_start != new_end:
+        changes["quiet_start"], changes["quiet_end"] = new_start, new_end
+    return replace(fallback, **changes)
 
 
 class Backlight:
@@ -168,11 +233,17 @@ class Backlight:
 
 
 def apply_once(
-    backlight: Backlight, schedule: Schedule, *, now: time, idle_s: float, music: bool = False
+    backlight: Backlight,
+    settings: Settings,
+    *,
+    now: time,
+    idle_s: float,
+    music: bool = False,
+    preview_pct: int | None = None,
 ) -> int:
-    """Compute the scheduled level for this moment and write it. Returns the raw
+    """Compute the level for this moment and write it. Returns the raw
     brightness value written, so callers (and tests) can assert the effect."""
-    return backlight.set_pct(schedule.target_pct(now, idle_s, music))
+    return backlight.set_pct(settings.target_pct(now, idle_s, music, preview_pct))
 
 
 # How often the hub's now-playing.json is read, how long the last answer is kept
@@ -511,23 +582,31 @@ class _ActivityClock:
         return True
 
 
-def grab_wanted(*, dim: bool, no_grab: bool) -> bool:
+def grab_wanted(*, dimmed: bool, screensaver_on: bool, force_grab: bool, no_grab: bool) -> bool:
     """Whether to hold the touchscreen grab for this pass.
 
-    With no_grab the page's screensaver swallows the first tap itself, so the
-    daemon never grabs (and releases any grab it holds): one tap then both
-    brightens the screen and dismisses the overlay.
+    The grab (the #184 behaviour) keeps the waking tap from reaching the page. It
+    holds only while the screen is dimmed to the night level with the screensaver
+    off: with the screensaver on, its overlay swallows the first tap itself, so one
+    tap both brightens the screen and dismisses it. force_grab
+    (panel_backlight.grab_wake_tap) grabs whenever the night dim is showing; no_grab
+    never grabs.
     """
-    return dim and not no_grab
+    if no_grab or not dimmed:
+        return False
+    return force_grab or not screensaver_on
 
 
-def _build_schedule(args: argparse.Namespace) -> Schedule:
-    return Schedule(
+def _build_settings(args: argparse.Namespace) -> Settings:
+    """The flag values: what the screen uses with no cache and no hub."""
+    return Settings(
         quiet_start=parse_hhmm(args.quiet_start),
         quiet_end=parse_hhmm(args.quiet_end),
         full_pct=args.full_pct,
         dim_pct=args.dim_pct,
-        dim_timeout_s=args.dim_timeout,
+        wait_s=args.dim_timeout,
+        screensaver_on=args.screensaver == "on",
+        screensaver_pct=args.screensaver_pct,
     )
 
 
@@ -547,9 +626,22 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="the hub's now-playing.json; with it, no night dim while music shows",
     )
     parser.add_argument(
+        "--screensaver",
+        choices=("on", "off"),
+        default="off",
+        help="fallback for the screensaver switch until the hub's settings are read",
+    )
+    parser.add_argument("--screensaver-pct", type=int, default=40)
+    parser.add_argument("--panel-id", default=None)
+    parser.add_argument(
         "--no-grab",
         action="store_true",
         help="never grab the touchscreen; the page screensaver swallows the waking tap",
+    )
+    parser.add_argument(
+        "--force-grab",
+        action="store_true",
+        help="grab the touchscreen whenever the night dim shows, even with the screensaver on",
     )
     return parser.parse_args(argv)
 
@@ -559,7 +651,7 @@ def run(argv: list[str], *, now_time=None) -> int:
     set it again. now_time returns the current wall clock time()."""
     args = _parse_args(argv)
     now_time = now_time or (lambda: datetime.now().time())
-    schedule = _build_schedule(args)
+    settings = _build_settings(args)
     backlight = Backlight.discover(Path(args.sys_class))
     activity = _ActivityClock(args.input_glob)
     music = None
@@ -570,12 +662,16 @@ def run(argv: list[str], *, now_time=None) -> int:
     while True:
         now = now_time()
         playing = music is not None and music.music_active()
-        apply_once(backlight, schedule, now=now, idle_s=activity.idle_s, music=playing)
-        # While dim, hold the touchscreen so the waking tap only wakes the screen,
-        # unless the page screensaver handles that tap (--no-grab).
+        idle = activity.idle_s
+        apply_once(backlight, settings, now=now, idle_s=idle, music=playing)
+        # While dimmed to the night level with the screensaver off, hold the
+        # touchscreen so the waking tap only wakes the screen.
         activity.maintain(
             dim=grab_wanted(
-                dim=schedule.is_dim(now, activity.idle_s, playing), no_grab=args.no_grab
+                dimmed=settings.night_dimmed(now, idle, playing),
+                screensaver_on=settings.screensaver_on,
+                force_grab=args.force_grab,
+                no_grab=args.no_grab,
             )
         )
         # Wake early on a touch so the screen lights up at once; otherwise re-check
