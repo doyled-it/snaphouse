@@ -500,3 +500,153 @@ def test_grab_wanted_follows_dim_unless_no_grab():
     # holds is released and the screensaver sees the first tap.
     assert backlight.grab_wanted(dim=True, no_grab=True) is False
     assert backlight.grab_wanted(dim=False, no_grab=True) is False
+
+
+# --------------------------------------------------------------------------- #
+# MusicWatch: no night dim while the ambient Now Playing shows
+# --------------------------------------------------------------------------- #
+
+
+class _Feed:
+    """A fake hub: returns queued documents, or raises for a failed read."""
+
+    def __init__(self) -> None:
+        self.doc = None
+        self.fail = False
+
+    def __call__(self):
+        if self.fail:
+            raise OSError("hub unreachable")
+        return self.doc
+
+
+def _doc(status="playing", *, key="resume", title="Song"):
+    entry = {"title": title, "artist": "Band", "album": "LP", "status": status}
+    return {"track": entry if key == "track" else None, "resume": entry if key == "resume" else None, "rooms": []}
+
+
+def _watch(feed, clock):
+    return backlight.MusicWatch(feed, clock=clock)
+
+
+def test_music_watch_playing_is_active():
+    clock, feed = _FakeClock(), _Feed()
+    watch = _watch(feed, clock)
+    feed.doc = _doc("playing", key="track")
+    watch.poll()
+    assert watch.music_active() is True
+
+
+def test_music_watch_nothing_playing_is_not_active():
+    clock, feed = _FakeClock(), _Feed()
+    watch = _watch(feed, clock)
+    assert watch.music_active() is False  # before any read
+    feed.doc = {"track": None, "resume": None, "rooms": []}
+    watch.poll()
+    assert watch.music_active() is False
+
+
+def test_music_watch_paused_counts_for_five_minutes_on_its_own_clock():
+    clock, feed = _FakeClock(), _Feed()
+    watch = _watch(feed, clock)
+    feed.doc = _doc("paused", key="track")
+    watch.poll()
+    clock.t += 299
+    watch.poll()
+    assert watch.music_active() is True
+    clock.t += 2
+    watch.poll()
+    assert watch.music_active() is False
+
+
+def test_music_watch_reads_the_resume_block_for_the_five_minute_rule():
+    clock, feed = _FakeClock(), _Feed()
+    watch = _watch(feed, clock)
+    feed.doc = _doc("paused", key="track")
+    watch.poll()
+    clock.t += 200
+    # The hub's hold passes and the same track moves to `resume`: same clock.
+    feed.doc = _doc("paused", key="resume")
+    watch.poll()
+    clock.t += 99
+    watch.poll()
+    assert watch.music_active() is True
+    clock.t += 2
+    watch.poll()
+    assert watch.music_active() is False
+
+
+def test_music_watch_a_new_pause_restarts_the_count_and_play_clears_it():
+    clock, feed = _FakeClock(), _Feed()
+    watch = _watch(feed, clock)
+    feed.doc = _doc("paused", key="track")
+    watch.poll()
+    clock.t += 400
+    feed.doc = _doc("playing", key="track")
+    watch.poll()
+    assert watch.music_active() is True
+    feed.doc = _doc("paused", key="track")
+    watch.poll()
+    clock.t += 100
+    watch.poll()
+    assert watch.music_active() is True
+
+
+def test_music_watch_keeps_its_answer_for_two_minutes_after_a_failed_read():
+    clock, feed = _FakeClock(), _Feed()
+    watch = _watch(feed, clock)
+    feed.doc = _doc("playing", key="track")
+    watch.poll()
+    feed.fail = True
+    clock.t += 119
+    watch.poll()
+    assert watch.music_active() is True
+    clock.t += 2
+    watch.poll()
+    assert watch.music_active() is False
+
+
+def test_music_watch_garbage_counts_as_a_failed_read():
+    clock, feed = _FakeClock(), _Feed()
+    watch = _watch(feed, clock)
+    feed.doc = _doc("playing", key="track")
+    watch.poll()
+    feed.doc = "not a document"
+    clock.t += 130
+    watch.poll()
+    assert watch.music_active() is False
+
+
+def test_music_watch_fetch_parses_json_and_rejects_junk(tmp_path):
+    good = backlight.parse_now_playing(b'{"track": {"title": "T", "status": "playing"}}')
+    assert good["track"]["title"] == "T"
+    with pytest.raises(ValueError):
+        backlight.parse_now_playing(b"{nope")
+    with pytest.raises(ValueError):
+        backlight.parse_now_playing(b"[1]")
+
+
+def test_music_keeps_the_screen_full_in_quiet_hours():
+    sched = _schedule(full_pct=100, dim_pct=15, dim_timeout_s=60.0)
+    assert sched.target_pct(time(23, 0), 600.0) == 15
+    assert sched.target_pct(time(23, 0), 600.0, music=True) == 100
+    assert sched.is_dim(time(23, 0), 600.0, music=True) is False
+    assert sched.is_dim(time(23, 0), 600.0) is True
+
+
+def test_apply_once_does_not_dim_while_music_shows(tmp_path):
+    device = _fake_device(tmp_path, max_brightness=10)
+    light = backlight.Backlight(device)
+    sched = _schedule(full_pct=100, dim_pct=20, dim_timeout_s=60.0)
+    assert backlight.apply_once(light, sched, now=time(23, 0), idle_s=900.0, music=True) == 10
+    assert backlight.apply_once(light, sched, now=time(23, 0), idle_s=900.0, music=False) == 2
+
+
+def test_now_playing_url_comes_from_the_hub_origin():
+    assert backlight._parse_args([]).now_playing_url is None
+    args = backlight._parse_args(["--now-playing-url", "http://hub.example/now-playing.json"])
+    assert args.now_playing_url == "http://hub.example/now-playing.json"
+    assert backlight.now_playing_url("http://hub.example") == "http://hub.example/now-playing.json"
+    assert backlight.now_playing_url("http://hub.example/") == "http://hub.example/now-playing.json"
+    assert backlight.now_playing_url("") is None
+    assert backlight.now_playing_url(None) is None

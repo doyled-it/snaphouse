@@ -19,6 +19,12 @@ quiet-hours window) and how long since the last touch (an idle count from a
 monotonic clock), and the only side effect is writing `brightness`. That keeps it
 testable with an injected clock and a fake sysfs tree, no hardware involved.
 
+While music shows on the panel (a track playing, or paused less than five
+minutes ago, read from the hub's now-playing.json) the screen stays at full in
+quiet hours: nobody is watching TV downstairs, and music in bed means nobody is
+downstairs. MusicWatch keeps that answer; with the hub unreachable for two
+minutes it counts as nothing playing and the schedule dims as before.
+
 Stdlib only: it runs from the on-device venv python but pulls in nothing beyond
 the standard library, so it stays light on the Pi 3.
 """
@@ -30,9 +36,12 @@ import fcntl
 import glob
 import os
 import select
+import json
 import struct
 import sys
+import threading
 import time as time_module
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, time
 from pathlib import Path
@@ -107,23 +116,25 @@ class Schedule:
         # A window that wraps past midnight, for example 22:00 to 06:00.
         return now >= start or now < end
 
-    def target_pct(self, now: time, idle_s: float) -> int:
+    def target_pct(self, now: time, idle_s: float, music: bool = False) -> int:
         """The brightness percentage for this moment.
 
         Outside quiet hours the screen is always full. Inside quiet hours it is
-        full for dim_timeout_s after the last touch, then dim.
+        full for dim_timeout_s after the last touch, then dim, unless music is
+        showing on the panel (playing, or paused under five minutes): then it
+        stays full.
         """
-        if not self.in_quiet_hours(now):
+        if music or not self.in_quiet_hours(now):
             return self.full_pct
         if idle_s < self.dim_timeout_s:
             return self.full_pct
         return self.dim_pct
 
 
-    def is_dim(self, now: time, idle_s: float) -> bool:
+    def is_dim(self, now: time, idle_s: float, music: bool = False) -> bool:
         """True when the scheduled level is the dim level (a real dim: a dim
         level equal to full leaves nothing to wake from)."""
-        return self.dim_pct != self.full_pct and self.target_pct(now, idle_s) == self.dim_pct
+        return self.dim_pct != self.full_pct and self.target_pct(now, idle_s, music) == self.dim_pct
 
 
 class Backlight:
@@ -156,10 +167,118 @@ class Backlight:
         return value
 
 
-def apply_once(backlight: Backlight, schedule: Schedule, *, now: time, idle_s: float) -> int:
+def apply_once(
+    backlight: Backlight, schedule: Schedule, *, now: time, idle_s: float, music: bool = False
+) -> int:
     """Compute the scheduled level for this moment and write it. Returns the raw
     brightness value written, so callers (and tests) can assert the effect."""
-    return backlight.set_pct(schedule.target_pct(now, idle_s))
+    return backlight.set_pct(schedule.target_pct(now, idle_s, music))
+
+
+# How often the hub's now-playing.json is read, how long the last answer is kept
+# after reads start failing, and how long a paused track still counts as music.
+MUSIC_POLL_S = 10.0
+MUSIC_GRACE_S = 120.0
+MUSIC_PAUSE_S = 300.0
+MUSIC_FETCH_TIMEOUT_S = 3.0
+
+
+def now_playing_url(origin: str | None) -> str | None:
+    """The hub's now-playing.json URL from its origin, or None with no origin."""
+    if not origin:
+        return None
+    return origin.rstrip("/") + "/now-playing.json"
+
+
+def parse_now_playing(body: bytes) -> dict:
+    """Parse a now-playing.json body. Anything that is not a JSON object raises
+    ValueError, which the watch treats as a failed read."""
+    document = json.loads(body.decode("utf-8", errors="replace"))
+    if not isinstance(document, dict):
+        raise ValueError("now-playing.json is not an object")
+    return document
+
+
+def fetch_now_playing(url: str) -> dict:
+    with urllib.request.urlopen(url, timeout=MUSIC_FETCH_TIMEOUT_S) as response:
+        return parse_now_playing(response.read(1 << 20))
+
+
+class MusicWatch:
+    """Whether the panel is showing the ambient Now Playing view: a track is
+    playing, or was paused less than five minutes ago.
+
+    It reads the hub's now-playing.json (the `track`, or the paused `resume`
+    block the hub keeps while the phone's player is present). The pause is
+    measured on this machine's own monotonic clock from the moment it first sees
+    the track paused, never from a hub timestamp. A failed read keeps the last
+    answer for MUSIC_GRACE_S, then counts as nothing playing.
+    """
+
+    def __init__(
+        self,
+        fetch,
+        *,
+        clock=time_module.monotonic,
+        grace_s: float = MUSIC_GRACE_S,
+        pause_s: float = MUSIC_PAUSE_S,
+    ) -> None:
+        self._fetch = fetch
+        self._clock = clock
+        self._grace_s = grace_s
+        self._pause_s = pause_s
+        self._last_ok: float | None = None
+        self._status: str | None = None
+        self._key: tuple | None = None
+        self._paused_since: float | None = None
+
+    def poll(self) -> None:
+        try:
+            document = self._fetch()
+            if not isinstance(document, dict):
+                raise ValueError("not a document")
+        except Exception:
+            return
+        now = self._clock()
+        entry = document.get("track")
+        if not isinstance(entry, dict) or not entry.get("title"):
+            entry = document.get("resume")
+        if not isinstance(entry, dict) or not entry.get("title"):
+            self._status, self._key, self._paused_since = None, None, None
+            self._last_ok = now
+            return
+        key = (entry.get("title"), entry.get("artist"), entry.get("album"))
+        if entry.get("status") == "paused":
+            if self._status != "paused" or key != self._key or self._paused_since is None:
+                self._paused_since = now
+            self._status = "paused"
+        else:
+            self._status = "playing"
+            self._paused_since = None
+        self._key = key
+        self._last_ok = now
+
+    def music_active(self) -> bool:
+        now = self._clock()
+        if self._last_ok is None or now - self._last_ok > self._grace_s:
+            return False
+        if self._status == "playing":
+            return True
+        if self._status == "paused" and self._paused_since is not None:
+            return now - self._paused_since < self._pause_s
+        return False
+
+    def start(self, interval_s: float = MUSIC_POLL_S) -> threading.Thread:
+        """Poll on a daemon thread so a slow hub never delays a touch."""
+
+        def loop() -> None:
+            while True:
+                self.poll()
+                time_module.sleep(interval_s)
+
+        thread = threading.Thread(target=loop, name="music-watch", daemon=True)
+        thread.start()
+        return thread
 
 
 class _Fingers:
@@ -423,6 +542,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--quiet-end", default="06:00")
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_S)
     parser.add_argument(
+        "--now-playing-url",
+        default=None,
+        help="the hub's now-playing.json; with it, no night dim while music shows",
+    )
+    parser.add_argument(
         "--no-grab",
         action="store_true",
         help="never grab the touchscreen; the page screensaver swallows the waking tap",
@@ -438,14 +562,20 @@ def run(argv: list[str], *, now_time=None) -> int:
     schedule = _build_schedule(args)
     backlight = Backlight.discover(Path(args.sys_class))
     activity = _ActivityClock(args.input_glob)
+    music = None
+    if args.now_playing_url:
+        url = args.now_playing_url
+        music = MusicWatch(lambda: fetch_now_playing(url))
+        music.start()
     while True:
         now = now_time()
-        apply_once(backlight, schedule, now=now, idle_s=activity.idle_s)
+        playing = music is not None and music.music_active()
+        apply_once(backlight, schedule, now=now, idle_s=activity.idle_s, music=playing)
         # While dim, hold the touchscreen so the waking tap only wakes the screen,
         # unless the page screensaver handles that tap (--no-grab).
         activity.maintain(
             dim=grab_wanted(
-                dim=schedule.is_dim(now, activity.idle_s), no_grab=args.no_grab
+                dim=schedule.is_dim(now, activity.idle_s, playing), no_grab=args.no_grab
             )
         )
         # Wake early on a touch so the screen lights up at once; otherwise re-check
