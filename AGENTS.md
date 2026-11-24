@@ -569,7 +569,7 @@ no overlay, canvas, timer or rAF loop (`tests/js/rooms-screensaver-wiring.test.j
 **Styles and rotation** (design: `docs/superpowers/specs/2026-11-24-panel-screensavers-design.md`, a
 five-PR epic). Aurora is one style among a registry. `style-list.js` (pure) holds the twelve fixed ids
 and names in registry order (`aurora, facts, quotes, covers, clock, sky, planets, moon, flow, contours,
-life, harmonograph`), `SHIPPED_IDS` (the styles with a module on the page: Aurora, Weird facts, Quotes, Clock, Flow field, Contours, Game of Life and Harmonograph so far), the
+life, harmonograph`), `SHIPPED_IDS` (the styles with a module on the page: every one but Album covers so far), the
 same pick validation the hub applies (`checkStyles`), `togglePick` (the last picked shipped style cannot
 be turned off), `nextPick`, `shippedPicks` (ids with no module are skipped; with none shipped, Aurora)
 and `stylesLabel`. `style-registry.js` maps a shipped id to a factory taking `{ doc, win, now,
@@ -641,6 +641,39 @@ value noise with time as the third axis). Tests: `tests/js/{noise-math,flow-mode
   integers plus a hair of detune, damping 0.0045 to 0.0075; it ends where the envelope falls to 6 percent). Only the new
   stretch of line is drawn each frame and nothing during the hold; the fade is a black rect with alpha set so it reaches 2 percent
   in `fadeS`. Night: line alpha 0.3 instead of 0.6.
+
+**Sky styles** (Night sky `sky`, Planets `planets`, Moon `moon`; design: `docs/superpowers/specs/2026-11-24-panel-screensavers-design.md`).
+Same shape as the generative styles: a pure model plus a thin style on `canvas-style.js`, tested in
+`tests/js/{sky-model,planets-model,moon-model,night-styles,moon-data}.test.js`. All three read the panel's own
+wall clock (`env.now()`, local time, no location) and take the quiet-hours night through `setNight`. `stop()` now
+clears the shell's `started` flag, so a night change while stopped snaps instead of easing.
+
+- **Night sky** (`sky-model.js`, `sky-style.js`): 400x240 canvas scaled up. 1400 stars from a seeded random (stable
+  field, size and brightness varied, about 8 percent warm or cool tinted) on a ring around a pole 130 px above the
+  screen, turning 15 degrees an hour from the clock (`rotationAt`, so a restart never resets the sky). About one star
+  in seven is on screen. Redraws at 5 fps (the stars move about 0.02 px a second), 24 fps only while a shooting star
+  crosses; a star every 90 to 270 s by day and 600 to 1200 s at night, about a second long. Night: black sky, 650
+  stars at 55 percent alpha in warm grey, shooting star alpha 0.4.
+- **Planets** (`planets-model.js`, `planets-style.js`): 800x480 canvas at 1 fps (8 fps only during the night fade).
+  Mean longitude at J2000 plus the JPL mean rate (Standish, "Keplerian Elements for Approximate Positions of the Major
+  Planets", valid 1800 to 2050) plus the equation of centre to e cubed; heliocentric ecliptic, J2000 equinox, so
+  precession since 2000 (about 0.4 degree) is ignored. Checked against astropy's built-in ephemeris on six dates: worst
+  error 0.33 degree (Mercury), the others under 0.2. Rings 46 px apart from 46 px, tilted to 0.42, not to scale.
+  `placeLabels` puts each name right, left, above or below its dot (and the corners) so no name overlaps another name,
+  a dot or the edge; a 120 year sweep in the test pins it. Night: names off, rings and dots dimmed to half.
+- **Moon** (`moon-model.js`, `moon-style.js`, `moon.jpg`, `MOON-CREDIT.md`): 800x480 canvas at 2 fps, and a frame
+  draws only when the drift pixel, the phase pixel, the text or the night mix changed. The phase is the mean synodic
+  month (29.530588 days) from the new moon of 2000-01-06 18:14 UTC; the real moon is up to about 14 hours off the mean,
+  so phase can be half a day out (published new and full moons are within 0.7 day in the test). Waxing is lit on the
+  right, waning on the left (northern hemisphere); libration and rise and set are out of scope. The photo is shaded per
+  pixel (`shadeAt`: the sun's direction against the sphere normal through a smoothstep, so the terminator is soft; the
+  dark side keeps 7 percent as earthshine) onto an offscreen canvas once per phase pixel, then drawn additively so the
+  photo's black corners add nothing to the backdrop stars. The composition drifts on two slow sines (15 and 10.7 minute
+  periods, 30 and 18 px), the text block following it. Night: photo at 45 percent, dim warm grey text.
+  `moon.jpg` is the full-moon frame of NASA SVS 4236, rendered from Lunar Reconnaissance Orbiter data (not a camera
+  photograph), cropped and resized to 600x600 (about 75 KB). It is the only third-party image in the repo; its source,
+  credit and license wording are in `roles/room_picker/files/site/MOON-CREDIT.md`, and `moon-data.test.js` pins the file
+  (under 150 KB, 600 px) and the note. The page loads it from its own directory; nothing is fetched at runtime.
 
 The mockup ran these sped up; the real speeds are the ones above. Per-frame math measured on a laptop (no canvas drawing):
 flow 58 us a frame, contours 240 us, life 22 us a step, harmonograph under 1 us; the browser's drawing is the real cost, so

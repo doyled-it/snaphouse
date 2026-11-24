@@ -76,6 +76,7 @@ export function createCanvasStyle({ doc, win, random }, { width, height, fps, ma
       if (!rafId) return;
       win.cancelAnimationFrame(rafId);
       rafId = 0;
+      started = false; // a night change while stopped snaps, nobody sees it ease
     },
     setHues(h) {
       const now = win.performance.now();
