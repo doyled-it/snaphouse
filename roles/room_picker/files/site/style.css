@@ -2644,6 +2644,89 @@ a.row-title {
   height: 100%;
 }
 
+/* Style layers: the stage holds one wrapper per style; the picked one is .is-in.
+   Fading in is an animation (so it runs from a fresh layer), fading out a transition,
+   and .is-snap shows a layer at once (the first style of a start, and Preview). */
+.saver-stage,
+.saver-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.saver-layer {
+  --ss-fade: 3s;
+  opacity: 0;
+  transition: opacity var(--ss-fade) ease-in-out;
+}
+
+.saver-layer.is-in {
+  opacity: 1;
+  animation: saver-layer-in var(--ss-fade) ease-in-out;
+}
+
+.saver-layer.is-snap {
+  animation: none;
+  transition: none;
+}
+
+@keyframes saver-layer-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .saver-layer,
+  .saver-layer.is-in {
+    --ss-fade: 200ms;
+    animation: none;
+  }
+}
+
+/* Clock style: large, thin, moved to a new spot every few minutes (clock-model.js). */
+.saver-clock {
+  position: absolute;
+  --clock-x: 0.5;
+  --clock-y: 0.5;
+  left: calc(var(--clock-x) * 100%);
+  top: calc(var(--clock-y) * 100%);
+  translate: calc(var(--clock-x) * -100%) calc(var(--clock-y) * -100%);
+  padding: 24px 40px;
+  text-align: center;
+  color: oklch(0.9 0.02 255);
+  background: #000;
+  --ss-move: 6s;
+  --ss-tone: 3s;
+  transition: left var(--ss-move) ease-in-out, top var(--ss-move) ease-in-out, translate var(--ss-move) ease-in-out, color var(--ss-tone);
+}
+
+.saver-clock-time {
+  font-size: 150px;
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.saver-clock-date {
+  margin-top: 12px;
+  font-size: 32px;
+  font-weight: 300;
+  opacity: 0.7;
+}
+
+.saver-clock.is-night {
+  color: oklch(0.5 0.02 70);
+}
+
+.saver-clock.is-night .saver-clock-time {
+  font-size: 96px;
+}
+
+.saver-clock.is-night .saver-clock-date {
+  font-size: 26px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .screensaver.is-up {
     transition-duration: var(--ss-out);

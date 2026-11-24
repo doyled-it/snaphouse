@@ -61,8 +61,16 @@ function makeEnv(startDate = new Date(2026, 10, 22, 12, 0, 0)) {
       return evt;
     },
   };
-  const aurora = { starts: 0, stops: 0, hues: [], start() { this.starts += 1; }, stop() { this.stops += 1; }, setHues(h) { this.hues.push(h); } };
-  return { clock, doc, aurora, listeners };
+  const fake = (id) => ({
+    id, starts: 0, stops: 0, hues: [], nights: [],
+    node: doc.createElement("div"),
+    start() { this.starts += 1; },
+    stop() { this.stops += 1; },
+    setHues(h) { this.hues.push(h); },
+    setNight(on) { this.nights.push(on); },
+  });
+  const styles = { aurora: fake("aurora"), clock: fake("clock") };
+  return { clock, doc, aurora: styles.aurora, styles, listeners };
 }
 
 function make(env, search = "?panel=1", extra = {}) {
@@ -71,7 +79,7 @@ function make(env, search = "?panel=1", extra = {}) {
     doc: env.doc,
     win,
     params: parsePanelParams(search),
-    createAurora: () => env.aurora,
+    createStyle: (id) => env.styles[id] || null,
     now: env.clock.now,
     setInterval: env.clock.setInterval,
     clearInterval: env.clock.clear,
@@ -91,7 +99,7 @@ test("the overlay is created hidden with a canvas", () => {
   const o = overlay(env);
   assert.equal(o.attrs["aria-hidden"], "true");
   assert.equal(o.classList.contains("is-up"), false);
-  assert.equal(o.children[0].tag, "canvas");
+  assert.equal(o.children[0].className, "saver-stage");
   assert.equal(env.aurora.starts, 0);
 });
 
@@ -230,11 +238,14 @@ test("an overlay that is up stays up when quiet hours end", () => {
   assert.equal(s.isUp(), true);
 });
 
-test("setHues forwards to the aurora", () => {
+test("setHues reaches the style on screen, and a style made later gets the latest", () => {
   const env = makeEnv();
   const s = make(env);
   s.setHues({ h1: 10, h2: 20, chroma: 0.5 });
+  env.clock.advance(5 * MIN);
   assert.deepEqual(env.aurora.hues, [{ h1: 10, h2: 20, chroma: 0.5 }]);
+  s.setHues({ h1: 30, h2: 40, chroma: 0.2 });
+  assert.deepEqual(env.aurora.hues.at(-1), { h1: 30, h2: 40, chroma: 0.2 });
 });
 
 test("destroy removes the node, listeners and timers", () => {
@@ -445,4 +456,184 @@ test("setSettings with the same values changes nothing", () => {
   s.setSettings({ ...SETTINGS });
   env.clock.advance(MIN);
   assert.equal(s.isUp(), true);
+});
+
+
+// ---- styles, rotation and night ------------------------------------------ //
+
+const TWO = { ...SETTINGS, screensaver_wait_s: 60, screensaver_styles: ["aurora", "clock"], screensaver_change_min: 15 };
+const FADE = 3000;
+const running = (st) => st.starts - st.stops > 0;
+
+test("each start shows the next pick after the last one shown", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(TWO);
+  env.clock.advance(MIN);
+  assert.equal(env.styles.aurora.starts, 1);
+  assert.equal(env.styles.clock.starts, 0);
+  env.doc.dispatch("pointerdown");
+  env.clock.advance(MIN + 500);
+  assert.equal(s.isUp(), true);
+  assert.equal(env.styles.clock.starts, 1);
+  env.doc.dispatch("pointerdown");
+  env.clock.advance(MIN + 500);
+  assert.equal(env.styles.aurora.starts, 2);
+});
+
+test("a page that has just loaded starts at the first pick", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings({ ...TWO, screensaver_styles: ["aurora", "clock"] });
+  assert.equal(s.nextStyle(), "aurora");
+});
+
+test("after the change time it crossfades to the next pick, the old one stops after 3 s", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(TWO);
+  env.clock.advance(MIN);
+  env.clock.advance(15 * MIN - 1);
+  assert.equal(env.styles.clock.starts, 0);
+  env.clock.advance(1);
+  assert.equal(env.styles.clock.starts, 1);
+  assert.equal(running(env.styles.aurora), true);
+  env.clock.advance(FADE - 1);
+  assert.equal(running(env.styles.aurora), true);
+  env.clock.advance(1);
+  assert.equal(running(env.styles.aurora), false);
+  assert.equal(running(env.styles.clock), true);
+  env.clock.advance(15 * MIN);
+  assert.equal(env.styles.aurora.starts, 2);
+});
+
+test("with Change every off, or one pick, the style never changes", () => {
+  for (const patch of [{ screensaver_change_min: 0 }, { screensaver_styles: ["aurora"] }]) {
+    const env = makeEnv();
+    const s = make(env);
+    s.setSettings({ ...TWO, ...patch });
+    env.clock.advance(MIN);
+    env.clock.advance(5 * 60 * MIN);
+    assert.equal(env.styles.clock.starts, 0);
+    assert.equal(env.styles.aurora.starts, 1);
+  }
+});
+
+test("rotation runs the same by night", () => {
+  const env = makeEnv(new Date(2026, 10, 22, 23, 0, 0));
+  const s = make(env);
+  s.setSettings({ ...TWO, screensaver_change_min: 5 });
+  env.clock.advance(MIN);
+  env.clock.advance(5 * MIN);
+  assert.equal(env.styles.clock.starts, 1);
+});
+
+test("ambient Now Playing takes over, then the same style returns and the timer restarts", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(TWO);
+  env.clock.advance(MIN);
+  env.clock.advance(10 * MIN);
+  s.setTrack(TRACK);
+  env.clock.advance(1000);
+  assert.equal(running(env.styles.aurora), false);
+  env.clock.advance(60 * MIN);
+  assert.equal(env.styles.clock.starts, 0);
+  s.setTrack(null);
+  env.clock.advance(1000);
+  assert.equal(running(env.styles.aurora), true);
+  assert.equal(env.styles.clock.starts, 0);
+  env.clock.advance(15 * MIN - 2000);
+  assert.equal(env.styles.clock.starts, 0);
+  env.clock.advance(2000);
+  assert.equal(env.styles.clock.starts, 1);
+  assert.equal(s.nextStyle(), "aurora");
+});
+
+test("nextStyle peeks without moving the rotation", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(TWO);
+  assert.equal(s.nextStyle(), "aurora");
+  assert.equal(s.nextStyle(), "aurora");
+  env.clock.advance(MIN);
+  assert.equal(s.nextStyle(), "clock");
+  assert.equal(s.nextStyle(), "clock");
+});
+
+test("a pick with no module is skipped, and with none shipped Aurora shows", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings({ ...TWO, screensaver_styles: ["facts", "quotes"] });
+  env.clock.advance(MIN);
+  assert.equal(env.styles.aurora.starts, 1);
+  const env2 = makeEnv();
+  const s2 = make(env2);
+  s2.setSettings({ ...TWO, screensaver_styles: ["aurora", "facts", "clock"] });
+  env2.clock.advance(MIN);
+  env2.clock.advance(15 * MIN);
+  assert.equal(env2.styles.clock.starts, 1);
+});
+
+test("unpicking the style on screen moves on to the next pick", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(TWO);
+  env.clock.advance(MIN);
+  s.setSettings({ ...TWO, screensaver_styles: ["clock"] });
+  assert.equal(env.styles.clock.starts, 1);
+  env.clock.advance(FADE);
+  assert.equal(running(env.styles.aurora), false);
+});
+
+test("a style is told night during quiet hours and day otherwise", () => {
+  const env = makeEnv(new Date(2026, 10, 22, 23, 0, 0));
+  const s = make(env);
+  env.clock.advance(MIN);
+  assert.equal(s.isUp(), true);
+  assert.deepEqual(env.aurora.nights, [true]);
+  const day = makeEnv();
+  make(day);
+  day.clock.advance(5 * MIN);
+  assert.deepEqual(day.aurora.nights, [false]);
+});
+
+test("when the hour passes while it runs the style is told night, once", () => {
+  const env = makeEnv(new Date(2026, 10, 22, 21, 57, 0));
+  const s = make(env);
+  s.setSettings({ ...SETTINGS, screensaver_wait_s: 30 });
+  env.clock.advance(31 * 1000);
+  assert.equal(s.isUp(), true);
+  assert.deepEqual(env.aurora.nights, [false]);
+  env.clock.advance(3 * MIN);
+  assert.deepEqual(env.aurora.nights, [false, true]);
+  env.clock.advance(10 * MIN);
+  assert.deepEqual(env.aurora.nights, [false, true]);
+});
+
+test("hiding the page stops the running style and a crossfade timer does not restart it", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(TWO);
+  env.clock.advance(MIN);
+  env.doc.hidden = true;
+  env.doc.dispatch("visibilitychange");
+  assert.equal(running(env.aurora), false);
+  env.clock.advance(60 * MIN);
+  assert.equal(running(env.aurora), false);
+  assert.equal(running(env.styles.clock), false);
+  env.doc.hidden = false;
+  env.doc.dispatch("visibilitychange");
+  assert.equal(running(env.aurora), true);
+});
+
+test("dismiss stops every style after the fade", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(TWO);
+  env.clock.advance(MIN + 15 * MIN);
+  env.doc.dispatch("pointerdown");
+  env.clock.advance(300);
+  assert.equal(running(env.aurora), false);
+  assert.equal(running(env.styles.clock), false);
 });

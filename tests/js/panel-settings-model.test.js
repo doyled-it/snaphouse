@@ -13,6 +13,8 @@ import {
   waitLabel,
   diffPatch,
   tileLines,
+  stylesView,
+  changeView,
 } from "../../roles/room_picker/files/site/panel-settings-model.js";
 import { parsePanelParams } from "../../roles/room_picker/files/site/screensaver-model.js";
 
@@ -110,7 +112,7 @@ test("checkPatch accepts valid changes and returns only them", () => {
 
 test("checkPatch refuses equal times and off-step or out-of-range values", () => {
   assert.equal(checkPatch(SETTINGS_DEFAULTS, { night_start: "06:00" }).ok, false);
-  for (const patch of [{ brightness_pct: 15 }, { brightness_pct: 22 }, { night_dim_pct: 7 }, { screensaver_pct: 0 }, { screensaver_wait_s: 45 }, { night_start: "22:15" }, { screensaver_style: "facts" }, { screensaver_on: 1 }, { brightness_pct: "70" }, { colour: 1 }, {}]) {
+  for (const patch of [{ brightness_pct: 15 }, { brightness_pct: 22 }, { night_dim_pct: 7 }, { screensaver_pct: 0 }, { screensaver_wait_s: 45 }, { night_start: "22:15" }, { screensaver_style: "aurora" }, { screensaver_styles: [] }, { screensaver_styles: ["clock", "aurora"] }, { screensaver_change_min: 10 }, { screensaver_on: 1 }, { brightness_pct: "70" }, { colour: 1 }, {}]) {
     const got = checkPatch(SETTINGS_DEFAULTS, patch);
     assert.equal(got.ok, false, JSON.stringify(patch));
     assert.ok(got.error);
@@ -139,4 +141,61 @@ test("barView gives the fill, label and which steppers are at their limit", () =
 test("saverView dims the other rows and disables Preview when the screensaver is off", () => {
   assert.deepEqual(saverView({ ...SETTINGS_DEFAULTS, screensaver_on: false }), { rowsDimmed: true, previewDisabled: true });
   assert.deepEqual(saverView(SETTINGS_DEFAULTS), { rowsDimmed: false, previewDisabled: false });
+});
+
+test("defaults carry the style list and the change interval, not the old style", () => {
+  assert.deepEqual(SETTINGS_DEFAULTS.screensaver_styles, ["aurora"]);
+  assert.equal(SETTINGS_DEFAULTS.screensaver_change_min, 15);
+  assert.equal("screensaver_style" in SETTINGS_DEFAULTS, false);
+});
+
+test("checkPatch mirrors the hub for styles and change interval", () => {
+  assert.equal(checkPatch(SETTINGS_DEFAULTS, { screensaver_styles: ["aurora", "clock"] }).ok, true);
+  assert.equal(checkPatch(SETTINGS_DEFAULTS, { screensaver_styles: ["life", "harmonograph"] }).ok, true);
+  for (const v of [0, 5, 15, 30, 60]) assert.equal(checkPatch(SETTINGS_DEFAULTS, { screensaver_change_min: v }).ok, true);
+  for (const v of [1, 10, 15.5, "15", true, null]) assert.equal(checkPatch(SETTINGS_DEFAULTS, { screensaver_change_min: v }).ok, false);
+  for (const v of [[], ["aurora", "aurora"], ["clock", "aurora"], ["nope"], "aurora", [null]]) {
+    assert.equal(checkPatch(SETTINGS_DEFAULTS, { screensaver_styles: v }).ok, false, JSON.stringify(v));
+  }
+});
+
+test("parsePanelSettings reads an old single style as a one-item list", () => {
+  const old = { version: 1, panels: { panel: { screensaver_style: "aurora", brightness_pct: 70 } } };
+  const got = parsePanelSettings(old, "panel");
+  assert.deepEqual(got.screensaver_styles, ["aurora"]);
+  assert.equal(got.brightness_pct, 70);
+  assert.equal("screensaver_style" in got, false);
+  assert.deepEqual(parsePanelSettings(doc({ screensaver_styles: ["clock"] }), "panel").screensaver_styles, ["clock"]);
+  assert.deepEqual(parsePanelSettings(doc({ screensaver_styles: ["clock", "aurora"] }), "panel").screensaver_styles, ["aurora"]);
+  assert.equal(parsePanelSettings(doc({ screensaver_change_min: 30 }), "panel").screensaver_change_min, 30);
+  assert.equal(parsePanelSettings(doc({ screensaver_change_min: 7 }), "panel").screensaver_change_min, 15);
+});
+
+test("the More tile line names one style or counts several", () => {
+  assert.equal(tileLines({ ...SETTINGS_DEFAULTS, screensaver_styles: ["clock"] }).saver, "Clock after 1 min");
+  assert.equal(tileLines({ ...SETTINGS_DEFAULTS, screensaver_styles: ["aurora", "clock"], screensaver_wait_s: 300 }).saver, "2 styles after 5 min");
+  assert.equal(tileLines({ ...SETTINGS_DEFAULTS, screensaver_on: false }).saver, "Off");
+});
+
+test("stylesView lists only shipped styles in registry order with checks", () => {
+  const view = stylesView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["aurora", "clock"] });
+  assert.deepEqual(view.tiles.map((t) => t.id), ["aurora", "clock"]);
+  assert.deepEqual(view.tiles.map((t) => t.name), ["Aurora", "Clock"]);
+  assert.deepEqual(view.tiles.map((t) => t.on), [true, true]);
+  assert.equal(view.columns, 4);
+});
+
+test("stylesView locks the last picked tile", () => {
+  const one = stylesView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["clock"] });
+  assert.deepEqual(one.tiles.map((t) => [t.id, t.on, t.locked]), [["aurora", false, false], ["clock", true, true]]);
+  const two = stylesView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["aurora", "clock"] });
+  assert.deepEqual(two.tiles.map((t) => t.locked), [false, false]);
+});
+
+test("changeView hides or disables Change every with one pick and marks the choice", () => {
+  const one = changeView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["aurora"] });
+  assert.equal(one.visible, false);
+  const many = changeView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["aurora", "clock"], screensaver_change_min: 0 });
+  assert.equal(many.visible, true);
+  assert.deepEqual(many.choices.map((c) => [c.label, c.value]), [["Off", 0], ["5 min", 5], ["15 min", 15], ["30 min", 30], ["60 min", 60]]);
 });

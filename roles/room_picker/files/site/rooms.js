@@ -2189,6 +2189,7 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
           screensaver?.setSettings(next);
         },
         hues: () => currentHues,
+        nextStyle: () => (screensaver ? screensaver.nextStyle() : null),
         frames: () => frameList(state.frameControl, state.mirrors),
         framesVisible: () => navVisible().frame,
         selectedFrame: () => state.selectedFrame,

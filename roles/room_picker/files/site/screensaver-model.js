@@ -28,7 +28,8 @@ export function parsePanelParams(search) {
     quietEnd: hhmm(q.get("qe"), DEFAULTS.qe),
     // ss=0 is the kiosk URL's "screensaver off" (until the hub's settings arrive).
     enabled: q.get("ss") !== "0",
-    style: "aurora",
+    styles: ["aurora"],
+    changeMin: 15,
   };
 }
 
@@ -44,7 +45,8 @@ export function paramsFromSettings(settings, base) {
     quietStart: hhmm(settings.night_start, base.quietStart),
     quietEnd: hhmm(settings.night_end, base.quietEnd),
     enabled: settings.screensaver_on !== false,
-    style: settings.screensaver_style || base.style || "aurora",
+    styles: Array.isArray(settings.screensaver_styles) && settings.screensaver_styles.length ? settings.screensaver_styles : base.styles || ["aurora"],
+    changeMin: Number.isInteger(settings.screensaver_change_min) ? settings.screensaver_change_min : base.changeMin ?? 15,
   };
 }
 

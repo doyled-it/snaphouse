@@ -17,7 +17,7 @@ test("no panel parameter means no screensaver", () => {
 });
 
 test("panel=1 alone gives the defaults", () => {
-  assert.deepEqual(P, { dayIdleMs: 300000, nightIdleMs: 60000, quietStart: "22:00", quietEnd: "06:00", enabled: true, style: "aurora" });
+  assert.deepEqual(P, { dayIdleMs: 300000, nightIdleMs: 60000, quietStart: "22:00", quietEnd: "06:00", enabled: true, styles: ["aurora"], changeMin: 15 });
 });
 
 test("bad values fall back per field", () => {
@@ -86,11 +86,16 @@ test("shouldShow is false when the screensaver is off", () => {
 
 test("paramsFromSettings uses one wait for day and night, and the settings' hours", () => {
   const p = paramsFromSettings(
-    { screensaver_on: true, screensaver_wait_s: 120, night_start: "21:30", night_end: "07:00", screensaver_style: "aurora" },
+    { screensaver_on: true, screensaver_wait_s: 120, night_start: "21:30", night_end: "07:00", screensaver_styles: ["aurora", "clock"], screensaver_change_min: 30 },
     P,
   );
   assert.equal(p.dayIdleMs, 120000);
   assert.equal(p.nightIdleMs, 120000);
-  assert.deepEqual([p.quietStart, p.quietEnd, p.enabled, p.style], ["21:30", "07:00", true, "aurora"]);
+  assert.deepEqual([p.quietStart, p.quietEnd, p.enabled, p.styles, p.changeMin], ["21:30", "07:00", true, ["aurora", "clock"], 30]);
   assert.equal(paramsFromSettings({ screensaver_on: false, screensaver_wait_s: 30, night_start: "22:00", night_end: "06:00" }, P).enabled, false);
+});
+
+test("paramsFromSettings keeps the base styles when the settings carry none", () => {
+  const p = paramsFromSettings({ screensaver_on: true, screensaver_wait_s: 30, night_start: "22:00", night_end: "06:00" }, { ...P, styles: ["clock"], changeMin: 5 });
+  assert.deepEqual([p.styles, p.changeMin], [["clock"], 5]);
 });
