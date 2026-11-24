@@ -45,6 +45,7 @@ from snaphouse.artlib import (
     _is_ente_name,
 )
 from snaphouse.framecontrol import DEFAULT_LEGACY_FRAME, FrameControl, urllib_geocode
+from snaphouse.panelsettings import PanelError, PanelSettings
 from snaphouse.paths import DEFAULT_PUBLIC_ROOT, frames_root
 
 
@@ -60,6 +61,8 @@ RESCAN_SECONDS = 60
 
 #: The custom header every write must carry. A cross-site form cannot set it
 #: without a CORS preflight the server never answers, so it blocks CSRF.
+ORIGIN_HEADER = "X-Snaphouse-Origin"
+ORIGIN_HOME_PATHS = frozenset({"/api/panel/settings"})
 GUARD_HEADER = "X-Snaphouse"
 GUARD_VALUE = "1"
 
@@ -183,6 +186,8 @@ class ArtAdmin:
         control_path: Path,
         frame: FrameControl,
         frame_control_path: Path,
+        panels: Optional[PanelSettings] = None,
+        panel_settings_path: Optional[Path] = None,
         log: Optional[logging.Logger] = None,
     ) -> None:
         self.library = library
@@ -194,6 +199,13 @@ class ArtAdmin:
         # /api/frame/ write API with the same header guard.
         self.frame = frame
         self.frame_control_path = Path(frame_control_path)
+        # Per-panel screen settings (the panel's Screen and Screensaver pages) ride
+        # along the same way: stored by panelsettings.py, published as
+        # panel-settings.json, written through /api/panel/settings.
+        self.panels = panels
+        self.panel_settings_path = (
+            Path(panel_settings_path) if panel_settings_path is not None else None
+        )
         self.log = log or logging.getLogger("snaphouse.artadmin")
         self._lock = threading.Lock()
         # Ends the background maintenance loop; `_wake` nudges it to run a pass
@@ -216,6 +228,7 @@ class ArtAdmin:
             "/api/frame/settings": self._frame_settings,
             "/api/frame/pin": self._frame_pin,
             "/api/frame/unpin": self._frame_unpin,
+            "/api/panel/settings": self._panel_settings,
         }
 
     # -- publishing -------------------------------------------------------- #
@@ -234,6 +247,8 @@ class ArtAdmin:
         control = self.library.control()
         _atomic_write_json(self.control_path, control)
         _atomic_write_json(self.frame_control_path, self.frame.document())
+        if self.panels is not None and self.panel_settings_path is not None:
+            _atomic_write_json(self.panel_settings_path, self.panels.document())
 
     def _locked_publish(self) -> None:
         with self._lock:
@@ -290,6 +305,12 @@ class ArtAdmin:
             handler.send_api_error(HTTPStatus.NOT_FOUND, "Unknown endpoint.")
             return
         if handler.headers.get(GUARD_HEADER) != GUARD_VALUE:
+            handler.send_api_error(HTTPStatus.FORBIDDEN, "That request is not allowed.")
+            return
+        # A panel write must come from the home network: nginx sets and always
+        # overwrites X-Snaphouse-Origin on /api/panel/, and a missing header counts
+        # as the tunnel.
+        if path in ORIGIN_HOME_PATHS and handler.headers.get(ORIGIN_HEADER) != "home":
             handler.send_api_error(HTTPStatus.FORBIDDEN, "That request is not allowed.")
             return
 
@@ -449,6 +470,21 @@ class ArtAdmin:
         if frame is not None:
             self.frame.require_frame(frame)
         return {"command": self.library.command(action, piece, frame)}
+
+    # -- panel settings endpoint ------------------------------------------- #
+
+    def _panel_settings(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
+        data = _json_body(body)
+        panel = data.get("panel")
+        if self.panels is None:
+            raise ArtError(HTTPStatus.NOT_FOUND, "That panel is not known.")
+        try:
+            settings = self.panels.update(
+                panel, {k: v for k, v in data.items() if k != "panel"}
+            )
+        except PanelError as error:
+            raise ArtError(error.status, error.message) from error
+        return {"panel": panel, "settings": settings}
 
     # -- frame control endpoints ------------------------------------------- #
 
@@ -664,6 +700,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--ente-root", type=Path, default=None)
     parser.add_argument("--ente-cache", type=Path, default=None)
     parser.add_argument("--ente-status", type=Path, default=None)
+    # Per-panel screen settings: the inventory panel ids (repeatable), where they
+    # persist, and the defaults the repo's vars supply for a panel nobody changed.
+    parser.add_argument("--panel", action="append", dest="panels", metavar="ID")
+    parser.add_argument(
+        "--panel-state", default="/var/lib/snaphouse/artadmin/panel-settings.json"
+    )
+    parser.add_argument("--panel-brightness", type=int, default=100)
+    parser.add_argument("--panel-night-dim", type=int, default=15)
+    parser.add_argument("--panel-night-start", default="22:00")
+    parser.add_argument("--panel-night-end", default="06:00")
+    parser.add_argument("--panel-screensaver", choices=("on", "off"), default="on")
+    parser.add_argument("--panel-wait", type=int, default=60)
+    parser.add_argument("--panel-screensaver-brightness", type=int, default=40)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args(argv)
@@ -695,12 +744,28 @@ def main(argv: Optional[list[str]] = None) -> int:
         art_history=art_history,
         geocode=urllib_geocode,
     )
+    panels = PanelSettings(
+        Path(args.panel_state),
+        args.panels or [],
+        {
+            "brightness_pct": args.panel_brightness,
+            "night_dim_pct": args.panel_night_dim,
+            "night_start": args.panel_night_start,
+            "night_end": args.panel_night_end,
+            "screensaver_on": args.panel_screensaver == "on",
+            "screensaver_wait_s": args.panel_wait,
+            "screensaver_style": "aurora",
+            "screensaver_pct": args.panel_screensaver_brightness,
+        },
+    )
     app = ArtAdmin(
         library,
         index_path=public_root / "art" / "art-index.json",
         control_path=public_root / "art" / "art-control.json",
         frame=frame,
         frame_control_path=public_root / "art" / "frame-control.json",
+        panels=panels,
+        panel_settings_path=public_root / "art" / "panel-settings.json",
         log=log,
     )
     # make_server publishes both documents (metadata-only, fast) before the

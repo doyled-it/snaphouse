@@ -27,6 +27,18 @@ from PIL import Image
 from snaphouse import artadmin
 from snaphouse.artlib import Library
 from snaphouse.framecontrol import FrameControl
+from snaphouse.panelsettings import PanelSettings
+
+PANEL_DEFAULTS = {
+    "brightness_pct": 100,
+    "night_dim_pct": 15,
+    "night_start": "22:00",
+    "night_end": "06:00",
+    "screensaver_on": True,
+    "screensaver_wait_s": 60,
+    "screensaver_style": "aurora",
+    "screensaver_pct": 40,
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -59,6 +71,7 @@ def _make_app(
     geocode=None,
     frames=(FRAME, OTHER),
     ente: bool = False,
+    panels=("panel",),
 ) -> artadmin.ArtAdmin:
     root = tmp_path / "art"
     thumbs = tmp_path / "public" / "art-thumbs"
@@ -93,6 +106,10 @@ def _make_app(
         control_path=control_path,
         frame=frame,
         frame_control_path=frame_control_path,
+        panels=PanelSettings(tmp_path / "state" / "panel-settings.json", list(panels), PANEL_DEFAULTS)
+        if panels
+        else None,
+        panel_settings_path=tmp_path / "public" / "art" / "panel-settings.json",
     )
 
 
@@ -114,8 +131,8 @@ class Client:
     def _url(self, path: str) -> str:
         return f"http://127.0.0.1:{self.port}{path}"
 
-    def request(self, method, path, *, body=None, content_type=None, header=True):
-        headers = {}
+    def request(self, method, path, *, body=None, content_type=None, header=True, headers=None):
+        headers = dict(headers or {})
         if header:
             headers["X-Snaphouse"] = "1"
         if content_type is not None:
@@ -129,10 +146,11 @@ class Client:
         except urllib.error.HTTPError as error:
             return error.code, _read_json(error)
 
-    def post_json(self, path, obj, *, header=True):
+    def post_json(self, path, obj, *, header=True, headers=None):
         body = json.dumps(obj).encode("utf-8")
         return self.request(
-            "POST", path, body=body, content_type="application/json", header=header
+            "POST", path, body=body, content_type="application/json", header=header,
+            headers=headers,
         )
 
     def get(self, path, *, header=True):
@@ -1059,3 +1077,123 @@ def test_main_ente_arguments_default_to_none(tmp_path, monkeypatch):
     assert captured["ente_root"] is None
     assert captured["ente_cache"] is None
     assert captured["ente_status"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Panel settings: the guarded write, the origin rule and the published document
+# --------------------------------------------------------------------------- #
+
+HOME = {"X-Snaphouse-Origin": "home"}
+
+
+def _panel_doc(app: artadmin.ArtAdmin) -> dict:
+    return json.loads(app.panel_settings_path.read_text(encoding="utf-8"))
+
+
+def test_panel_document_is_published_at_startup_with_defaults(tmp_path):
+    app = _make_app(tmp_path)
+    server = artadmin.make_server(app, "127.0.0.1", 0)
+    try:
+        assert _panel_doc(app) == {"version": 1, "panels": {"panel": PANEL_DEFAULTS}}
+    finally:
+        server.server_close()
+
+
+def test_panel_settings_write_saves_and_republishes(client):
+    status, _ = client.post_json(
+        "/api/panel/settings", {"panel": "panel", "brightness_pct": 70}, headers=HOME
+    )
+    assert status == 200
+    assert _panel_doc(client.app)["panels"]["panel"]["brightness_pct"] == 70
+
+
+def test_panel_settings_reply_is_that_panels_full_settings(client):
+    status, body = client.post_json(
+        "/api/panel/settings", {"panel": "panel", "night_dim_pct": 0}, headers=HOME
+    )
+    assert status == 200
+    assert body == {"panel": "panel", "settings": {**PANEL_DEFAULTS, "night_dim_pct": 0}}
+
+
+def test_panel_settings_unknown_panel_404(client):
+    status, _ = client.post_json(
+        "/api/panel/settings", {"panel": "nope", "brightness_pct": 70}, headers=HOME
+    )
+    assert status == 404
+
+
+def test_panel_settings_missing_panel_id_is_404(client):
+    status, _ = client.post_json("/api/panel/settings", {"brightness_pct": 70}, headers=HOME)
+    assert status == 404
+
+
+def test_panel_settings_invalid_value_400_and_document_unchanged(client):
+    status, body = client.post_json(
+        "/api/panel/settings", {"panel": "panel", "brightness_pct": 15}, headers=HOME
+    )
+    assert status == 400 and body["error"]
+    assert _panel_doc(client.app)["panels"]["panel"] == PANEL_DEFAULTS
+
+
+def test_panel_settings_requires_the_guard_header(client):
+    status, _ = client.post_json(
+        "/api/panel/settings", {"panel": "panel", "brightness_pct": 70}, header=False, headers=HOME
+    )
+    assert status == 403
+
+
+@pytest.mark.parametrize("headers", [{"X-Snaphouse-Origin": "tunnel"}, {}, {"X-Snaphouse-Origin": "HOME"}])
+def test_panel_settings_refused_from_tunnel_and_missing_origin(client, headers):
+    status, _ = client.post_json(
+        "/api/panel/settings", {"panel": "panel", "brightness_pct": 70}, headers=headers
+    )
+    assert status == 403
+    assert _panel_doc(client.app)["panels"]["panel"] == PANEL_DEFAULTS
+
+
+def test_other_routes_ignore_the_origin_header(client):
+    status, _ = client.post_json("/api/art/settings", {"rotation_minutes": 30})
+    assert status != 403
+
+
+def test_without_panels_the_route_is_unknown(tmp_path):
+    started = Client(_make_app(tmp_path, panels=()))
+    try:
+        status, _ = started.post_json(
+            "/api/panel/settings", {"panel": "panel", "brightness_pct": 70}, headers=HOME
+        )
+        assert status == 404
+    finally:
+        started.close()
+
+
+def test_main_builds_panels_from_flags(tmp_path, monkeypatch):
+    captured = {}
+
+    class Stop(Exception):
+        pass
+
+    def fake_make_server(app, host, port):
+        captured["app"] = app
+        raise Stop
+
+    monkeypatch.setattr(artadmin, "make_server", fake_make_server)
+    with pytest.raises(Stop):
+        artadmin.main([
+            "--root", str(tmp_path / "art"), "--public-root", str(tmp_path / "p"),
+            "--state", str(tmp_path / "s.json"),
+            "--panel-state", str(tmp_path / "panel.json"),
+            "--panel", "panel", "--panel", "hall",
+            "--panel-brightness", "90", "--panel-night-dim", "10",
+            "--panel-night-start", "21:30", "--panel-night-end", "07:00",
+            "--panel-screensaver", "off", "--panel-wait", "120",
+            "--panel-screensaver-brightness", "25",
+        ])
+    doc = captured["app"].panels.document()["panels"]
+    assert set(doc) == {"panel", "hall"}
+    assert doc["hall"] == {
+        "brightness_pct": 90, "night_dim_pct": 10, "night_start": "21:30",
+        "night_end": "07:00", "screensaver_on": False, "screensaver_wait_s": 120,
+        "screensaver_style": "aurora", "screensaver_pct": 25,
+    }
+    assert captured["app"].panel_settings_path == tmp_path / "p" / "art" / "panel-settings.json"
