@@ -27,6 +27,23 @@ export function icon(name, size) {
   return svg;
 }
 
+// A filled glyph (play, pause, previous, next), drawn solid as in the mockup
+// rather than as an outline like the line icons above.
+export function solidIcon(d, size) {
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("fill", "currentColor");
+  if (size) {
+    svg.setAttribute("width", String(size));
+    svg.setAttribute("height", String(size));
+  }
+  const path = document.createElementNS(SVG, "path");
+  path.setAttribute("d", d);
+  svg.appendChild(path);
+  return svg;
+}
+
 export function el(tag, cls, text) {
   const node = document.createElement(tag);
   if (cls) node.className = cls;
