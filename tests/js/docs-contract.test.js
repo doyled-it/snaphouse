@@ -65,3 +65,9 @@ test("the frame mirror contract documents pending, applied_seq and the follower"
     assert.ok(doc.includes(word), `${word} is missing from the frame mirror contract`);
   }
 });
+
+test("the now-playing contract documents controllable and the resume block", () => {
+  assert.match(doc, /`controllable`/);
+  assert.match(doc, /`resume`/);
+  assert.match(doc, /nightstand frame ignores/);
+});
