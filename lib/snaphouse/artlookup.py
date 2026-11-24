@@ -753,20 +753,18 @@ class ArtLookup:
         results = _search_list(self._get(url), "results")
         if results is None:
             return _Resolved(_ERROR, None)
-        for result in results:
-            if not isinstance(result, dict):
-                continue
-            if _names_match(result.get("collectionName"), show):
-                artwork = result.get("artworkUrl600")
-                if isinstance(artwork, str):
-                    image = self._get(artwork)
-                    if image is None:
-                        return _Resolved(_ERROR, None)
-                    # The id is validated here and again on the way out of
-                    # _find, so a non-integer or non-positive value never
-                    # reaches the cache or the published shape.
-                    podcast_id = _valid_podcast_id(result.get("collectionId"))
-                    return _Resolved(_FOUND, image, podcast_id)
+        result = _pick_show(results, show)
+        if result is not None:
+            artwork = result.get("artworkUrl600")
+            if isinstance(artwork, str):
+                image = self._get(artwork)
+                if image is None:
+                    return _Resolved(_ERROR, None)
+                # The id is validated here and again on the way out of
+                # _find, so a non-integer or non-positive value never
+                # reaches the cache or the published shape.
+                podcast_id = _valid_podcast_id(result.get("collectionId"))
+                return _Resolved(_FOUND, image, podcast_id)
         return _Resolved(_MISS, None)
 
     def _podcast_id(
@@ -792,15 +790,12 @@ class ArtLookup:
         results = _search_list(self._get(url), "results")
         if results is None:
             return _Resolved(_ERROR, None)
-        for result in results:
-            if not isinstance(result, dict):
-                continue
-            if _names_match(result.get("collectionName"), show):
-                podcast_id = _valid_podcast_id(result.get("collectionId"))
-                if podcast_id is not None:
-                    return _Resolved(_FOUND, None, podcast_id)
-                # The show matched but carries no usable id: a real miss.
-                return _Resolved(_MISS, None)
+        result = _pick_show(results, show)
+        if result is not None:
+            podcast_id = _valid_podcast_id(result.get("collectionId"))
+            if podcast_id is not None:
+                return _Resolved(_FOUND, None, podcast_id)
+        # No show matched, or it carries no usable id: a real miss.
         return _Resolved(_MISS, None)
 
     def _open_library(
@@ -1098,6 +1093,26 @@ def _search_list(data: Optional[bytes], field: str) -> Optional[list]:
         return None
     value = parsed.get(field)
     return value if isinstance(value, list) else []
+
+
+def _pick_show(results: list, show: str) -> Optional[dict]:
+    """The result for ``show``: an exact name match, else the publisher's own show.
+
+    The second rule accepts a show whose publisher (``artistName``) is the show
+    name and whose collection name starts with it ("Democracy Now!" to
+    "Democracy Now! Audio"). An exact match always wins.
+    """
+    shows = [result for result in results if isinstance(result, dict)]
+    for result in shows:
+        if _names_match(result.get("collectionName"), show):
+            return result
+    wanted = _normalize(show)
+    for result in shows:
+        if _names_match(result.get("artistName"), show) and _normalize(
+            result.get("collectionName")
+        ).startswith(wanted):
+            return result
+    return None
 
 
 def _lead_artist(credit: Optional[str]) -> Optional[str]:

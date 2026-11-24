@@ -1788,3 +1788,71 @@ def test_a_failed_podcast_lookup_is_not_retried_for_ten_minutes(tmp_path):
     now[0] += 60
     lookup.find("Ep 2", "Show", "Show", "long_form", ["Podcast"])
     assert len(fetch.calls) == first
+
+
+# --------------------------------------------------------------------------- #
+# podcasts under the publisher's name
+# --------------------------------------------------------------------------- #
+
+
+def test_podcast_found_under_its_publisher_name(tmp_path):
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_podcast_democracy_now.json")),
+            ("mzstatic.com", _jpeg()),
+        ]
+    )
+    lookup = ArtLookup(tmp_path, fetch)
+
+    result = lookup.find_with_id(
+        "Headlines", "Democracy Now!", "Democracy Now!", "long_form", ["Podcast"]
+    )
+
+    assert result.art_url is not None
+    audio = json.loads(_fixture_bytes("apple_podcast_democracy_now.json"))["results"][0]
+    assert result.podcast_id == audio["collectionId"]
+    assert audio["artworkUrl600"] in fetch.calls
+
+
+def test_podcast_prefix_needs_the_publisher_to_be_the_show_name(tmp_path):
+    body = json.dumps(
+        {
+            "results": [
+                {
+                    "artistName": "Some Other Network",
+                    "collectionName": "Democracy Now! Audio",
+                    "collectionId": 5,
+                    "artworkUrl600": "https://is1-ssl.mzstatic.com/x/600x600bb.jpg",
+                }
+            ]
+        }
+    ).encode("utf-8")
+    fetch = FakeFetch([("itunes.apple.com", body), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+    assert lookup.find("Ep", "Democracy Now!", "Democracy Now!", "long_form", ["Podcast"]) is None
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+
+
+def test_podcast_exact_name_beats_the_publisher_prefix(tmp_path):
+    body = json.dumps(
+        {
+            "results": [
+                {
+                    "artistName": "Show",
+                    "collectionName": "Show Extra",
+                    "collectionId": 1,
+                    "artworkUrl600": "https://is1-ssl.mzstatic.com/x/prefix.jpg",
+                },
+                {
+                    "artistName": "Show",
+                    "collectionName": "Show",
+                    "collectionId": 2,
+                    "artworkUrl600": "https://is1-ssl.mzstatic.com/x/exact.jpg",
+                },
+            ]
+        }
+    ).encode("utf-8")
+    fetch = FakeFetch([("itunes.apple.com", body), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+    result = lookup.find_with_id("Ep", "Show", "Show", "long_form", ["Podcast"])
+    assert result.podcast_id == 2
