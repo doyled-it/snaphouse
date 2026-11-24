@@ -76,6 +76,7 @@ class _Resolved(NamedTuple):
 Fetch = Callable[[str], Optional[bytes]]
 
 _TIMEOUT = 10.0
+_IMAGE_TIMEOUT = 20.0
 # A cover is small; refuse a body larger than this so a hostile or broken source
 # cannot stream an unbounded response into memory on the appliance.
 _MAX_BYTES = 10 * 1024 * 1024
@@ -161,12 +162,37 @@ def _user_agent() -> str:
     return _user_agent_cache
 
 
+class FetchError(Exception):
+    """A fetch that failed, with the reason: an HTTP status or an exception name."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+_IMAGE_HOST_SUFFIXES = (
+    "mzstatic.com",
+    "coverartarchive.org",
+    "archive.org",
+    "covers.openlibrary.org",
+)
+
+
+def _timeout_for(url: str) -> float:
+    """20 s for an image host (the Cover Art Archive redirects to archive.org), else 10 s."""
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if any(host == s or host.endswith("." + s) for s in _IMAGE_HOST_SUFFIXES):
+        return _IMAGE_TIMEOUT
+    return _TIMEOUT
+
+
 def urllib_fetch(url: str) -> Optional[bytes]:
-    """GET ``url`` with a short timeout, returning the body or None on failure.
+    """GET ``url``, returning the body or raising ``FetchError`` with the reason.
 
     The body is capped at ``_MAX_BYTES`` and compression is refused so a small
-    compressed response cannot amplify past the cap. Any error (bad status,
-    timeout, transport failure, oversize body) resolves to None, so a lookup
+    compressed response cannot amplify past the cap. Any failure (bad status,
+    timeout, transport failure, oversize body) raises ``FetchError`` carrying the
+    HTTP status or the exception class name; ``ArtLookup`` catches it, so a lookup
     never raises into the background thread that calls it.
     """
     request = urllib.request.Request(
@@ -177,12 +203,14 @@ def urllib_fetch(url: str) -> Optional[bytes]:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=_timeout_for(url)) as response:
             data = response.read(_MAX_BYTES + 1)
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
+    except urllib.error.HTTPError as error:
+        raise FetchError(f"HTTP {error.code}") from error
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        raise FetchError(type(error).__name__) from error
     if len(data) > _MAX_BYTES:
-        return None
+        raise FetchError("too large")
     return data
 
 
@@ -354,6 +382,18 @@ class ArtLookup:
         self._miss_ttl_s = miss_ttl_s
         self._log = log if log is not None else logging.getLogger("snaphouse.artlookup")
         self._last_musicbrainz: float | None = None
+        self._last_reason: str = ""
+
+    def _get(self, url: str) -> Optional[bytes]:
+        """Run the injected fetch; None on failure, with the reason kept."""
+        try:
+            data = self._fetch(url)
+        except FetchError as error:
+            self._last_reason = error.reason
+            return None
+        if data is None:
+            self._last_reason = "no data"
+        return data
 
     def find(
         self,
@@ -671,7 +711,7 @@ class ArtLookup:
         url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
             {"media": "podcast", "entity": "podcast", "term": show}
         )
-        results = _search_list(self._fetch(url), "results")
+        results = _search_list(self._get(url), "results")
         if results is None:
             return _Resolved(_ERROR, None)
         for result in results:
@@ -680,7 +720,7 @@ class ArtLookup:
             if _names_match(result.get("collectionName"), show):
                 artwork = result.get("artworkUrl600")
                 if isinstance(artwork, str):
-                    image = self._fetch(artwork)
+                    image = self._get(artwork)
                     if image is None:
                         return _Resolved(_ERROR, None)
                     # The id is validated here and again on the way out of
@@ -710,7 +750,7 @@ class ArtLookup:
         url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
             {"media": "podcast", "entity": "podcast", "term": show}
         )
-        results = _search_list(self._fetch(url), "results")
+        results = _search_list(self._get(url), "results")
         if results is None:
             return _Resolved(_ERROR, None)
         for result in results:
@@ -741,7 +781,7 @@ class ArtLookup:
         if artist:
             params["author"] = artist
         url = _OPEN_LIBRARY_SEARCH + "?" + urllib.parse.urlencode(params)
-        docs = _search_list(self._fetch(url), "docs")
+        docs = _search_list(self._get(url), "docs")
         if docs is None:
             return _Resolved(_ERROR, None)
         for doc in docs:
@@ -750,7 +790,7 @@ class ArtLookup:
             if _names_match(doc.get("title"), album):
                 cover_id = doc.get("cover_i")
                 if isinstance(cover_id, int):
-                    image = self._fetch(_OPEN_LIBRARY_COVER.format(cover_id=cover_id))
+                    image = self._get(_OPEN_LIBRARY_COVER.format(cover_id=cover_id))
                     if image is None:
                         return _Resolved(_ERROR, None)
                     return _Resolved(_FOUND, image)
@@ -787,7 +827,7 @@ class ArtLookup:
             {"query": query, "fmt": "json", "limit": 5}
         )
         try:
-            releases = _search_list(self._fetch(url), "releases")
+            releases = _search_list(self._get(url), "releases")
         finally:
             self._last_musicbrainz = self._clock()
         if releases is None:
@@ -801,7 +841,7 @@ class ArtLookup:
                 continue
             mbid = release.get("id")
             if isinstance(mbid, str):
-                image = self._fetch(_COVER_ART_ARCHIVE.format(mbid=mbid))
+                image = self._get(_COVER_ART_ARCHIVE.format(mbid=mbid))
                 if image is None:
                     return _Resolved(_ERROR, None)
                 return _Resolved(_FOUND, image)

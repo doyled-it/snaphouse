@@ -16,7 +16,13 @@ from pathlib import Path
 import pytest
 
 from snaphouse import artlookup
-from snaphouse.artlookup import ArtLookup, keep_for_history, prune_history_covers, route
+from snaphouse.artlookup import (
+    ArtLookup,
+    FetchError,
+    keep_for_history,
+    prune_history_covers,
+    route,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "artlookup"
 
@@ -1268,3 +1274,48 @@ def test_prune_removes_noid_marker_with_its_cover(tmp_path):
     )
     assert not (_lookup_dir(tmp_path) / f"{key}.jpg").exists()
     assert not noid.exists()
+
+
+# --------------------------------------------------------------------------- #
+# fetch failure reasons
+# --------------------------------------------------------------------------- #
+
+
+def test_timeout_for_images_is_twenty_seconds():
+    assert artlookup._timeout_for("https://coverartarchive.org/release/x/front-500") == 20.0
+    assert artlookup._timeout_for("https://is1-ssl.mzstatic.com/a.jpg") == 20.0
+    assert artlookup._timeout_for("https://musicbrainz.org/ws/2/release/") == 10.0
+    assert artlookup._timeout_for("https://itunes.apple.com/search") == 10.0
+
+
+def test_urllib_fetch_reports_http_status(monkeypatch):
+    import urllib.error
+
+    def boom(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 503, "busy", {}, None)
+
+    monkeypatch.setattr(artlookup.urllib.request, "urlopen", boom)
+    with pytest.raises(FetchError) as caught:
+        artlookup.urllib_fetch("https://musicbrainz.org/ws/2/release/")
+    assert caught.value.reason == "HTTP 503"
+
+    def slow(request, timeout):
+        raise TimeoutError()
+
+    monkeypatch.setattr(artlookup.urllib.request, "urlopen", slow)
+    with pytest.raises(FetchError) as caught:
+        artlookup.urllib_fetch("https://musicbrainz.org/ws/2/release/")
+    assert caught.value.reason == "TimeoutError"
+
+
+def test_fetch_error_reason_is_kept(tmp_path):
+    def failing(url):
+        raise FetchError("HTTP 503")
+
+    lookup = ArtLookup(tmp_path, failing)
+    assert lookup._get("https://musicbrainz.org/x") is None
+    assert lookup._last_reason == "HTTP 503"
+
+    lookup = ArtLookup(tmp_path, lambda url: None)
+    assert lookup._get("https://musicbrainz.org/x") is None
+    assert lookup._last_reason == "no data"
