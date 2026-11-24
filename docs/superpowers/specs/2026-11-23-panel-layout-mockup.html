@@ -54,6 +54,37 @@
   .h { font-size: 20px; color: var(--muted); font-weight: 600; }
   .view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
   .hide { display: none !important; }
+
+  /* Ambient now playing (the screensaver while music plays) */
+  .ambient { position: absolute; inset: 0; z-index: 5; display: grid; grid-template-columns: 340px 1fr; gap: 32px;
+    align-items: center; padding: 50px 56px; cursor: pointer;
+    background: radial-gradient(90% 120% at 20% 50%, oklch(0.32 0.09 30) 0%, oklch(0.16 0.05 300) 60%, #05070d 100%); }
+  .ambient .bigart { width: 340px; height: 340px; border-radius: 20px;
+    background: conic-gradient(from 210deg at 35% 40%, #ff7a59, #ffd36b, #6bd4ff, #a06bff, #ff7a59);
+    box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .ambient .t1 { font-size: 40px; font-weight: 800; line-height: 1.12; }
+  .ambient .t2 { font-size: 28px; color: rgba(238,242,249,.75); margin-top: 10px; }
+  .ambient .prog { height: 6px; border-radius: 3px; background: rgba(255,255,255,.15); margin-top: 26px; overflow: hidden; }
+  .ambient .prog i { display: block; height: 100%; width: 38%; background: rgba(255,255,255,.7); }
+  .ambient.hide { display: none; }
+
+  /* Now playing */
+  .np { flex: 1; display: grid; grid-template-columns: 300px 1fr; gap: 16px; min-height: 0; }
+  .np .bigart { width: 300px; height: 300px; border-radius: 18px; align-self: center;
+    background: conic-gradient(from 210deg at 35% 40%, #ff7a59, #ffd36b, #6bd4ff, #a06bff, #ff7a59); }
+  .np.paused .bigart { filter: saturate(.4) brightness(.7); }
+  .np .side { display: flex; flex-direction: column; gap: 10px; min-width: 0; justify-content: center; }
+  .np .t1 { font-size: 34px; font-weight: 800; line-height: 1.15; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .np .t2 { font-size: 24px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np .state { font-size: 20px; color: var(--warn); font-weight: 700; }
+  .np .prog { height: 8px; border-radius: 4px; background: var(--card2); overflow: hidden; margin-top: 4px; }
+  .np .prog i { display: block; height: 100%; width: 38%; background: var(--accent); }
+  .np .times { display: flex; justify-content: space-between; font-size: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .np .tp { display: grid; grid-template-columns: 1fr 1.3fr 1fr; gap: 12px; }
+  .np .tp .btn { height: 92px; }
+  .np .rooms-btn { height: 64px; font-size: 22px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; }
+  .np .rooms-btn span { color: var(--muted); font-weight: 600; font-size: 20px; }
+  .tolisten { flex: none; height: 56px; font-size: 22px; font-weight: 700; }
   .art { border-radius: 12px; flex: none;
     background: conic-gradient(from 210deg at 35% 40%, #ff7a59, #ffd36b, #6bd4ff, #a06bff, #ff7a59); }
 
@@ -162,6 +193,10 @@
   <p class="note" id="note"></p>
 
   <div class="panel">
+    <div class="ambient hide" id="ambient">
+      <div class="bigart"></div>
+      <div><div class="t1">Song title goes here</div><div class="t2">Artist name</div><div class="prog"><i></i></div></div>
+    </div>
     <nav class="rail" id="rail">
       <button data-page="music"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Music</button>
       <button data-page="climate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>Climate</button>
@@ -179,8 +214,41 @@
         <span class="clock" id="clock">9:41</span>
       </div>
 
+      <!-- NOW PLAYING -->
+      <section class="view" data-v="music:np">
+        <div class="np">
+          <div class="bigart"></div>
+          <div class="side">
+            <div class="t1">Song title goes here</div>
+            <div class="t2">Artist name</div>
+            <div><div class="prog"><i></i></div><div class="times"><span>1:24</span><span>3:41</span></div></div>
+            <div class="tp">
+              <button class="btn" aria-label="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM20 6v12L9.5 12z"/></svg></button>
+              <button class="btn primary play" aria-label="Pause"></button>
+              <button class="btn" aria-label="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6v12l10.5-6z"/></svg></button>
+            </div>
+            <button class="btn rooms-btn" data-go-v="rooms">Rooms <span>Office, Bedroom</span></button>
+          </div>
+        </div>
+      </section>
+      <section class="view" data-v="music:paused">
+        <div class="np paused">
+          <div class="bigart"></div>
+          <div class="side">
+            <div class="state">Paused on Phone one</div>
+            <div class="t1">Song title goes here</div>
+            <div class="t2">Artist name</div>
+            <div class="tp">
+              <button class="btn" aria-label="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM20 6v12L9.5 12z"/></svg></button>
+              <button class="btn primary" aria-label="Play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg></button>
+              <button class="btn" aria-label="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6v12l10.5-6z"/></svg></button>
+            </div>
+            <button class="btn rooms-btn" data-go-v="rooms">Rooms <span>Office, Bedroom</span></button>
+          </div>
+        </div>
+      </section>
       <!-- MUSIC -->
-      <section class="view" data-v="music:playing">
+      <section class="view" data-v="music:rooms">
         <div class="card bar">
           <div class="art"></div>
           <div class="meta"><div class="title">Song title goes here</div><div class="artist">Artist name</div></div>
@@ -193,7 +261,7 @@
       <section class="view" data-v="music:idle">
         <div class="card bar">
           <div class="meta"><div class="title">Nothing playing</div>
-            <div class="idletxt">On your phone, pick the house in AirPlay or connect over Bluetooth, then press play.</div></div>
+            <div class="idletxt">On your phone, pick the house in AirPlay or connect over Bluetooth.</div></div>
         </div>
         <div class="cols"></div>
       </section>
@@ -315,8 +383,8 @@
 
 <script>
   const PAGES = {
-    music: { label: "Music", vars: { playing: "Playing", idle: "Nothing playing" },
-      note: "Your pick: rooms as columns. Tap a column at any height to set the volume." },
+    music: { label: "Music", vars: { ambient: "Screensaver while playing", np: "Now playing", paused: "Paused", rooms: "Rooms (one tap away)", idle: "Nothing playing" },
+      note: "While music plays, Music opens on Now Playing; Rooms is one tap away. Tapping the now-playing bar on Rooms goes back, and Rooms returns to Now Playing after 30 s. The screensaver while playing is Now Playing with no controls; a touch shows the controls. When paused over Bluetooth, Play stays until the phone disconnects." },
     climate: { label: "Climate", vars: { split: "A: big number + setpoint card", center: "B: setpoint in the middle" },
       note: "Away temperature and timing rules stay on the phone." },
     garage: { label: "Garage", vars: { split: "A: status + big button", stack: "B: status bar + recent" },
@@ -328,7 +396,7 @@
       note: "Paged with big arrows instead of a scrolling list. Tap a picture to open it. Uploads and trash stay on the phone." },
     settings: { label: "More: Bluetooth", vars: { bt: "Pair + devices" }, note: "" },
   };
-  let page = "music", variant = "playing";
+  let page = "music", variant = "np";
   try { const s = JSON.parse(localStorage.getItem("panel-mock") || "null"); if (s && PAGES[s.page] && PAGES[s.page].vars[s.variant]) { page = s.page; variant = s.variant; } } catch (e) {}
   const hp = location.hash.slice(1).split(":"); if (PAGES[hp[0]]) { page = hp[0]; variant = PAGES[hp[0]].vars[hp[1]] ? hp[1] : Object.keys(PAGES[hp[0]].vars)[0]; }
 
@@ -409,6 +477,9 @@
 
   document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
   document.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => go("gallery", "viewer")));
+  document.querySelectorAll("[data-go-v]").forEach((b) => b.addEventListener("click", () => go("music", b.dataset.goV)));
+  document.querySelectorAll('[data-v="music:rooms"] .bar .meta, [data-v="music:rooms"] .bar .art').forEach((b) => b.addEventListener("click", () => go("music", "np")));
+  document.getElementById("ambient").addEventListener("click", () => go("music", "np"));
   document.querySelectorAll(".backgal").forEach((b) => b.addEventListener("click", () => go("gallery", "grid")));
   document.getElementById("back").addEventListener("click", () => go("more"));
   document.querySelectorAll(".rail button").forEach((b) => b.addEventListener("click", () => go(b.dataset.page)));
@@ -431,7 +502,9 @@
       b.onclick = () => go(page, k); vars.append(b);
     });
     document.getElementById("note").textContent = PAGES[page].note;
-    document.querySelectorAll("[data-v]").forEach((s) => s.classList.toggle("hide", s.dataset.v !== `${page}:${variant}`));
+    const amb = page === "music" && variant === "ambient";
+    document.getElementById("ambient").classList.toggle("hide", !amb);
+    document.querySelectorAll("[data-v]").forEach((s) => s.classList.toggle("hide", s.dataset.v !== `${page}:${amb ? "np" : variant}`));
     const top = ["frame", "gallery", "settings"].includes(page) ? "more" : page;
     document.querySelectorAll(".rail button").forEach((b) => b.classList.toggle("on", b.dataset.page === top));
     const sub = top === "more" && page !== "more";
