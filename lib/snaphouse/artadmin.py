@@ -45,7 +45,7 @@ from snaphouse.artlib import (
     _is_ente_name,
 )
 from snaphouse.framecontrol import DEFAULT_LEGACY_FRAME, FrameControl, urllib_geocode
-from snaphouse.panelsettings import PanelError, PanelSettings
+from snaphouse.panelsettings import DEFAULT_STYLES, PanelError, PanelSettings
 from snaphouse.paths import DEFAULT_PUBLIC_ROOT, frames_root
 
 
@@ -754,7 +754,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             "night_end": args.panel_night_end,
             "screensaver_on": args.panel_screensaver == "on",
             "screensaver_wait_s": args.panel_wait,
-            "screensaver_style": "aurora",
+            "screensaver_styles": list(DEFAULT_STYLES),
+            "screensaver_change_min": 15,
             "screensaver_pct": args.panel_screensaver_brightness,
         },
     )

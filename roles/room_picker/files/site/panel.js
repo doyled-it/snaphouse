@@ -16,7 +16,7 @@ import { apiRequest } from "./rooms-model.js";
 
 // The page's own screen name for each panel screen, so its polling rules (pairing,
 // devices, climate, garage) keep following what is on show.
-const PHONE_SCREEN = { listen: "listen", more: "listen", health: "listen", climate: "climate", garage: "garage", frame: "frame", gallery: "gallery", settings: "settings", screen: "listen", screensaver: "listen" };
+const PHONE_SCREEN = { listen: "listen", more: "listen", health: "listen", climate: "climate", garage: "garage", frame: "frame", gallery: "gallery", settings: "settings", screen: "listen", screensaver: "listen", "screensaver-styles": "listen" };
 
 export function initPanel(host) {
   const root = document.documentElement;

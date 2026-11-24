@@ -3,6 +3,17 @@
 // wrap rules for the controls, and the More tile lines. No DOM, no network.
 // The hub half is lib/snaphouse/panelsettings.py.
 
+import {
+  CHANGE_CHOICES,
+  DEFAULT_CHANGE_MIN,
+  DEFAULT_STYLES,
+  SHIPPED_IDS,
+  STYLES,
+  checkStyles,
+  shippedPicks,
+  stylesLabel,
+} from "./style-list.js";
+
 export const SETTINGS_DEFAULTS = {
   brightness_pct: 100,
   night_dim_pct: 15,
@@ -10,12 +21,12 @@ export const SETTINGS_DEFAULTS = {
   night_end: "06:00",
   screensaver_on: true,
   screensaver_wait_s: 60,
-  screensaver_style: "aurora",
+  screensaver_styles: [...DEFAULT_STYLES],
+  screensaver_change_min: DEFAULT_CHANGE_MIN,
   screensaver_pct: 40,
 };
 
 export const WAIT_CHOICES = [30, 60, 120, 300, 600];
-export const STYLES = ["aurora"];
 
 // The lowest value each brightness may take: Brightness stops at 20 so the panel is
 // always usable when touched, the screensaver at 5, the night dim at 0 (off).
@@ -35,7 +46,8 @@ const CHECKS = {
   night_end: timeOk,
   screensaver_on: (v) => typeof v === "boolean",
   screensaver_wait_s: (v) => isInt(v) && WAIT_CHOICES.includes(v),
-  screensaver_style: (v) => typeof v === "string" && STYLES.includes(v),
+  screensaver_styles: checkStyles,
+  screensaver_change_min: (v) => isInt(v) && CHANGE_CHOICES.includes(v),
   screensaver_pct: pctOk(FLOORS.screensaver_pct),
 };
 
@@ -46,7 +58,8 @@ const MESSAGES = {
   night_end: "Pick a time on the hour or half hour.",
   screensaver_on: "Screensaver must be on or off.",
   screensaver_wait_s: "Pick one of the wait times.",
-  screensaver_style: "That style is not available yet.",
+  screensaver_styles: "Pick at least one style.",
+  screensaver_change_min: "Pick one of the change times.",
   screensaver_pct: "Brightness must be 5 to 100.",
 };
 
@@ -60,6 +73,11 @@ export function parsePanelSettings(doc, pid, fallback = SETTINGS_DEFAULTS) {
   const entry = panels[pid];
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
   const out = { ...fallback };
+  delete out.screensaver_style;
+  // An older document carries one style; it reads as a one-item list.
+  if (!CHECKS.screensaver_styles(entry.screensaver_styles) && CHECKS.screensaver_styles([entry.screensaver_style])) {
+    out.screensaver_styles = [entry.screensaver_style];
+  }
   for (const key of Object.keys(CHECKS)) {
     if (CHECKS[key](entry[key])) out[key] = entry[key];
   }
@@ -150,11 +168,9 @@ export function diffPatch(prev, next) {
   return out;
 }
 
-const STYLE_NAMES = { aurora: "Aurora" };
-
 // The More tiles' second lines.
 export function tileLines(settings) {
-  const style = STYLE_NAMES[settings.screensaver_style] || "Aurora";
+  const style = stylesLabel(settings.screensaver_styles);
   return {
     screen: "Brightness, night",
     saver: settings.screensaver_on ? `${style} after ${waitLabel(settings.screensaver_wait_s)}` : "Off",
@@ -170,4 +186,26 @@ export function barView(value, min) {
 export function saverView(settings) {
   const off = settings.screensaver_on === false;
   return { rowsDimmed: off, previewDisabled: off };
+}
+
+// The Styles screen: a tile per shipped style, in registry order, with its check. The
+// last picked tile is locked (it cannot be turned off).
+export function stylesView(settings) {
+  const picks = shippedPicks(settings.screensaver_styles);
+  const tiles = STYLES.filter((s) => SHIPPED_IDS.includes(s.id)).map((s) => ({
+    id: s.id,
+    name: s.name,
+    on: picks.includes(s.id),
+    locked: picks.length === 1 && picks.includes(s.id),
+  }));
+  return { tiles, columns: 4 };
+}
+
+// The "Change every" row: only worth showing with two or more styles picked.
+export function changeView(settings) {
+  const picks = shippedPicks(settings.screensaver_styles);
+  return {
+    visible: picks.length > 1,
+    choices: CHANGE_CHOICES.map((value) => ({ value, label: value === 0 ? "Off" : `${value} min` })),
+  };
 }

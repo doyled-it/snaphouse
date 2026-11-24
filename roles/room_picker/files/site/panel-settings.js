@@ -3,20 +3,24 @@
 // panel-settings-controller.js; this file only draws and wires. Changes save on
 // their own, and a brightness tap or step also shows that brightness on the real
 // backlight for 3 s (the daemon does it; a failed call is ignored).
-import { createAurora } from "./aurora.js";
 import { saveStatus } from "./autosave-queue.js";
 import { button, el, icon, setText } from "./panel-dom.js";
 import {
   FLOORS,
   WAIT_CHOICES,
   barView,
+  changeView,
   pctFromFraction,
   saverView,
   stepPct,
   stepTime,
+  stylesView,
   timeLabel,
   waitLabel,
 } from "./panel-settings-model.js";
+import { inQuietHours } from "./screensaver-model.js";
+import { createStyle } from "./style-registry.js";
+import { CHANGE_CHOICES, nextPick, shippedPicks, stylesLabel, tappedPreviewId, togglePick } from "./style-list.js";
 
 const MINUS = "M5 12h14";
 const PLUS = "M12 5v14M5 12h14";
@@ -181,42 +185,114 @@ export function createSettingsScreens(panel) {
     [{ label: "On", value: true }, { label: "Off", value: false }],
     "screensaver_on",
   );
-  const previewBtn = button("p-sbig", "Preview", () => startPreview());
+  const previewBtn = button("p-sbig", "Preview", () => startPreview(nextStyleId()));
   onRow.ctl.append(previewBtn);
   const waitRow = chipsRow("Starts after", WAIT_CHOICES.map((s) => ({ label: waitLabel(s), value: s })), "screensaver_wait_s");
-  const soon = button("p-schip soon", "More soon", () => {});
-  soon.disabled = true;
-  const styleRow = chipsRow("Style", [{ label: "Aurora", value: "aurora" }], "screensaver_style", { extra: soon });
+
+  // Styles: one button reading "Aurora" or "6 styles" that opens the Styles screen.
+  const styleRowParts = row("Styles");
+  const stylesBtn = button("p-sbig p-sstyles", "", () => {
+    window.location.hash = "#screensaver-styles";
+  });
+  styleRowParts.ctl.append(stylesBtn);
+  views.push({ update: (s) => setText(stylesBtn, `${stylesLabel(s.screensaver_styles)}`) });
+  const styleRow = { node: styleRowParts.node };
+
+  // Change every: Off, 5, 15, 30, 60 min; out of the way with one style picked.
+  const changeRow = chipsRow(
+    "Change every",
+    CHANGE_CHOICES.map((value) => ({ label: value === 0 ? "Off" : `${value} min`, value })),
+    "screensaver_change_min",
+  );
+  views.push({
+    update(s) {
+      changeRow.node.hidden = !changeView(s).visible;
+    },
+  });
   const pctRow = brightnessRow("Brightness", "screensaver_pct", "tap to preview");
-  saver.append(onRow.node, waitRow.node, styleRow.node, pctRow, statusLine());
+  saver.classList.add("p-sset-scroll");
+  saver.append(onRow.node, waitRow.node, styleRow.node, changeRow.node, pctRow, statusLine());
   views.push({
     update(s) {
       const v = saverView(s);
-      for (const n of [waitRow.node, styleRow.node, pctRow]) n.dataset.dimmed = v.rowsDimmed ? "true" : "false";
+      for (const n of [waitRow.node, styleRow.node, changeRow.node, pctRow]) n.dataset.dimmed = v.rowsDimmed ? "true" : "false";
       previewBtn.disabled = v.previewDisabled;
     },
   });
   panel.register("screensaver", saver, () => redraw());
 
-  // ---- Preview: the chosen style full screen, at its brightness, until a tap ---- //
+  // ---- Styles: a toggle tile per style that has a module ------------------------ //
+
+  const styles = el("section", "p-sset p-sstyles-screen");
+  const grid = el("div", "p-sgrid");
+  const tileNodes = new Map();
+  let tapped = null;
+  for (const t of stylesView(store.settings()).tiles) {
+    const b = button("p-stile", "", () => {
+      tapped = t.id;
+      const picks = store.settings().screensaver_styles;
+      const out = togglePick(picks, t.id);
+      if (out.ok) edit({ screensaver_styles: out.picks });
+      else if (host.notify) host.notify("Keep at least one style.");
+    });
+    const name = el("span", "p-stile-name", t.name);
+    const check = icon("M5 12.5l4.5 4.5L19 7.5", 28);
+    check.classList.add("p-stile-check");
+    b.append(name, check);
+    tileNodes.set(t.id, b);
+    grid.append(b);
+  }
+  const stylesActions = el("div", "p-sstyles-actions");
+  const stylesPreview = button("p-sbig", "Preview", () => startPreview(tappedPreviewId(store.settings().screensaver_styles, tapped)));
+  const stylesDone = button("p-sbig", "Done", () => {
+    window.location.hash = "#screensaver";
+  });
+  stylesActions.append(stylesPreview, stylesDone, statusLine());
+  styles.append(grid, stylesActions);
+  views.push({
+    update(s) {
+      for (const t of stylesView(s).tiles) {
+        const b = tileNodes.get(t.id);
+        b.setAttribute("aria-pressed", t.on ? "true" : "false");
+        b.dataset.locked = t.locked ? "true" : "false";
+      }
+      stylesPreview.disabled = saverView(s).previewDisabled;
+    },
+  });
+  panel.register("screensaver-styles", styles, () => redraw());
+
+  // ---- Preview: a style full screen, at its brightness, until a tap -------------- //
+
+  // The style the screensaver shows next, from the page's rotation (the first pick
+  // before the screensaver module has loaded).
+  function nextStyleId() {
+    const picks = store.settings().screensaver_styles;
+    const next = host.nextStyle ? host.nextStyle() : null;
+    return next || nextPick(picks, null);
+  }
 
   let preview = null;
-  function startPreview() {
-    if (preview || !store.settings().screensaver_on) return;
+  function startPreview(id) {
+    const settings = store.settings();
+    if (preview || !settings.screensaver_on) return;
+    const styleEnv = {
+      doc: document,
+      win: window,
+      now: () => Date.now(),
+      setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimeout: (t) => window.clearTimeout(t),
+      random: () => Math.random(),
+    };
+    const style = createStyle(id, styleEnv) || createStyle(shippedPicks(null)[0], styleEnv);
     const layer = el("div", "p-saver-preview");
-    const canvas = document.createElement("canvas");
+    const wrap = el("div", "saver-layer is-in is-snap");
+    wrap.append(style.node);
     const hint = el("div", "p-saver-preview-hint", "Preview. Tap to end.");
-    layer.append(canvas, hint);
+    layer.append(wrap, hint);
     document.body.appendChild(layer);
-    const aurora = createAurora({
-      canvas,
-      getSize: () => ({ width: window.innerWidth, height: window.innerHeight }),
-      raf: (fn) => window.requestAnimationFrame(fn),
-      caf: (id) => window.cancelAnimationFrame(id),
-      nowMs: () => window.performance.now(),
-    });
-    if (host.hues) aurora.setHues(host.hues());
-    aurora.start();
+    if (host.hues) style.setHues(host.hues());
+    style.setNight(inQuietHours(new Date(), { quietStart: settings.night_start, quietEnd: settings.night_end }));
+    style.start();
     store.previewScreensaver(true);
     // The click (not the pointerdown) ends it, so the tap's own pointerup and
     // click never land on the page underneath.
@@ -227,7 +303,7 @@ export function createSettingsScreens(panel) {
       }
       if (!preview) return;
       window.clearTimeout(preview.timer);
-      aurora.stop();
+      style.stop();
       layer.remove();
       preview = null;
       store.previewScreensaver(false);

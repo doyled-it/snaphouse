@@ -8,16 +8,18 @@
 // for SWALLOW_MS after the last swallowed event so the tap's own pointerup and
 // click never reach a room switch underneath.
 
-import { createAurora as realCreateAurora } from "./aurora.js";
 import { swapImage as realSwapImage } from "./cover-color.js";
 import { ambientWanted, pausedClock } from "./now-model.js";
 import { progressAt } from "./rooms-model.js";
-import { parsePanelParams, paramsFromSettings, shouldShow, idleLimitMs } from "./screensaver-model.js";
+import { createStyle as realCreateStyle } from "./style-registry.js";
+import { nextPick, shippedPicks } from "./style-list.js";
+import { parsePanelParams, paramsFromSettings, shouldShow, idleLimitMs, inQuietHours } from "./screensaver-model.js";
 
 const FADE_OUT_MS = 300;
 const SWALLOW_MS = 400;
 const RECHECK_MS = 60000;
 const AMBIENT_TICK_MS = 1000;
+const CROSSFADE_MS = 3000;
 
 const SWALLOWED = [
   "pointerdown", "pointerup", "pointermove", "pointercancel", "click",
@@ -30,7 +32,7 @@ export function createScreensaver({
   doc,
   win,
   params: initialParams,
-  createAurora = realCreateAurora,
+  createStyle = realCreateStyle,
   swapImage = realSwapImage,
   onDismiss = () => {},
   now,
@@ -42,8 +44,10 @@ export function createScreensaver({
   const node = doc.createElement("div");
   node.className = "screensaver";
   node.setAttribute("aria-hidden", "true");
-  const canvas = doc.createElement("canvas");
-  node.append(canvas);
+  // The style layers sit in the stage, one wrapper each; the ambient layer is above.
+  const stage = doc.createElement("div");
+  stage.className = "saver-stage";
+  node.append(stage);
   // The ambient Now Playing layer (cover, title, artist, a thin progress line).
   // The page's cover hues (--h, --k on the root) tint its background.
   const amb = doc.createElement("div");
@@ -68,14 +72,6 @@ export function createScreensaver({
   node.append(amb);
   doc.body.append(node);
 
-  const aurora = createAurora({
-    canvas,
-    getSize: () => ({ width: win.innerWidth, height: win.innerHeight }),
-    raf: (fn) => win.requestAnimationFrame(fn),
-    caf: (id) => win.cancelAnimationFrame(id),
-    nowMs: () => win.performance.now(),
-  });
-
   // The wait, hours and on/off. They start from the kiosk URL and are replaced by
   // the panel's own settings from the hub (setSettings).
   let params = initialParams;
@@ -89,8 +85,16 @@ export function createScreensaver({
   let clock = { key: null, since: null };
   let ambientTimer = null;
   let artSrc = null;
-  let shown = null;
-  let auroraWaiting = false;
+  // Style layers: one instance (style plus its wrapper) per id, made when first needed.
+  const styleEnv = { doc, win, now, setTimeout, clearTimeout, random: () => Math.random() };
+  const instances = new Map();
+  const started = new Set();
+  const fadeStops = new Map();
+  let current = null;
+  let lastShownId = null;
+  let rotationTimer = null;
+  let hues = null;
+  let night = false;
 
   function ambient() {
     return ambientWanted(track, clock, now());
@@ -114,25 +118,128 @@ export function createScreensaver({
     ambFill.style.transform = `scaleX(${(p ? p.fraction : 0).toFixed(4)})`;
   }
 
-  // Ambient while music plays (or was paused under 5 minutes ago), else Aurora.
-  // The Aurora loop never runs while the ambient layer is showing.
+  // ---- style layers ------------------------------------------------------ //
+
+  function instance(id) {
+    let inst = instances.get(id);
+    if (inst) return inst;
+    const style = createStyle(id, styleEnv);
+    if (!style) return null;
+    const wrap = doc.createElement("div");
+    wrap.className = "saver-layer";
+    wrap.append(style.node);
+    stage.append(wrap);
+    if (hues) style.setHues(hues);
+    style.setNight(night);
+    inst = { id, style, wrap };
+    instances.set(id, inst);
+    return inst;
+  }
+
+  // The instance for an id, Aurora when this page has no module for it.
+  const instanceOrDefault = (id) => instance(id) || instance("aurora");
+
+  function startInst(inst) {
+    const pending = fadeStops.get(inst.id);
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      fadeStops.delete(inst.id);
+    }
+    if (started.has(inst.id)) return;
+    started.add(inst.id);
+    inst.style.start();
+  }
+
+  function stopInst(inst) {
+    const pending = fadeStops.get(inst.id);
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      fadeStops.delete(inst.id);
+    }
+    if (!started.has(inst.id)) return;
+    started.delete(inst.id);
+    inst.style.stop();
+  }
+
+  // Every animation stops (ambient view, hidden page, fade out). `current` is kept so
+  // the same style comes back.
+  function haltStyles() {
+    for (const inst of instances.values()) {
+      stopInst(inst);
+      if (inst !== current) inst.wrap.classList.remove("is-in");
+    }
+  }
+
+  function resetLayers() {
+    haltStyles();
+    for (const inst of instances.values()) inst.wrap.classList.remove("is-in", "is-snap");
+    current = null;
+  }
+
+  // Fade to `id` over about 3 s; the old layer keeps running until it has faded.
+  function crossfadeTo(id) {
+    const inst = instanceOrDefault(id);
+    if (!inst || inst === current) return;
+    const prev = current;
+    current = inst;
+    startInst(inst);
+    inst.wrap.classList.remove("is-snap");
+    inst.wrap.classList.add("is-in");
+    if (prev) {
+      prev.wrap.classList.remove("is-in", "is-snap");
+      fadeStops.set(prev.id, setTimeout(() => {
+        fadeStops.delete(prev.id);
+        stopInst(prev);
+      }, CROSSFADE_MS));
+    }
+  }
+
+  function clearRotation() {
+    if (rotationTimer !== null) clearTimeout(rotationTimer);
+    rotationTimer = null;
+  }
+
+  // One timer, only while a style is on screen: every change interval the next pick.
+  function startRotation() {
+    if (rotationTimer !== null || params.changeMin === 0) return;
+    if (shippedPicks(params.styles).length < 2) return;
+    rotationTimer = setTimeout(rotate, params.changeMin * 60000);
+  }
+
+  function rotate() {
+    rotationTimer = null;
+    if (!up || ambient() || doc.hidden) return;
+    lastShownId = nextPick(params.styles, lastShownId);
+    crossfadeTo(lastShownId);
+    startRotation();
+  }
+
+  // The hour passing while it runs: each style switches look (and fades itself).
+  function syncNight() {
+    const n = inQuietHours(new Date(now()), params);
+    if (n === night) return;
+    night = n;
+    for (const inst of instances.values()) inst.style.setNight(night);
+  }
+
+  // Ambient while music plays (or was paused under 5 minutes ago), else the picked
+  // style. No style animates while the ambient layer or a hidden page covers it.
   function applyMode() {
     if (!up) return;
     const wantAmbient = ambient();
     if (wantAmbient) drawAmbient();
-    const mode = wantAmbient ? "ambient" : "aurora";
-    if (mode === shown && !(mode === "aurora" && auroraWaiting && !doc.hidden)) return;
-    shown = mode;
     amb.hidden = !wantAmbient;
-    if (wantAmbient) {
-      aurora.stop();
-      auroraWaiting = false;
-    } else if (doc.hidden) {
-      auroraWaiting = true;
-    } else {
-      aurora.start();
-      auroraWaiting = false;
+    if (wantAmbient || doc.hidden) {
+      haltStyles();
+      clearRotation();
+      return;
     }
+    if (!current) {
+      current = instanceOrDefault(lastShownId);
+      current.wrap.classList.add("is-in", "is-snap");
+    }
+    startInst(current);
+    startRotation();
   }
 
   function check() {
@@ -149,23 +256,30 @@ export function createScreensaver({
     checkTimer = setTimeout(check, wait);
   }
 
+  function tick() {
+    syncNight();
+    applyMode();
+  }
+
   function show() {
     if (stopTimer !== null) {
       clearTimeout(stopTimer);
       stopTimer = null;
     }
     up = true;
-    shown = null;
+    resetLayers();
+    night = inQuietHours(new Date(now()), params);
+    lastShownId = nextPick(params.styles, lastShownId);
     node.classList.add("is-up");
     applyMode();
-    ambientTimer = setInterval(applyMode, AMBIENT_TICK_MS);
+    ambientTimer = setInterval(tick, AMBIENT_TICK_MS);
   }
 
   // `silent` closes the overlay without the dismiss callback: the screensaver was
   // switched off, so nothing should jump to Now playing.
   function dismiss(silent = false) {
     up = false;
-    shown = null;
+    clearRotation();
     if (ambientTimer !== null) {
       clearInterval(ambientTimer);
       ambientTimer = null;
@@ -176,7 +290,7 @@ export function createScreensaver({
     node.classList.remove("is-up");
     stopTimer = setTimeout(() => {
       stopTimer = null;
-      aurora.stop();
+      resetLayers();
     }, FADE_OUT_MS);
     check();
   }
@@ -199,11 +313,23 @@ export function createScreensaver({
   function onVisibility() {
     if (!up) return;
     if (doc.hidden) {
-      aurora.stop();
-      auroraWaiting = shown === "aurora";
+      haltStyles();
+      clearRotation();
     } else {
       applyMode();
     }
+  }
+
+  // New picks or change time while it is up: leave a style that is no longer picked
+  // and restart the timer for the new interval.
+  function reconcile() {
+    if (!up) return;
+    clearRotation();
+    if (current && !ambient() && !shippedPicks(params.styles).includes(current.id)) {
+      lastShownId = nextPick(params.styles, current.id);
+      crossfadeTo(lastShownId);
+    }
+    applyMode();
   }
 
   for (const type of SWALLOWED) doc.addEventListener(type, onInput, true);
@@ -212,7 +338,12 @@ export function createScreensaver({
   check();
 
   return {
-    setHues: (h) => aurora.setHues(h),
+    setHues(h) {
+      hues = h;
+      for (const inst of instances.values()) inst.style.setHues(h);
+    },
+    // The style the next start (or the next change) shows, without moving the rotation.
+    nextStyle: () => nextPick(params.styles, lastShownId),
     // This panel's settings from the hub (panel-settings-model.js). A new wait,
     // hours or style apply at once; switching it off closes an open overlay and
     // switching it on starts a fresh wait.
@@ -230,6 +361,7 @@ export function createScreensaver({
         return;
       }
       if (!wasOn) lastInput = now();
+      reconcile();
       check();
     },
     // The page's current track (a parseNowPlayingDoc result) or null. The paused
@@ -248,7 +380,8 @@ export function createScreensaver({
       if (ambientTimer !== null) clearInterval(ambientTimer);
       if (checkTimer !== null) clearTimeout(checkTimer);
       if (stopTimer !== null) clearTimeout(stopTimer);
-      aurora.stop();
+      clearRotation();
+      haltStyles();
       node.remove();
     },
   };

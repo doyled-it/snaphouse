@@ -16,7 +16,8 @@ DEFAULTS = {
     "night_end": "06:00",
     "screensaver_on": True,
     "screensaver_wait_s": 60,
-    "screensaver_style": "aurora",
+    "screensaver_styles": ["aurora"],
+    "screensaver_change_min": 15,
     "screensaver_pct": 40,
 }
 
@@ -156,11 +157,77 @@ def test_stored_panel_not_in_inventory_is_ignored(tmp_path):
     assert set(_make(tmp_path).document()["panels"]) == {"panel"}
 
 
-def test_style_must_be_aurora(tmp_path):
+ALL_IDS = [
+    "aurora", "facts", "quotes", "covers", "clock", "sky",
+    "planets", "moon", "flow", "contours", "life", "harmonograph",
+]
+
+
+def test_styles_accept_any_ordered_subset_of_the_twelve(tmp_path):
     ps = _make(tmp_path)
-    ps.update("panel", {"screensaver_style": "aurora"})
+    assert ps.update("panel", {"screensaver_styles": ["clock", "life"]})["screensaver_styles"] == ["clock", "life"]
+    assert ps.update("panel", {"screensaver_styles": ALL_IDS})["screensaver_styles"] == ALL_IDS
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[], ["nope"], ["clock", "aurora"], ["aurora", "aurora"], "aurora", ("aurora",), [1], None, ["aurora", None]],
+)
+def test_bad_styles_store_nothing(tmp_path, value):
+    ps = _make(tmp_path)
+    with pytest.raises(PanelError) as err:
+        ps.update("panel", {"screensaver_styles": value, "brightness_pct": 70})
+    assert err.value.status == HTTPStatus.BAD_REQUEST
+    assert ps.settings("panel") == DEFAULTS
+
+
+@pytest.mark.parametrize("value", [0, 5, 15, 30, 60])
+def test_change_min_accepts_the_choices(tmp_path, value):
+    assert _make(tmp_path).update("panel", {"screensaver_change_min": value})["screensaver_change_min"] == value
+
+
+@pytest.mark.parametrize("value", [1, 10, -5, 15.0, True, "15", None])
+def test_change_min_rejects_everything_else(tmp_path, value):
     with pytest.raises(PanelError):
-        ps.update("panel", {"screensaver_style": "facts"})
+        _make(tmp_path).update("panel", {"screensaver_change_min": value})
+
+
+def test_screensaver_style_is_no_longer_a_writable_key(tmp_path):
+    with pytest.raises(PanelError):
+        _make(tmp_path).update("panel", {"screensaver_style": "aurora"})
+
+
+def test_defaults_are_aurora_and_fifteen_minutes(tmp_path):
+    s = _make(tmp_path).settings("panel")
+    assert s["screensaver_styles"] == ["aurora"]
+    assert s["screensaver_change_min"] == 15
+    assert "screensaver_style" not in s
+
+
+def test_old_single_style_reads_as_a_one_item_list(tmp_path):
+    path = tmp_path / "state" / "panel-settings.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"panel": {"screensaver_style": "aurora", "brightness_pct": 70}}))
+    s = _make(tmp_path).settings("panel")
+    assert s["screensaver_styles"] == ["aurora"]
+    assert "screensaver_style" not in s
+    assert s["brightness_pct"] == 70
+
+
+def test_old_style_is_ignored_when_the_list_is_present(tmp_path):
+    path = tmp_path / "state" / "panel-settings.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"panel": {"screensaver_style": "aurora", "screensaver_styles": ["clock"]}}))
+    assert _make(tmp_path).settings("panel")["screensaver_styles"] == ["clock"]
+
+
+def test_a_save_drops_the_old_style_key(tmp_path):
+    path = tmp_path / "state" / "panel-settings.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"panel": {"screensaver_style": "aurora"}}))
+    ps = _make(tmp_path)
+    ps.update("panel", {"brightness_pct": 70})
+    assert "screensaver_style" not in json.loads(path.read_text())["panel"]
 
 
 def test_a_bad_default_fails_at_construction(tmp_path):

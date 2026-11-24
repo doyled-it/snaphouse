@@ -1181,10 +1181,64 @@ html[data-panel] .p-saver-preview {
   background: #04060c;
 }
 html[data-panel] .p-saver-preview canvas {
-  position: absolute;
-  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
+}
+html[data-panel] .p-sset-scroll {
+  overflow-y: auto;
+}
+html[data-panel] .p-sstyles {
+  min-width: 200px;
+}
+html[data-panel] .p-sstyles-screen {
+  gap: 10px;
+}
+html[data-panel] .p-sgrid {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: minmax(72px, 1fr);
+  gap: 8px;
+}
+html[data-panel] .p-stile {
+  position: relative;
+  min-height: 72px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 16px;
+  background: oklch(0.34 0.05 var(--h, 255));
+  color: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+html[data-panel] .p-stile[aria-pressed="true"] {
+  background: oklch(0.72 0.14 var(--h, 255));
+  color: oklch(0.15 0.02 var(--h, 255));
+}
+html[data-panel] .p-stile-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  visibility: hidden;
+}
+html[data-panel] .p-stile[aria-pressed="true"] .p-stile-check {
+  visibility: visible;
+}
+html[data-panel] .p-stile[data-locked="true"] {
+  opacity: 0.85;
+}
+html[data-panel] .p-sstyles-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+html[data-panel] .p-sstyles-actions .p-sset-status {
+  flex: 1 1 auto;
+  height: 72px;
 }
 html[data-panel] .p-saver-preview-hint {
   position: absolute;

@@ -286,3 +286,11 @@ test("Screen and Screensaver are More sub-screens", () => {
     assert.equal(stripBack(s), true);
   }
 });
+
+test("the Styles screen is a More sub-screen routed like Screensaver", () => {
+  assert.deepEqual(resolvePanelScreen("#screensaver-styles", { settings: true }), { screen: "screensaver-styles", hash: "#screensaver-styles" });
+  assert.deepEqual(resolvePanelScreen("#screensaver-styles", { settings: false }), { screen: "listen", hash: "#listen" });
+  assert.equal(isSubScreen("screensaver-styles"), true);
+  assert.equal(railActive("screensaver-styles"), "more");
+  assert.equal(stripBack("screensaver-styles"), true);
+});

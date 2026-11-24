@@ -566,6 +566,30 @@ query, always present, `ss=0` when the screensaver is off), from `panel_screensa
 `screensaver.js` by dynamic `import()` only when `panel=1` is present, so phones create
 no overlay, canvas, timer or rAF loop (`tests/js/rooms-screensaver-wiring.test.js`).
 
+**Styles and rotation** (design: `docs/superpowers/specs/2026-11-24-panel-screensavers-design.md`, a
+five-PR epic). Aurora is one style among a registry. `style-list.js` (pure) holds the twelve fixed ids
+and names in registry order (`aurora, facts, quotes, covers, clock, sky, planets, moon, flow, contours,
+life, harmonograph`), `SHIPPED_IDS` (the styles with a module on the page: Aurora and Clock so far), the
+same pick validation the hub applies (`checkStyles`), `togglePick` (the last picked shipped style cannot
+be turned off), `nextPick`, `shippedPicks` (ids with no module are skipped; with none shipped, Aurora)
+and `stylesLabel`. `style-registry.js` maps a shipped id to a factory taking `{ doc, win, now,
+setTimeout, clearTimeout, random }` and returning `{ node, start(), stop(), setHues(h), setNight(bool) }`
+(`aurora-style.js` wraps `aurora.js`, look unchanged; a test pins that `SHIPPED_IDS` and the factories
+agree). To ship a style, add its id to `SHIPPED_IDS`, its factory to the registry, and its tests; its tile
+then appears in the Styles grid. The overlay keeps one layer per style (`.saver-layer` in `.saver-stage`),
+made when first needed. Each start shows the next pick after the last one shown (in memory; a reload
+starts at the first pick); every `screensaver_change_min` minutes it crossfades about 3 s to the next
+pick, the same by day and night, and the old layer stops when the fade ends. Preview never moves the
+pointer or the timer. While the ambient Now Playing view or a hidden page covers it, every style stops;
+when the ambient view ends the same style returns (pointer unchanged) and the timer restarts. A style
+gets `setNight(true)` during quiet hours and is told again when the hour passes while it runs. Canvas
+styles cap at 30 fps; the Clock is DOM text.
+
+**Clock style.** `clock-style.js` over `clock-model.js` (`clockText`, `msToNextMinute`, `moveDue`,
+`pickSpot`): a large thin 12-hour time without AM/PM, the date below, in the panel's local time, redrawn
+once at each whole minute (one timer, none while stopped) and moved to a new spot every
+`MOVE_EVERY_MIN` (4) minutes. At night it is smaller, dim warm grey on black.
+
 Modules in `roles/room_picker/files/site/`: `aurora-math.js` (pure colors, hue mixing,
 ribbon curves), `aurora.js` (canvas drawing, 200 px wide, one rAF loop capped at 30 fps,
 3 s hue crossfade, no loop while stopped), `screensaver-model.js` (parameter parsing,
@@ -629,7 +653,7 @@ hub-decided confirm.
 The owner changes the panel's screen settings on the panel itself (design:
 `docs/superpowers/specs/2026-11-23-panel-settings-design.md`, plan beside it in `plans/`). More has two
 tiles, **Screen** (`#screen`: Brightness, Night dim, Night starts, Night ends) and **Screensaver**
-(`#screensaver`: On or Off with Preview, Starts after, Style, Brightness). Settings are per panel, stored on
+(`#screensaver`: On or Off with Preview, Starts after, Styles, Change every, Brightness). Settings are per panel, stored on
 the hub, and the values in `vars/all.yml` (`panel_backlight`, `panel_screensaver`, new
 `panel_screensaver.brightness_pct: 40`) are only the defaults a panel uses until someone changes them.
 
@@ -639,9 +663,11 @@ the hub, and the values in `vars/all.yml` (`panel_backlight`, `panel_screensaver
 (`{"version": 1, "panels": {"<id>": {full settings}}}`, defaults filled in, nginx `no-cache`, served by
 `roles/art_share/files/art.conf`). Keys in an entry: `brightness_pct` (20 to 100, step 5), `night_dim_pct`
 (0 to 100, step 5), `night_start` and `night_end` (`"HH:MM"`, 30 minute steps, never equal),
-`screensaver_on`, `screensaver_wait_s` (30, 60, 120, 300 or 600), `screensaver_style` (`aurora` only),
+`screensaver_on`, `screensaver_wait_s` (30, 60, 120, 300 or 600), `screensaver_styles` (a non-empty list of the twelve fixed style ids, registry order, no
+duplicates; default `["aurora"]`), `screensaver_change_min` (0 for off, 5, 15, 30 or 60; default 15),
 `screensaver_pct` (5 to 100, step 5). Strict types (a bool or float is not an int); a bad write stores
-nothing. Unknown panel is 404. Panel ids come from the inventory (hosts whose roles include `panel`, one
+nothing. An older stored `screensaver_style` reads as a one-item `screensaver_styles` when the list is
+absent and is never written again (`screensaver_style` is no longer a key). Unknown panel is 404. Panel ids come from the inventory (hosts whose roles include `panel`, one
 `--panel` flag each in the artadmin unit, like the frame list); the defaults are passed as `--panel-*`
 flags from the vars. **Origin rule:** the nginx `location /api/panel/` sets `X-Snaphouse-Origin` from the
 `$snaphouse_origin` map (homebody's `homebody-origin.conf`, so a host with `art_share` must also have
@@ -656,9 +682,12 @@ renderer) and tells `rooms.js` through `host.settingsChanged`, which calls `scre
 `checkPatch`, `stepPct`, `stepTime` which skips the other night time, `tileLines`, `barView`). The kiosk URL
 values are the fallback (`settingsFromParams`) when the document is missing, malformed or has no entry for
 `pid`; with no `pid` the page cannot save, so the two tiles and routes are hidden (`visible.settings`).
-"Saved" and "Couldn't save. Retry" use `saveStatus`. The Style row lists Aurora and a dashed disabled
-"More soon" chip (the separate `panel-screensavers` item adds styles). Preview runs the real Aurora full
-screen (ending on a click, or after 15 s) and asks the daemon to hold the screensaver brightness.
+"Saved" and "Couldn't save. Retry" use `saveStatus`. The Screensaver page's Styles row reads "Aurora" for
+one pick or "6 styles" for several and opens the Styles screen (`#screensaver-styles`, a More sub-screen
+routed like Screensaver); the "Change every" row (Off, 5, 15, 30, 60 min) shows only with two or more
+styles picked. Preview runs the real style full screen (ending on a click, or after 15 s) and asks the
+daemon to hold the screensaver brightness: on the Screensaver page it shows the next style in rotation
+(`host.nextStyle`), on the Styles screen the style last tapped (`tappedPreviewId`, the first pick if none).
 `screensaver.js` takes its wait (one for day and night), hours and on/off from the settings; turning it
 off closes an open overlay without the Now playing jump, and with it off nothing shows, the ambient view
 included.

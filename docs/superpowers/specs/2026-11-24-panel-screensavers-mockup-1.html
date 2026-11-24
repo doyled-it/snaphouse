@@ -1,0 +1,223 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Panel screensavers</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #111418; color: #e8ecf1; font: 16px/1.45 system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p.sub { margin: 0 0 18px; color: #a9b3bf; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+  .bar button { font: inherit; padding: 8px 14px; border-radius: 10px; border: 1px solid #2c3440; background: #1b2028; color: inherit; cursor: pointer; }
+  .bar button[aria-pressed="true"] { background: #3a5a8c; border-color: #5a7fb8; }
+  .bar .sep { flex: 1; }
+  .stage { position: relative; width: 800px; height: 480px; overflow: hidden; background: #000; border-radius: 6px; outline: 8px solid #050506; }
+  .stage > * { position: absolute; inset: 0; }
+  .about { margin-top: 18px; display: flex; gap: 16px; align-items: flex-start; }
+  .about div { flex: 1; color: #c4ccd6; }
+  .about h2 { font-size: 18px; margin: 0 0 4px; color: #e8ecf1; }
+  .keep { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid #2c3440; background: #1b2028; color: inherit; cursor: pointer; white-space: nowrap; }
+  .keep.on { background: #2f6b46; border-color: #4f9a6c; }
+  .note { margin-top: 10px; font-size: 14px; color: #8b95a1; }
+
+  /* Facts */
+  .facts { background: radial-gradient(ellipse 70% 60% at var(--gx,30%) var(--gy,70%), oklch(0.3 0.06 255 / .55), transparent 70%), oklch(0.15 0.02 255); transition: --gx 20s; }
+  .facts .lab { position: absolute; left: 0; top: 0; font-size: 18px; letter-spacing: .16em; color: oklch(0.7 0.05 255); text-transform: uppercase; }
+  .facts .fact { position: absolute; left: 0; top: 34px; width: 600px; font-size: 40px; line-height: 1.22; font-weight: 650; color: oklch(0.95 0.01 255); }
+  .facts .box { position: absolute; width: 620px; transition: opacity 1.6s ease; }
+  .night .facts { background: #000; }
+  .night .facts .lab { display: none; }
+  .night .facts .fact { top: 0; font-size: 36px; font-weight: 500; color: oklch(0.55 0.03 60); }
+
+  /* Covers */
+  .covers { background: #000; }
+  .covers .grid { position: absolute; left: 0; top: 0; width: 800px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; will-change: transform; }
+  .covers .t { position: relative; aspect-ratio: 1; background: #111; }
+  .covers .t img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: opacity 2.5s ease; }
+  .covers .shade { position: absolute; inset: 0; background: linear-gradient(transparent 70%, rgba(0,0,0,.35)); }
+  .night .covers .grid { filter: brightness(.38) saturate(.55); }
+  .night .covers .shade { background: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 40%, rgba(0,0,0,.85)); }
+
+  /* Clock */
+  .clock { background: radial-gradient(ellipse 80% 70% at 70% 30%, oklch(0.28 0.05 285 / .6), transparent 70%), oklch(0.14 0.02 255); }
+  .clock .box { position: absolute; transition: left 6s ease, top 6s ease; }
+  .clock .time { font-size: 150px; font-weight: 200; line-height: 1; letter-spacing: -.02em; color: oklch(0.96 0.01 255); font-variant-numeric: tabular-nums; }
+  .clock .date { font-size: 28px; color: oklch(0.75 0.03 255); margin-top: 6px; }
+  .night .clock { background: #000; }
+  .night .clock .time { font-size: 120px; color: oklch(0.5 0.03 60); }
+  .night .clock .date { color: oklch(0.38 0.02 60); }
+
+  iframe { border: 0; width: 800px; height: 480px; }
+  .night iframe { filter: brightness(.45); }
+</style></head>
+<body><main>
+<h1>Panel screensavers</h1>
+<p class="sub">These show at the panel's real size, 800 by 480. Switch between styles, and use Day and Night to see each one's two looks. Tap "Keep this one" on every style you want on the panel, then tell me in the terminal what to change. On the panel itself, Night is darker still, because the backlight dims as well.</p>
+<div class="bar" id="styles"></div>
+<div class="bar"><button id="day" aria-pressed="true">Day</button><button id="night" aria-pressed="false">Night</button><span class="sep"></span><span id="speed" style="color:#8b95a1;font-size:14px">Sped up about 3x so you can see it change</span></div>
+<div class="stage" id="stage"></div>
+<div class="about"><div><h2 id="name"></h2><span id="desc"></span></div><button class="keep" id="keep"></button></div>
+<p class="note" id="nightnote"></p>
+</main>
+<script>
+const COVERS = ["c1","c2","c3","c4","c5","c6","c7","c8","c9","c10","c11"].map(c => "/files/cover-" + c + ".jpg");
+const FACTS = [
+  "Wombat poop comes out shaped like cubes.",
+  "Scotland's national animal is the unicorn.",
+  "Octopuses have three hearts and blue blood.",
+  "A group of flamingos is called a flamboyance.",
+  "Botanically, bananas are berries and strawberries are not.",
+  "The man who designed the Pringles can had some of his ashes buried in one.",
+  "There is a town in Norway called Hell, and it freezes over every winter.",
+  "Sea otters sometimes hold paws while they sleep so they don't drift apart.",
+];
+const STYLES = [
+  { id: "facts", name: "Ridiculous facts", desc: "One fact at a time, held for about a minute, then a slow fade to the next. The text moves to a new place each time, so nothing burns into the screen. The list lives in the repo, and you can add to it.", night: "At night the background goes black, the text turns a dim warm grey, and the label goes away." },
+  { id: "covers", name: "Album cover mosaic", desc: "Covers of what's been played lately (these are your real recent ones), in a wall that scrolls slowly upward. Every few seconds one tile fades to another cover.", night: "At night the covers are darkened and muted, with the edges fading into black." },
+  { id: "clock", name: "Clock", desc: "A large, thin clock with the date, moving slowly around the screen. Your first screensaver design left a clock out; this is here in case you want one now.", night: "At night it is smaller and a dim warm grey on black." },
+  { id: "sky", name: "Night sky", desc: "Stars turning slowly around a point above the screen, like a long camera exposure, with a shooting star now and then.", night: "At night there are fewer stars, they are dimmer, and the sky is black instead of deep blue." },
+  { id: "drift", name: "Drift", desc: "From the first screensaver demo: big soft blobs of light drifting and merging, like a lava lamp. It would take the album colors, like Aurora does.", night: "At night it is the same, darker." },
+  { id: "motes", name: "Motes", desc: "From the first screensaver demo: specks of light floating through a faint beam.", night: "At night it is the same, darker." },
+];
+const kept = new Set();
+let cur = 0, night = false, stop = () => {};
+const stage = document.getElementById("stage");
+const bar = document.getElementById("styles");
+STYLES.forEach((s, i) => { const b = document.createElement("button"); b.textContent = s.name; b.onclick = () => show(i); bar.appendChild(b); });
+document.getElementById("day").onclick = () => setNight(false);
+document.getElementById("night").onclick = () => setNight(true);
+const keepBtn = document.getElementById("keep");
+keepBtn.onclick = () => {
+  const id = STYLES[cur].id;
+  if (kept.has(id)) kept.delete(id); else kept.add(id);
+  window.brainstorm && window.brainstorm.send({ type: "choice", value: (kept.has(id) ? "keep:" : "drop:") + id, kept: [...kept] });
+  label();
+};
+function label() { const on = kept.has(STYLES[cur].id); keepBtn.textContent = on ? "Kept" : "Keep this one"; keepBtn.classList.toggle("on", on); }
+function setNight(n) { night = n; stage.classList.toggle("night", n); document.getElementById("day").setAttribute("aria-pressed", !n); document.getElementById("night").setAttribute("aria-pressed", n); show(cur); }
+function show(i) {
+  stop(); stop = () => {}; cur = i; stage.replaceChildren();
+  [...bar.children].forEach((b, j) => b.setAttribute("aria-pressed", j === i));
+  const s = STYLES[i];
+  document.getElementById("name").textContent = s.name;
+  document.getElementById("desc").textContent = s.desc;
+  document.getElementById("nightnote").textContent = "Night: " + s.night;
+  document.getElementById("speed").style.visibility = (s.id === "drift" || s.id === "motes") ? "hidden" : "visible";
+  label();
+  stop = ({ facts, covers, clock, sky, drift: spike, motes: spike })[s.id](s.id) || (() => {});
+}
+
+function facts() {
+  const root = document.createElement("div"); root.className = "facts"; stage.appendChild(root);
+  const box = document.createElement("div"); box.className = "box";
+  box.innerHTML = '<div class="lab">Ridiculous fact</div><div class="fact"></div>';
+  root.appendChild(box);
+  const spots = [[60, 70], [120, 200], [70, 260], [130, 110], [90, 180]];
+  let n = 0;
+  function next() {
+    box.style.opacity = 0;
+    setTimeout(() => {
+      const [x, y] = spots[n % spots.length];
+      box.style.left = x + "px"; box.style.top = y + "px";
+      box.querySelector(".fact").textContent = FACTS[n % FACTS.length];
+      root.style.setProperty("--gx", (20 + (n * 37) % 60) + "%");
+      root.style.setProperty("--gy", (30 + (n * 23) % 50) + "%");
+      box.style.opacity = 1; n++;
+    }, 1700);
+  }
+  next(); const t = setInterval(next, 12000);
+  return () => clearInterval(t);
+}
+
+function covers() {
+  const root = document.createElement("div"); root.className = "covers"; stage.appendChild(root);
+  const grid = document.createElement("div"); grid.className = "grid"; root.appendChild(grid);
+  const shade = document.createElement("div"); shade.className = "shade"; root.appendChild(shade);
+  const rows = 8, tiles = [];
+  for (let k = 0; k < rows * 6; k++) {
+    const t = document.createElement("div"); t.className = "t";
+    const a = new Image(); a.src = COVERS[(k * 5) % COVERS.length];
+    const b = new Image(); b.style.opacity = 0;
+    t.append(a, b); grid.appendChild(t); tiles.push({ a, b, front: a });
+  }
+  const tileH = (800 - 15) / 6 + 3, loop = tileH * 4;
+  let y = 0, last = performance.now(), raf;
+  const speed = night ? 4 : 8; // px per second, sped up for the mockup
+  function frame(now) { y = (y + speed * (now - last) / 1000) % loop; last = now; grid.style.transform = `translateY(${-y}px)`; raf = requestAnimationFrame(frame); }
+  raf = requestAnimationFrame(frame);
+  const swap = setInterval(() => {
+    const t = tiles[Math.floor(Math.random() * tiles.length)];
+    const back = t.front === t.a ? t.b : t.a;
+    back.src = COVERS[Math.floor(Math.random() * COVERS.length)];
+    back.style.opacity = 1; t.front.style.opacity = 0; t.front = back;
+  }, night ? 4000 : 2000);
+  return () => { cancelAnimationFrame(raf); clearInterval(swap); };
+}
+
+function clock() {
+  const root = document.createElement("div"); root.className = "clock"; stage.appendChild(root);
+  const box = document.createElement("div"); box.className = "box";
+  box.innerHTML = '<div class="time"></div><div class="date"></div>';
+  root.appendChild(box);
+  const spots = night ? [[230, 150], [180, 210], [280, 120], [210, 180]] : [[60, 90], [300, 200], [120, 230], [260, 70]];
+  let n = 0;
+  function tick() {
+    const d = new Date();
+    box.querySelector(".time").textContent = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(/\s?[AP]M$/i, "");
+    box.querySelector(".date").textContent = d.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  }
+  function move() { const [x, y] = spots[n++ % spots.length]; box.style.left = x + "px"; box.style.top = y + "px"; }
+  tick(); move();
+  const a = setInterval(tick, 1000), b = setInterval(move, 10000);
+  return () => { clearInterval(a); clearInterval(b); };
+}
+
+function sky() {
+  const c = document.createElement("canvas"); c.width = 800; c.height = 480; stage.appendChild(c);
+  const ctx = c.getContext("2d");
+  const cx = 560, cy = -260, count = night ? 160 : 320;
+  const stars = Array.from({ length: count }, () => {
+    const r = 260 + Math.random() * 900, a = Math.random() * Math.PI * 2;
+    return { r, a, s: Math.random() ** 3 * 1.8 + 0.4, b: Math.random() * 0.7 + 0.3, tw: Math.random() * 6 };
+  });
+  let raf, t0 = performance.now(), shoot = null, nextShoot = 3;
+  function frame(now) {
+    const t = (now - t0) / 1000;
+    const g = ctx.createLinearGradient(0, 0, 0, 480);
+    if (night) { g.addColorStop(0, "#000"); g.addColorStop(1, "#000"); }
+    else { g.addColorStop(0, "#050b1e"); g.addColorStop(1, "#13224a"); }
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 800, 480);
+    const rot = t * 0.006; // sped up for the mockup
+    for (const st of stars) {
+      const x = cx + st.r * Math.cos(st.a + rot), y = cy + st.r * Math.sin(st.a + rot);
+      if (x < -2 || x > 802 || y < -2 || y > 482) continue;
+      const tw = 0.75 + 0.25 * Math.sin(t * 1.3 + st.tw);
+      ctx.globalAlpha = st.b * tw * (night ? 0.55 : 1);
+      ctx.fillStyle = night ? "#d8c9b0" : "#e8eeff";
+      ctx.beginPath(); ctx.arc(x, y, st.s, 0, 7); ctx.fill();
+    }
+    if (!shoot && t > nextShoot) { shoot = { x: 100 + Math.random() * 500, y: 30 + Math.random() * 150, t: t }; nextShoot = t + (night ? 20 : 8); }
+    if (shoot) {
+      const k = (t - shoot.t) / 0.9;
+      if (k > 1) shoot = null;
+      else {
+        const x = shoot.x + k * 260, y = shoot.y + k * 110;
+        const gr = ctx.createLinearGradient(x - 90, y - 38, x, y);
+        gr.addColorStop(0, "rgba(255,255,255,0)"); gr.addColorStop(1, `rgba(255,255,255,${(night ? 0.4 : 0.9) * (1 - k)})`);
+        ctx.globalAlpha = 1; ctx.strokeStyle = gr; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(x - 90, y - 38); ctx.lineTo(x, y); ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    raf = requestAnimationFrame(frame);
+  }
+  raf = requestAnimationFrame(frame);
+  return () => cancelAnimationFrame(raf);
+}
+
+function spike(id) {
+  const f = document.createElement("iframe"); f.src = "/files/spike-demo.html?style=" + id; stage.appendChild(f);
+}
+
+show(0);
+</script>
+</body></html>
