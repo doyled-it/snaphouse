@@ -761,3 +761,357 @@ def test_now_playing_url_comes_from_the_hub_origin():
     assert backlight.now_playing_url("http://hub.example/") == "http://hub.example/now-playing.json"
     assert backlight.now_playing_url("") is None
     assert backlight.now_playing_url(None) is None
+
+
+# --------------------------------------------------------------------------- #
+# SettingsWatch: the hub's panel-settings.json, cached on disk
+# --------------------------------------------------------------------------- #
+
+import json
+import threading
+import urllib.error
+import urllib.request
+
+
+def _hub_doc(**entry):
+    return {"version": 1, "panels": {"panel": {**ENTRY, **entry}}}
+
+
+def _settings_watch(tmp_path, fetch, *, cache=True, panel_id="panel"):
+    path = tmp_path / "cache" / "settings.json" if cache else None
+    return backlight.SettingsWatch(
+        fetch, panel_id=panel_id, fallback=_schedule(), cache_path=path
+    ), path
+
+
+def test_settings_watch_starts_on_the_fallback():
+    watch = backlight.SettingsWatch(lambda: {}, panel_id="panel", fallback=_schedule(), cache_path=None)
+    assert watch.current == _schedule()
+
+
+def test_settings_watch_applies_a_good_document(tmp_path):
+    watch, _ = _settings_watch(tmp_path, lambda: _hub_doc(brightness_pct=60))
+    watch.poll()
+    assert watch.current.full_pct == 60
+    assert watch.current.quiet_start == time(21, 30)
+
+
+def test_settings_watch_writes_the_cache_only_after_a_good_read(tmp_path):
+    def boom():
+        raise OSError("hub down")
+
+    watch, path = _settings_watch(tmp_path, boom)
+    watch.poll()
+    assert not path.exists()
+    good, path = _settings_watch(tmp_path, lambda: _hub_doc())
+    good.poll()
+    assert json.loads(path.read_text())["brightness_pct"] == 70
+
+
+def test_settings_watch_starts_from_the_cache_when_the_hub_is_down(tmp_path):
+    first, path = _settings_watch(tmp_path, lambda: _hub_doc(night_dim_pct=0))
+    first.poll()
+
+    def boom():
+        raise OSError("hub down")
+
+    again, _ = _settings_watch(tmp_path, boom)
+    assert again.current.dim_pct == 0
+    again.poll()
+    assert again.current.dim_pct == 0
+
+
+def test_settings_watch_keeps_last_good_on_a_failed_or_garbage_read(tmp_path):
+    feed = {"doc": _hub_doc(brightness_pct=60)}
+    watch, _ = _settings_watch(tmp_path, lambda: feed["doc"])
+    watch.poll()
+    for bad in ("junk", [1], {"version": 2, "panels": {}}, {"version": 1, "panels": []},
+                {"version": 1, "panels": {"other": {}}}, {"version": 1, "panels": {"panel": "x"}}):
+        feed["doc"] = bad
+        watch.poll()
+        assert watch.current.full_pct == 60, bad
+
+
+def test_settings_watch_ignores_a_corrupt_cache(tmp_path):
+    path = tmp_path / "cache" / "settings.json"
+    path.parent.mkdir()
+    path.write_text("{oops")
+    watch = backlight.SettingsWatch(lambda: {}, panel_id="panel", fallback=_schedule(), cache_path=path)
+    assert watch.current == _schedule()
+    path.write_text("[1, 2]")
+    watch = backlight.SettingsWatch(lambda: {}, panel_id="panel", fallback=_schedule(), cache_path=path)
+    assert watch.current == _schedule()
+
+
+def test_settings_watch_with_no_entry_for_the_panel_keeps_fallback(tmp_path):
+    watch, path = _settings_watch(tmp_path, lambda: _hub_doc(), panel_id="hall")
+    watch.poll()
+    assert watch.current == _schedule()
+    assert not path.exists()
+
+
+def test_cache_failure_is_tolerated(tmp_path):
+    blocker = tmp_path / "blocked"
+    blocker.write_text("a file where the directory should be")
+    watch = backlight.SettingsWatch(
+        lambda: _hub_doc(brightness_pct=65), panel_id="panel", fallback=_schedule(),
+        cache_path=blocker / "settings.json",
+    )
+    watch.poll()
+    assert watch.current.full_pct == 65
+
+
+def test_cache_write_is_atomic(tmp_path):
+    watch, path = _settings_watch(tmp_path, lambda: _hub_doc())
+    watch.poll()
+    assert [p.name for p in path.parent.iterdir()] == ["settings.json"]
+
+
+# --------------------------------------------------------------------------- #
+# PreviewState
+# --------------------------------------------------------------------------- #
+
+
+def test_preview_expires_and_caps_at_15_seconds():
+    clock = _FakeClock()
+    preview = backlight.PreviewState(clock)
+    assert preview.active_pct() is None
+    preview.set(30, 3)
+    assert preview.active_pct() == 30
+    clock.t += 2.9
+    assert preview.active_pct() == 30
+    clock.t += 0.2
+    assert preview.active_pct() is None
+    preview.set(80, 600)
+    clock.t += 14.9
+    assert preview.active_pct() == 80
+    clock.t += 0.2
+    assert preview.active_pct() is None
+
+
+def test_preview_zero_seconds_cancels():
+    clock = _FakeClock()
+    preview = backlight.PreviewState(clock)
+    preview.set(30, 10)
+    preview.set(30, 0)
+    assert preview.active_pct() is None
+    assert preview.remaining() is None
+
+
+def test_preview_remaining_counts_down():
+    clock = _FakeClock()
+    preview = backlight.PreviewState(clock)
+    preview.set(30, 3)
+    clock.t += 1
+    assert preview.remaining() == pytest.approx(2.0)
+
+
+# --------------------------------------------------------------------------- #
+# The local API: loopback only, for the hub origin only
+# --------------------------------------------------------------------------- #
+
+HUB = "http://hub.example"
+
+
+@pytest.fixture
+def local_api():
+    clock = _FakeClock()
+    preview = backlight.PreviewState(clock)
+    events = {"refresh": threading.Event(), "nudge": 0}
+
+    def nudge():
+        events["nudge"] += 1
+
+    server = backlight.make_local_server(
+        preview, on_refresh=events["refresh"].set, on_change=nudge, allow_origin=HUB, port=0
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+
+    def call(method, path, body=None, origin=HUB, headers=None):
+        hdr = dict(headers or {})
+        if origin is not None:
+            hdr["Origin"] = origin
+        if isinstance(body, bytes):
+            data = body
+        else:
+            data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data, headers=hdr, method=method)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, dict(resp.headers)
+        except urllib.error.HTTPError as err:
+            return err.code, dict(err.headers)
+
+    yield server, preview, events, call, clock
+    server.shutdown()
+    server.server_close()
+
+
+def test_local_api_binds_loopback_only(local_api):
+    server, *_ = local_api
+    assert server.server_address[0] == "127.0.0.1"
+
+
+def test_local_api_preview_sets_the_preview(local_api):
+    _server, preview, events, call, _clock = local_api
+    status, headers = call("POST", "/preview", {"pct": 35, "seconds": 3})
+    assert status == 204
+    assert headers["Access-Control-Allow-Origin"] == HUB
+    assert preview.active_pct() == 35
+    assert events["nudge"] == 1
+
+
+def test_local_api_preview_caps_seconds_at_fifteen(local_api):
+    _server, preview, _e, call, clock = local_api
+    call("POST", "/preview", {"pct": 35, "seconds": 600})
+    clock.t += 14.9
+    assert preview.active_pct() == 35
+    clock.t += 0.2
+    assert preview.active_pct() is None
+
+
+def test_local_api_preview_zero_seconds_cancels(local_api):
+    _server, preview, _e, call, _c = local_api
+    call("POST", "/preview", {"pct": 35, "seconds": 10})
+    status, _ = call("POST", "/preview", {"pct": 35, "seconds": 0})
+    assert status == 204 and preview.active_pct() is None
+
+
+def test_local_api_refresh_sets_the_event(local_api):
+    _server, _p, events, call, _c = local_api
+    status, _ = call("POST", "/refresh", {})
+    assert status == 204 and events["refresh"].is_set()
+
+
+def test_local_api_preflight_allows_only_the_hub_origin_with_private_network_header(local_api):
+    _s, _p, _e, call, _c = local_api
+    status, headers = call(
+        "OPTIONS", "/preview",
+        headers={"Access-Control-Request-Method": "POST",
+                 "Access-Control-Request-Private-Network": "true",
+                 "Access-Control-Request-Headers": "content-type"},
+    )
+    assert status == 204
+    assert headers["Access-Control-Allow-Origin"] == HUB
+    assert headers["Access-Control-Allow-Private-Network"] == "true"
+    assert "POST" in headers["Access-Control-Allow-Methods"]
+    assert "Content-Type" in headers["Access-Control-Allow-Headers"]
+    status, headers = call("OPTIONS", "/preview", origin="http://evil.example")
+    assert status == 403 and "Access-Control-Allow-Origin" not in headers
+
+
+def test_local_api_refuses_a_foreign_origin_with_403(local_api):
+    _s, preview, events, call, _c = local_api
+    status, headers = call("POST", "/preview", {"pct": 5, "seconds": 3}, origin="http://evil.example")
+    assert status == 403 and "Access-Control-Allow-Origin" not in headers
+    assert preview.active_pct() is None
+    status, _ = call("POST", "/refresh", {}, origin="http://evil.example")
+    assert status == 403 and not events["refresh"].is_set()
+
+
+def test_local_api_allows_a_request_with_no_origin_header(local_api):
+    _s, preview, _e, call, _c = local_api
+    status, _ = call("POST", "/preview", {"pct": 20, "seconds": 2}, origin=None)
+    assert status == 204 and preview.active_pct() == 20
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"pct": 101, "seconds": 3}, {"pct": -1, "seconds": 3}, {"pct": True, "seconds": 3},
+     {"pct": 30, "seconds": -1}, {"pct": 30}, {"seconds": 3}, {"pct": "30", "seconds": 3},
+     [1], b"not json", b"x" * 5000],
+)
+def test_local_api_rejects_bad_bodies_with_400(local_api, body):
+    _s, preview, _e, call, _c = local_api
+    status, _ = call("POST", "/preview", body)
+    assert status == 400 and preview.active_pct() is None
+
+
+def test_local_api_unknown_path_is_404_and_get_is_not_allowed(local_api):
+    _s, _p, _e, call, _c = local_api
+    assert call("POST", "/nope", {})[0] == 404
+    assert call("GET", "/preview")[0] in (404, 405, 501)
+
+
+# --------------------------------------------------------------------------- #
+# The shared poll thread and waking the main loop
+# --------------------------------------------------------------------------- #
+
+
+class _Counter:
+    def __init__(self):
+        self.n = 0
+        self.seen = threading.Event()
+
+    def poll(self):
+        self.n += 1
+        self.seen.set()
+
+
+def test_poll_loop_polls_every_watch_and_wakes_on_refresh():
+    music, settings = _Counter(), _Counter()
+    wake, stop = threading.Event(), threading.Event()
+    nudges = []
+    thread = threading.Thread(
+        target=backlight.poll_loop,
+        args=([music, settings], 60.0, wake),
+        kwargs={"stop": stop, "after": lambda: nudges.append(1)},
+        daemon=True,
+    )
+    thread.start()
+    assert music.seen.wait(2) and settings.seen.wait(2)
+    first = (music.n, settings.n)
+    assert first == (1, 1)
+    wake.set()  # a refresh from the local API
+    for _ in range(200):
+        if music.n == 2:
+            break
+        threading.Event().wait(0.01)
+    assert (music.n, settings.n) == (2, 2)
+    assert len(nudges) >= 2
+    stop.set()
+    wake.set()
+    thread.join(2)
+    assert not thread.is_alive()
+
+
+def test_poll_loop_survives_a_poller_that_raises():
+    class Bad:
+        def poll(self):
+            raise RuntimeError("boom")
+
+    good = _Counter()
+    wake, stop = threading.Event(), threading.Event()
+    thread = threading.Thread(
+        target=backlight.poll_loop, args=([Bad(), good], 60.0, wake), kwargs={"stop": stop}, daemon=True
+    )
+    thread.start()
+    assert good.seen.wait(2)
+    stop.set()
+    wake.set()
+    thread.join(2)
+
+
+def test_activity_clock_nudge_wakes_the_wait_without_counting_as_a_touch(tmp_path):
+    activity = backlight._ActivityClock(str(tmp_path / "none*"))
+    before = activity.idle_s
+    activity.nudge()
+    started = threading.Event()
+    t0 = __import__("time").monotonic()
+    touched = activity.wait(5.0)
+    assert __import__("time").monotonic() - t0 < 1.0
+    assert touched is False
+    assert activity.idle_s >= before
+
+
+def test_local_flags_parse():
+    args = backlight._parse_args(
+        ["--settings-url", "http://h/panel-settings.json", "--panel-id", "panel",
+         "--local-port", "8784", "--allow-origin", "http://h", "--settings-cache", "/tmp/c.json"]
+    )
+    assert (args.settings_url, args.panel_id, args.local_port) == ("http://h/panel-settings.json", "panel", 8784)
+    assert args.allow_origin == "http://h" and args.settings_cache == "/tmp/c.json"
+    assert backlight._parse_args([]).settings_cache == "/var/lib/snaphouse/backlight/settings.json"
+    assert backlight._parse_args([]).local_port is None

@@ -11,19 +11,25 @@ read-only `max_brightness`. The exact device name depends on the panel driver
 (for example `10-0045` or `rpi_backlight`), so the service discovers it by
 globbing rather than hard-coding a name.
 
-This module owns the schedule the panel role's snaphouse-backlight service runs:
-during the shared quiet hours the screen sits at a low level and wakes to full on
-a touch, returning to the low level after a short idle; outside quiet hours it
-stays full. The decision is a pure function of the wall clock (for the
-quiet-hours window) and how long since the last touch (an idle count from a
-monotonic clock), and the only side effect is writing `brightness`. That keeps it
-testable with an injected clock and a fake sysfs tree, no hardware involved.
+This module owns the policy the panel role's snaphouse-backlight service runs. The
+levels, the night window and the wait come from the panel's own settings on the hub
+(panel-settings.json, read with the now-playing poll, the last good copy cached in
+/var/lib/snaphouse/backlight/), with the startup flags as the fallback. The decision
+is a pure function of the wall clock, how long since the last touch (a monotonic
+count), whether music shows, and an optional preview level (Settings.target_pct, the
+combined rule in docs/superpowers/specs/2026-11-23-panel-settings-design.md). The only
+side effect is writing `brightness`, so it is testable with an injected clock and a
+fake sysfs tree, no hardware involved.
 
-While music shows on the panel (a track playing, or paused less than five
-minutes ago, read from the hub's now-playing.json) the screen stays at full in
-quiet hours: nobody is watching TV downstairs, and music in bed means nobody is
-downstairs. MusicWatch keeps that answer; with the hub unreachable for two
-minutes it counts as nothing playing and the schedule dims as before.
+While music shows on the panel (a track playing, or paused less than five minutes ago,
+read from the hub's now-playing.json) the night dim is skipped: the screen sits at the
+screensaver level when the screensaver is on, and at Brightness when it is off.
+MusicWatch keeps that answer; with the hub unreachable for two minutes it counts as
+nothing playing.
+
+A loopback-only API (127.0.0.1, answering the hub's origin only, with the CORS and
+Private Network Access preflight) lets the page preview a brightness for a few seconds
+and ask for an immediate settings read.
 
 Stdlib only: it runs from the on-device venv python but pulls in nothing beyond
 the standard library, so it stays light on the Pi 3.
@@ -41,7 +47,9 @@ import struct
 import sys
 import threading
 import time as time_module
+import tempfile
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass, replace
 from datetime import datetime, time
 from pathlib import Path
@@ -433,6 +441,11 @@ class _ActivityClock:
         self._await_lift = False
         self._swallowing = False
         self._last_data = monotonic()
+        # A self-pipe so another thread (the local API, the poll thread) can wake
+        # wait() at once without it counting as a touch.
+        self._wake_r, self._wake_w = os.pipe()
+        os.set_blocking(self._wake_r, False)
+        os.set_blocking(self._wake_w, False)
         self._rescan()
 
     def _is_touchscreen(self, fd: int) -> bool:
@@ -533,19 +546,39 @@ class _ActivityClock:
         if usable < len(buf):
             self._pending[path] = buf[usable:]
 
+    def nudge(self) -> None:
+        """Wake wait() now, from any thread. It is not a touch."""
+        try:
+            os.write(self._wake_w, b"\0")
+        except OSError:
+            pass  # the pipe is full: a wake is already pending
+
+    def _drain_wake(self) -> None:
+        try:
+            while os.read(self._wake_r, 4096):
+                pass
+        except OSError:
+            pass
+
     def wait(self, timeout: float) -> bool:
         # Pick up a touchscreen that was not there at start before deciding how to
         # wait, so a late node starts waking the screen without a daemon restart.
         self._rescan()
         if not self._fds:
-            time_module.sleep(timeout)
+            # Nothing to watch yet: wait on the wake pipe alone (a sleep that a
+            # nudge can cut short).
+            select.select([self._wake_r], [], [], timeout)
+            self._drain_wake()
             return False
         if self._swallowing:
             # Wake in time to notice a lift that never arrives.
             left = LIFT_FALLBACK_S - (self._monotonic() - self._last_data)
             timeout = min(timeout, max(left, 0.01))
         by_fd = {fd: path for path, fd in self._fds.items()}
-        readable, _, _ = select.select(list(self._fds.values()), [], [], timeout)
+        readable, _, _ = select.select([self._wake_r, *self._fds.values()], [], [], timeout)
+        if self._wake_r in readable:
+            self._drain_wake()
+            readable = [fd for fd in readable if fd != self._wake_r]
         if not readable:
             return False
         activity = False
@@ -597,6 +630,214 @@ def grab_wanted(*, dimmed: bool, screensaver_on: bool, force_grab: bool, no_grab
     return force_grab or not screensaver_on
 
 
+# --------------------------------------------------------------------------- #
+# Settings from the hub, the preview, and the loopback API
+# --------------------------------------------------------------------------- #
+
+PREVIEW_MAX_S = 15.0
+LOCAL_BODY_MAX = 1024
+DEFAULT_SETTINGS_CACHE = "/var/lib/snaphouse/backlight/settings.json"
+
+
+def fetch_json(url: str) -> dict:
+    """GET a JSON document from the hub (the same bounded read as now-playing)."""
+    return fetch_now_playing(url)
+
+
+class SettingsWatch:
+    """This panel's settings, read from the hub's panel-settings.json.
+
+    It starts from the last good copy on disk (so a hub that is down or rebooting
+    never changes the screen), falling back to the startup flags when there is no
+    cache. A good read replaces the current settings and rewrites the cache
+    atomically; a failed or malformed read keeps what it has. Only an entry for
+    this panel counts: a document with none leaves the fallback in force.
+    """
+
+    def __init__(self, fetch, *, panel_id, fallback: Settings, cache_path: Path | None) -> None:
+        self._fetch = fetch
+        self._panel_id = panel_id
+        self._fallback = fallback
+        self._cache_path = Path(cache_path) if cache_path is not None else None
+        self.current = fallback
+        self._load_cache()
+
+    def _load_cache(self) -> None:
+        if self._cache_path is None:
+            return
+        try:
+            entry = json.loads(self._cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(entry, dict):
+            self.current = parse_settings_entry(entry, self._fallback)
+
+    def _store_cache(self, entry: dict) -> None:
+        if self._cache_path is None:
+            return
+        try:
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=self._cache_path.parent, prefix=".settings-")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(entry, handle, sort_keys=True)
+                os.replace(tmp, self._cache_path)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+        except OSError as exc:
+            print(f"snaphouse-backlight: settings cache not written: {exc}", file=sys.stderr)
+
+    def poll(self) -> None:
+        try:
+            document = self._fetch()
+            if not isinstance(document, dict) or document.get("version") != 1:
+                return
+            panels = document.get("panels")
+            entry = panels.get(self._panel_id) if isinstance(panels, dict) else None
+            if not isinstance(entry, dict):
+                return
+        except Exception:
+            return
+        self.current = parse_settings_entry(entry, self._fallback)
+        self._store_cache(entry)
+
+
+class PreviewState:
+    """A brightness shown for a few seconds (a tap on a brightness bar, or the
+    screensaver preview), then released. Seconds are capped at PREVIEW_MAX_S and
+    zero cancels. Set from the local API thread, read by the main loop."""
+
+    def __init__(self, clock=time_module.monotonic) -> None:
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._pct: int | None = None
+        self._until = 0.0
+
+    def set(self, pct: int, seconds: float) -> None:
+        with self._lock:
+            if seconds <= 0:
+                self._pct = None
+                return
+            self._pct = pct
+            self._until = self._clock() + min(float(seconds), PREVIEW_MAX_S)
+
+    def active_pct(self) -> int | None:
+        with self._lock:
+            if self._pct is not None and self._clock() < self._until:
+                return self._pct
+            return None
+
+    def remaining(self) -> float | None:
+        with self._lock:
+            if self._pct is None:
+                return None
+            left = self._until - self._clock()
+            return left if left > 0 else None
+
+
+def make_local_server(
+    preview: PreviewState, *, on_refresh, on_change, allow_origin: str, port: int
+) -> ThreadingHTTPServer:
+    """The loopback-only API the panel page calls: POST /preview {pct, seconds}
+    and POST /refresh. The page is served from the hub, so the browser sends a
+    CORS and Private Network Access preflight; only allow_origin (the hub) is
+    answered. A request with no Origin header (a local tool) is allowed, any other
+    origin is refused with 403."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):  # noqa: A002 - signature
+            pass
+
+        def _origin_ok(self) -> bool:
+            origin = self.headers.get("Origin")
+            return origin is None or origin == allow_origin
+
+        def _reply(self, status: int) -> None:
+            self.send_response(status)
+            if self.headers.get("Origin") == allow_origin:
+                self.send_header("Access-Control-Allow-Origin", allow_origin)
+                self.send_header("Vary", "Origin")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_OPTIONS(self):  # noqa: N802
+            if self.headers.get("Origin") != allow_origin:
+                self._reply(403)
+                return
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", allow_origin)
+            self.send_header("Access-Control-Allow-Private-Network", "true")
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Vary", "Origin")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_POST(self):  # noqa: N802
+            if not self._origin_ok():
+                self._reply(403)
+                return
+            path = self.path.split("?", 1)[0]
+            if path not in ("/preview", "/refresh"):
+                self._reply(404)
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = -1
+            if length < 0 or length > LOCAL_BODY_MAX:
+                self._reply(400)
+                return
+            raw = self.rfile.read(length) if length else b""
+            if path == "/refresh":
+                on_refresh()
+                self._reply(204)
+                return
+            try:
+                body = json.loads(raw.decode("utf-8"))
+            except ValueError:
+                self._reply(400)
+                return
+            pct = body.get("pct") if isinstance(body, dict) else None
+            seconds = body.get("seconds") if isinstance(body, dict) else None
+            if (
+                type(pct) is not int
+                or not 0 <= pct <= 100
+                or type(seconds) not in (int, float)
+                or seconds < 0
+            ):
+                self._reply(400)
+                return
+            preview.set(pct, seconds)
+            on_change()
+            self._reply(204)
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.daemon_threads = True
+    return server
+
+
+def poll_loop(pollers, interval_s: float, wake: threading.Event, *, stop=None, after=None) -> None:
+    """Poll every watch (now-playing, settings) on one thread, every interval or as
+    soon as `wake` is set (a refresh from the local API). `after` runs after each
+    round so the main loop can pick the change up at once."""
+    while stop is None or not stop.is_set():
+        for poller in pollers:
+            try:
+                poller.poll()
+            except Exception as exc:  # noqa: BLE001 - one bad watch never stops the rest
+                print(f"snaphouse-backlight: poll failed: {exc}", file=sys.stderr)
+        if after is not None:
+            after()
+        wake.wait(interval_s)
+        wake.clear()
+
+
 def _build_settings(args: argparse.Namespace) -> Settings:
     """The flag values: what the screen uses with no cache and no hub."""
     return Settings(
@@ -633,6 +874,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--screensaver-pct", type=int, default=40)
     parser.add_argument("--panel-id", default=None)
+    parser.add_argument("--settings-url", default=None, help="the hub's panel-settings.json")
+    parser.add_argument("--settings-cache", default=DEFAULT_SETTINGS_CACHE)
+    parser.add_argument(
+        "--local-port", type=int, default=None, help="loopback port for the preview API"
+    )
+    parser.add_argument(
+        "--allow-origin", default=None, help="the one browser origin the local API answers"
+    )
     parser.add_argument(
         "--no-grab",
         action="store_true",
@@ -647,36 +896,71 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def run(argv: list[str], *, now_time=None) -> int:
-    """The daemon loop: set the level, then wait for a touch or the interval and
-    set it again. now_time returns the current wall clock time()."""
+    """The daemon loop: set the level, then wait for a touch, a nudge or the
+    interval and set it again. now_time returns the current wall clock time()."""
     args = _parse_args(argv)
     now_time = now_time or (lambda: datetime.now().time())
-    settings = _build_settings(args)
+    fallback = _build_settings(args)
     backlight = Backlight.discover(Path(args.sys_class))
     activity = _ActivityClock(args.input_glob)
+    preview = PreviewState()
     music = None
+    watch = None
+    pollers = []
     if args.now_playing_url:
         url = args.now_playing_url
         music = MusicWatch(lambda: fetch_now_playing(url))
-        music.start()
+        pollers.append(music)
+    if args.settings_url and args.panel_id:
+        settings_url = args.settings_url
+        watch = SettingsWatch(
+            lambda: fetch_json(settings_url),
+            panel_id=args.panel_id,
+            fallback=fallback,
+            cache_path=Path(args.settings_cache),
+        )
+    refresh = threading.Event()
+    if pollers or watch is not None:
+        if watch is not None:
+            pollers.append(watch)
+        threading.Thread(
+            target=poll_loop,
+            args=(pollers, MUSIC_POLL_S, refresh),
+            kwargs={"after": activity.nudge},
+            name="hub-poll",
+            daemon=True,
+        ).start()
+    if args.local_port is not None and args.allow_origin:
+        server = make_local_server(
+            preview,
+            on_refresh=refresh.set,
+            on_change=activity.nudge,
+            allow_origin=args.allow_origin,
+            port=args.local_port,
+        )
+        threading.Thread(target=server.serve_forever, name="local-api", daemon=True).start()
     while True:
+        settings = watch.current if watch is not None else fallback
         now = now_time()
         playing = music is not None and music.music_active()
         idle = activity.idle_s
-        apply_once(backlight, settings, now=now, idle_s=idle, music=playing)
+        held = preview.active_pct()
+        apply_once(backlight, settings, now=now, idle_s=idle, music=playing, preview_pct=held)
         # While dimmed to the night level with the screensaver off, hold the
-        # touchscreen so the waking tap only wakes the screen.
+        # touchscreen so the waking tap only wakes the screen. Never during a preview.
         activity.maintain(
-            dim=grab_wanted(
+            dim=held is None
+            and grab_wanted(
                 dimmed=settings.night_dimmed(now, idle, playing),
                 screensaver_on=settings.screensaver_on,
                 force_grab=args.force_grab,
                 no_grab=args.no_grab,
             )
         )
-        # Wake early on a touch so the screen lights up at once; otherwise re-check
-        # on the interval so the quiet-hours edge and the post-touch dim land.
-        activity.wait(args.interval)
+        # Wake early on a touch or a nudge so the screen follows at once; otherwise
+        # re-check on the interval (and when a preview ends).
+        left = preview.remaining()
+        activity.wait(args.interval if left is None else min(args.interval, left + 0.05))
 
 
 def main(argv: list[str] | None = None) -> int:
