@@ -569,7 +569,7 @@ no overlay, canvas, timer or rAF loop (`tests/js/rooms-screensaver-wiring.test.j
 **Styles and rotation** (design: `docs/superpowers/specs/2026-11-24-panel-screensavers-design.md`, a
 five-PR epic). Aurora is one style among a registry. `style-list.js` (pure) holds the twelve fixed ids
 and names in registry order (`aurora, facts, quotes, covers, clock, sky, planets, moon, flow, contours,
-life, harmonograph`), `SHIPPED_IDS` (the styles with a module on the page: Aurora, Weird facts, Quotes and Clock so far), the
+life, harmonograph`), `SHIPPED_IDS` (the styles with a module on the page: Aurora, Weird facts, Quotes, Clock, Flow field, Contours, Game of Life and Harmonograph so far), the
 same pick validation the hub applies (`checkStyles`), `togglePick` (the last picked shipped style cannot
 be turned off), `nextPick`, `shippedPicks` (ids with no module are skipped; with none shipped, Aurora)
 and `stylesLabel`. `style-registry.js` maps a shipped id to a factory taking `{ doc, win, now,
@@ -611,6 +611,41 @@ break, and may come only from the sourced section of the author's Wikiquote page
 year (and the translation where one applies); for the Buddha it is a named Dhammapada verse in the public-domain
 Muller translation. `sourceUrl` is where it was checked and the page ignores it. If an entry cannot be verified, drop it.
 No em dashes or en dashes in any entry. `tests/js/reader-data.test.js` pins the shape, limits, counts and spread.
+
+**Generative styles** (Flow field `flow`, Contours `contours`, Game of Life `life`, Harmonograph `harmonograph`). Each is a
+pure model plus a thin style built on `canvas-style.js`, the shared shell: it makes a small canvas that CSS scales up, runs
+one rAF loop capped at the style's fps (no loop at all while stopped; the page hiding stops the style), crossfades the album
+hues over 3 s and eases a night mix (0 day, 1 night) over 3 s, so an hour passing never pops (`setNight` before the first
+frame snaps). A style gives `{ width, height, fps(night), make }` and `make` returns a painter `{ frame(dt, { hues, hueVersion,
+night }) }`; the 2d context and painter are made on the first start. `dt` is the real gap since the last drawn frame, capped
+at 0.25 s. Colors come from `gen-color.js` (`buildColors`, `rgba`, on aurora's `tintColor`) as short tables rebuilt only when
+`hueVersion` or the night mix changes, never per thread or per cell. Noise is `noise-math.js` (`hash3`, `noise3`, `fbm3`,
+value noise with time as the third axis). Tests: `tests/js/{noise-math,flow-model,contours-model,life-model,harmonograph-model,canvas-style}.test.js`.
+
+- **Flow field** (`flow-model.js`, `flow-style.js`): 320x192 canvas, 30 fps, 600 threads by day and 220 at night in typed
+  arrays. Each thread moves 16 canvas px a second along `flowAngle` (`fbm3 * 4 pi`); the field drifts at 0.015 time units a
+  second; a thread restarts elsewhere when it leaves the canvas or at 0.24 chance a second. Trails are the canvas faded by a
+  low-alpha black rect each frame (0.07 day, 0.12 night) with only this frame's segments stroked, batched into one stroke per
+  color bin (12). Night: fewer, fainter, darker threads.
+- **Contours** (`contours-model.js`, `contours-style.js`): 400x240 canvas, 12 fps (the field moves slowly), a 51x31 grid of
+  8 px cells over `fbm3`. `marchLevel` is marching squares with linear interpolation; the two saddle cells join their high
+  corners only when the cell average is above the level. Eight levels, every fourth heavier (`levelView`); at night the odd
+  levels fade out (weight `1 - night`), leaving four dimmer lines on black.
+- **Game of Life** (`life-model.js`, `life-style.js`): 320x192 canvas of 4 px cells, 80x48 torus, redrawn at 10 fps so the
+  ghosts fade smoothly, a step every 0.5 s (1.5 s at night, eased). A dying cell leaves a ghost that decays by `exp(-1.2 t)`.
+  `step()` reports a stall and adds a 20x18 patch at 30 percent density when the state hash repeats (`still`, or a `cycle` of
+  up to 12 states), the population stays within 6 for 40 steps (`flat`), or it falls under 60 (`low`). Cells are colored by
+  age; night is dim.
+- **Harmonograph** (`harmonograph-model.js`, `harmonograph-style.js`): 400x240 canvas, 15 fps. `createHarmonograph` is the phase
+  clock: draw 60 s, hold 20 s, fade 6 s, then a new random figure (`newFigure`: two pendulums per axis with ratios from small
+  integers plus a hair of detune, damping 0.0045 to 0.0075; it ends where the envelope falls to 6 percent). Only the new
+  stretch of line is drawn each frame and nothing during the hold; the fade is a black rect with alpha set so it reaches 2 percent
+  in `fadeS`. Night: line alpha 0.3 instead of 0.6.
+
+The mockup ran these sped up; the real speeds are the ones above. Per-frame math measured on a laptop (no canvas drawing):
+flow 58 us a frame, contours 240 us, life 22 us a step, harmonograph under 1 us; the browser's drawing is the real cost, so
+the CPU budget (about 25 percent of one core on the Pi 5) is measured on the panel. The remedy order if one is over:
+smaller canvas, lower fps, then a shader (back to the coordinator first).
 
 Modules in `roles/room_picker/files/site/`: `aurora-math.js` (pure colors, hue mixing,
 ribbon curves), `aurora.js` (canvas drawing, 200 px wide, one rAF loop capped at 30 fps,

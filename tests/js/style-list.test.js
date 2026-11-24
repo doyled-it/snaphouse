@@ -23,7 +23,7 @@ test("the registry order is the twelve fixed ids", () => {
 });
 
 test("Aurora, Weird facts, Quotes and Clock are shipped in this PR", () => {
-  assert.deepEqual([...SHIPPED_IDS], ["aurora", "facts", "quotes", "clock"]);
+  assert.deepEqual([...SHIPPED_IDS], ["aurora", "facts", "quotes", "clock", "flow", "contours", "life", "harmonograph"]);
 });
 
 test("change choices are Off, 5, 15, 30, 60", () => {
