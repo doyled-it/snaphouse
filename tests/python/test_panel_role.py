@@ -615,3 +615,36 @@ def test_kiosk_env_change_restarts_the_kiosk():
     assert task["notify"] == "Restart the kiosk service"
     names = [h["name"] for h in _handlers()]
     assert "Restart the kiosk service" in names
+
+
+# --------------------------------------------------------------------------- #
+# the backlight reads the hub's now-playing.json (no night dim while music shows)
+# --------------------------------------------------------------------------- #
+
+
+def _backlight_unit(**context):
+    return _render("snaphouse-backlight.service.j2", panel_backlight=BACKLIGHT_CTX, **context)
+
+
+def test_backlight_unit_takes_the_hub_origin_from_panel_url():
+    unit = _backlight_unit(panel_url="http://hub.example:8080/some/path?x=1#listen")
+    assert "Environment=SNAPHOUSE_HUB_ORIGIN=http://hub.example:8080\n" in unit
+    exec_line = next(ln for ln in unit.splitlines() if ln.startswith("ExecStart="))
+    assert "--now-playing-url ${SNAPHOUSE_HUB_ORIGIN}/now-playing.json" in exec_line
+
+
+def test_backlight_unit_falls_back_to_the_kiosks_default_origin():
+    unit = _backlight_unit()
+    assert "Environment=SNAPHOUSE_HUB_ORIGIN=http://house.local\n" in unit
+
+
+def test_backlight_unit_keeps_no_grab_last_with_the_music_flag():
+    unit = _render(
+        "snaphouse-backlight.service.j2",
+        panel_url="http://hub.example/",
+        panel_screensaver={"enabled": True, "day_idle_s": 300},
+        panel_backlight={**BACKLIGHT_CTX, "grab_wake_tap": False},
+    )
+    exec_line = next(ln for ln in unit.splitlines() if ln.startswith("ExecStart="))
+    assert exec_line.endswith(" --no-grab")
+    assert "--now-playing-url" in exec_line

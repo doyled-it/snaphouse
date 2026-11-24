@@ -23,3 +23,13 @@ test("the shipped page carries no panel attribute, stylesheet or node", () => {
   assert.doesNotMatch(html, /panel\.js/);
   assert.doesNotMatch(html, /id="p-|class="p-/);
 });
+
+test("the Music tab reads the phone name from the devices list and the now-model rules", () => {
+  const rooms = readFileSync(new URL("rooms.js", site), "utf8");
+  assert.match(rooms, /phoneName:\s*\(\)\s*=>/);
+  assert.match(rooms, /devices\.state\.devices\.find\(\(d\) => d\.connected\)/);
+  const music = readFileSync(new URL("panel-music.js", site), "utf8");
+  assert.match(music, /from "\.\/now-model\.js"/);
+  const model = readFileSync(new URL("rooms-model.js", site), "utf8");
+  assert.match(model, /raw\.resume/);
+});

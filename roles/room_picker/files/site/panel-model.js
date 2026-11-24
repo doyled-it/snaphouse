@@ -1,6 +1,6 @@
 // The wall panel's layout rules, pure (no DOM, no network). panel.js draws.
 
-import { howToText, playbackControls, roomState } from "./listen-model.js";
+import { playbackControls, roomState } from "./listen-model.js";
 import { speakerBanner } from "./health-model.js";
 import { EMPTY_PEOPLE_TEXT, SETTING_LIMITS, peopleLines, thermostatView } from "./climate-model.js";
 
@@ -113,6 +113,15 @@ export function progressFraction(progress) {
   return Math.max(0, Math.min(1, progress.elapsed / progress.total));
 }
 
+// The panel's idle line: it ends after connecting over Bluetooth (phones keep
+// howToText, which goes on to "then play something").
+export function panelHowTo(btName) {
+  if (typeof btName === "string" && btName.length > 0) {
+    return `Nothing is playing. Connect your phone to "${btName}" over Bluetooth.`;
+  }
+  return "Nothing is playing. Connect your phone over Bluetooth.";
+}
+
 // What the now-playing bar shows. The speaker banner takes the bar's place at
 // the same height while the audio server cannot be read.
 export function nowPlayingBar(track, { btName = null, speakersDown = false } = {}) {
@@ -125,7 +134,7 @@ export function nowPlayingBar(track, { btName = null, speakersDown = false } = {
       mode: "idle",
       title: "Nothing playing",
       artist: "",
-      howTo: howToText(btName),
+      howTo: panelHowTo(btName),
       showTransport: false,
       playing: false,
     };
@@ -136,7 +145,7 @@ export function nowPlayingBar(track, { btName = null, speakersDown = false } = {
     title: track.title,
     artist: track.artist || "",
     howTo: "",
-    showTransport: controls.visible,
+    showTransport: controls.visible && track.controllable === true,
     playing: track.status !== "paused",
   };
 }

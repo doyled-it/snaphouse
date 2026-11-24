@@ -564,7 +564,7 @@ key event while up and for 400 ms after the last one, so the first tap (with its
 and click) only dismisses. The idle rule is re-checked once a minute: at 22:00 a panel idle
 for 60 s or more shows at once; an overlay already up stays up at 06:00.
 
-At night the backlight daemon runs with `--no-grab` while `panel_screensaver.enabled` is true
+At night (when no music is showing, see Panel Now playing) the backlight daemon runs with `--no-grab` while `panel_screensaver.enabled` is true
 and `panel_backlight.grab_wake_tap` is false, so one tap wakes the screen and dismisses the
 overlay. The evdev grab from #184 stays for a panel without the screensaver. `dim_pct` is
 tuned separately on the live panel, never in a screensaver change. Pass mark on the board at
@@ -607,6 +607,43 @@ The first tap arms the button for 4 s (amber, "Tap to open" or "Tap to close"); 
 `garage/intent` and, if the reply says `confirm_required`, sends `garage/command` at once
 (`onGarageTap(action, true)`): never a third tap, one send, the 2 s polling after it. Phones keep the
 hub-decided confirm.
+
+## Panel Now playing, resume and the music screensaver
+
+Design: `docs/superpowers/specs/2026-11-23-panel-now-playing-design.md`. The panel's Music tab
+leads with Now playing while there is a track (playing, or paused and resumable): a 300 px
+cover, title, artist, progress with times, previous / play-pause / next (92 px tall) and a
+Rooms button naming the rooms that are on. Rooms is the existing bar plus room columns; a tap
+on the bar's art or title goes back, and 30 s on Rooms without a touch goes back on its own.
+Paused reads "Paused on <phone>" (the connected phone from the Bluetooth devices list, or just
+"Paused"), the art dimmed, Play in place of Pause. AirPlay shows "Control from the phone"; a
+Bluetooth track with no player shows no transport. The panel's idle line ends after "connect
+over Bluetooth" (`panelHowTo`); phones keep `howToText`. Rules are pure in `now-model.js`
+(`nowView`, `pausedClock`, `ambientWanted`, `nextMusicView`, `roomsButtonLabel`, `returnDue`;
+tests in `tests/js/now-model.test.js`); `panel-music.js` only draws and wires.
+
+Resume is a hub rule. `nowplaying.py` keeps a paused Bluetooth track past the 600 s hold while
+the House stream's properties carry `canControl` (the phone's player is present, from
+`avrcp_meta.py`) and publishes it under a top-level `resume` block with `track` null, so the
+nightstand frame sees exactly the document it saw before; the hold still clears AirPlay and a
+Bluetooth track whose player went away. `controllable` is added to `track` and `resume`. The
+page's `parseNowPlayingDoc` reads `resume` only when `track` is empty and marks it `held`. A hub
+restart forgets a paused track (known limit, no persistence).
+
+The screensaver follows the music at any hour: while a track plays, or was paused under 5
+minutes ago, the overlay is the ambient Now Playing view (cover 340 px, title 40 px, artist
+28 px, a thin progress line, background tinted by the cover hues); otherwise the Aurora, which
+never runs while the ambient view is up. "Paused under 5 minutes" is each device's own clock
+from the moment it first sees the track paused (`pausedClock`), never a hub timestamp, so a
+kiosk restart during a pause restarts the count. The first touch only dismisses and lands on
+Now playing (`#listen`, `showNow`) when there is a track.
+
+The backlight stays at full in quiet hours while the same rule holds (`MusicWatch` in
+`backlight.py`, stdlib only). The unit gets `SNAPHOUSE_HUB_ORIGIN` from `panel_url` (the
+kiosk's own fallback `http://house.local` when unset) and passes `--now-playing-url`; a daemon
+thread reads `now-playing.json` every 10 s (`track`, else the paused `resume` block), keeps its
+last answer for 2 minutes after reads fail, then dims as before. With no URL the daemon behaves
+as it did.
 
 ## Tooling
 

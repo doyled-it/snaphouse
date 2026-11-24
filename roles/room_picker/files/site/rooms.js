@@ -2113,8 +2113,15 @@ let currentHues = DEFAULT_HUES;
 if (new URLSearchParams(location.search).get("panel") === "1") {
   import("./screensaver.js")
     .then((m) => {
-      screensaver = m.initScreensaver(location.search);
+      screensaver = m.initScreensaver(location.search, {
+        // The first touch only dismisses; with a track it lands on Now playing.
+        onDismiss: () => {
+          if (location.hash !== "#listen") location.hash = "#listen";
+          panelLayout?.showNow?.();
+        },
+      });
       screensaver?.setHues(currentHues);
+      screensaver?.setTrack(state.nowTrack);
     })
     .catch(() => {});
 }
@@ -2137,6 +2144,10 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
         power: setRoomPower,
         volume: (id, percent) => sendControl(volumeRequest(id, percent)),
         playback: onPlayback,
+        phoneName: () => {
+          const phone = devices.state.devices.find((d) => d.connected);
+          return phone ? phone.name : null;
+        },
         comfort: () => climateDraft.comfort_f ?? (state.climate ? state.climate.settings.comfort_f : 0),
         setComfort: (value) => {
           const out = editSetting(climateDraft, climateRefused, "comfort_f", value, {});
@@ -2172,6 +2183,7 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
 
 function updateNowPlayingCard(track) {
   state.nowTrack = track;
+  screensaver?.setTrack(track);
   els.np.hidden = !track;
   els.npHowto.hidden = Boolean(track);
   if (!track) {

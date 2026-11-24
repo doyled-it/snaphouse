@@ -303,6 +303,14 @@ class Tracker:
         # When the current track went continuously not-playing, for the hold.
         self._not_playing_since: datetime | None = None
 
+        # True while the latest House properties say a phone's media player is
+        # present (``canControl``), and True once a paused Bluetooth track has
+        # outlived the hold because that player is still there. A held track is
+        # published as ``resume`` (never ``track``), so frames see the same
+        # document as before the hold rule changed.
+        self._controllable = False
+        self._resumable = False
+
         # Art-lookup bookkeeping for the current play. A request is identified by
         # its route signature (key, kind, genre): the track key plus what decides
         # the lookup route. When the route changes because later metadata fills in
@@ -450,11 +458,11 @@ class Tracker:
 
     def now_playing_doc(self, now: datetime) -> dict:
         """The ``now-playing.json`` shape at ``now``."""
-        if not self._track_present or self._current_key is None:
-            track = None
-        else:
+        track = None
+        resume = None
+        if self._track_present and self._current_key is not None:
             title, artist, album = self._current_key
-            track = {
+            built = {
                 "title": title,
                 "artist": artist,
                 "album": album,
@@ -468,10 +476,16 @@ class Tracker:
                 "started_at": _iso(self._started_at),
                 "art_url": self._art_url,
                 "podcast_id": self._podcast_id,
+                "controllable": self._controllable and self._source == "bluetooth",
             }
+            if self._resumable and self._status == "paused":
+                resume = built
+            else:
+                track = built
         return {
             "updated_at": now.isoformat(),
             "track": track,
+            "resume": resume,
             "rooms": list(self._rooms),
         }
 
@@ -503,6 +517,7 @@ class Tracker:
     def _ingest_props(
         self, properties: dict, now: datetime, *, from_snapshot: bool = False
     ) -> None:
+        self._controllable = properties.get("canControl") is True
         playback = properties.get("playbackStatus")
         if playback is not None:
             self._playback_status = playback
@@ -550,6 +565,11 @@ class Tracker:
         self._play_s = 0.0
         self._anchor_pos = None
         self._anchor_at = None
+        # A new track gets its own hold: a prior track's resumable state and
+        # not-playing clock must not carry over to it (one that arrives already
+        # paused would otherwise move straight to `resume`, hidden from frames).
+        self._resumable = False
+        self._not_playing_since = None
         # A new track has no podcast id until its own lookup lands.
         self._podcast_id = None
 
@@ -582,6 +602,7 @@ class Tracker:
         status = "playing" if playing else "paused"
         if status == "playing":
             self._not_playing_since = None
+            self._resumable = False
         elif self._not_playing_since is None:
             self._not_playing_since = now
         self._status = status
@@ -633,6 +654,12 @@ class Tracker:
         if not self._track_present or self._not_playing_since is None:
             return
         if (now - self._not_playing_since).total_seconds() >= self._hold_s:
+            if self._controllable and self._source == "bluetooth":
+                # The phone's player is still there, so the track stays
+                # resumable until the phone goes away or plays something new.
+                self._resumable = True
+                return
+            self._resumable = False
             self._track_present = False
             self._current_key = None
             self._kind = None
@@ -668,6 +695,8 @@ class Tracker:
                 _iso(self._started_at),
                 self._art_url,
                 self._podcast_id,
+                self._controllable,
+                self._resumable,
             )
         return (track, tuple(self._rooms))
 

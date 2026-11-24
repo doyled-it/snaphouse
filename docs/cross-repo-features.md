@@ -269,15 +269,25 @@ is whatever is on the House stream right now, from either input. Shape:
     "position_at": "2026-11-08T21:13:58-08:00",
     "started_at": "2026-11-08T20:50:48-08:00",
     "art_url": "/cover/3f2a....jpg",
-    "podcast_id": 1200361736
+    "podcast_id": 1200361736,
+    "controllable": true
   },
+  "resume": null,
   "rooms": ["Bedroom", "Office"]
 }
 ```
 
 `track` is `null` when nothing with a title is on House, and also once a track has been
 paused (or the House stream idle) for 10 minutes; before that it stays with
-`status: "paused"`. `status` is `"playing"` or `"paused"`; `source` is `"airplay"` or
+`status: "paused"`. `controllable` (additive, boolean) is true for a Bluetooth track while
+the phone's media player is present (the stream's `canControl`), false otherwise; the nightstand
+frame ignores it. `resume` (additive, top level) is `null` except in one case: a paused
+Bluetooth track whose phone player is still present once the 10 minute hold has passed. Then
+`track` is `null` exactly as before (so the frame sees the same document it always did) and
+`resume` carries the same shape as `track`, with `status: "paused"`. It clears when the phone's
+player goes away, and a newer or resumed track returns to `track`. The nightstand frame ignores
+`resume`; the room-picker page shows it as a paused track (the panel offers Play). A hub restart
+forgets it. `status` is `"playing"` or `"paused"`; `source` is `"airplay"` or
 `"bluetooth"`; `kind` is `"music"` or `"long_form"`. `genre` is a list of strings from
 the stream metadata (the hub's additive field), or `null` when unknown; it is additive, and the
 nightstand frame uses it with `kind` to derive the now-playing category for the kinds filter (the

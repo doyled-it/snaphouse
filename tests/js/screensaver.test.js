@@ -65,7 +65,7 @@ function makeEnv(startDate = new Date(2026, 10, 22, 12, 0, 0)) {
   return { clock, doc, aurora, listeners };
 }
 
-function make(env, search = "?panel=1") {
+function make(env, search = "?panel=1", extra = {}) {
   const win = { innerWidth: 800, innerHeight: 480, requestAnimationFrame() {}, cancelAnimationFrame() {}, performance: { now: () => 0 } };
   return createScreensaver({
     doc: env.doc,
@@ -77,6 +77,8 @@ function make(env, search = "?panel=1") {
     clearInterval: env.clock.clear,
     setTimeout: env.clock.setTimeout,
     clearTimeout: env.clock.clear,
+    swapImage: () => {},
+    ...extra,
   });
 }
 
@@ -251,4 +253,114 @@ test("without panel=1 init returns null and touches nothing", () => {
   assert.equal(initScreensaver("", { doc }), null);
   assert.equal(initScreensaver("?x=1", { doc }), null);
   assert.deepEqual(touched, []);
+});
+
+
+// ---- ambient Now Playing ------------------------------------------------- //
+
+const byClass = (env, cls) => env.doc.created.find((n) => n.className === cls);
+const track = (over = {}) => ({ title: "Song", artist: "Band", album: "LP", status: "playing", source: "bluetooth", artUrl: "/cover/a.jpg", duration: 100, position: 50, positionAt: "2026-11-22T00:00:00Z", startedAt: null, ...over });
+const night = () => new Date(2026, 10, 22, 3, 0, 0);
+
+test("a playing track shows the ambient view at any hour, with no Aurora loop", () => {
+  const env = makeEnv(night());
+  const s = make(env);
+  s.setTrack(track());
+  env.clock.advance(61 * 1000);
+  assert.equal(s.isUp(), true);
+  assert.equal(byClass(env, "p-amb").hidden, false);
+  assert.equal(env.aurora.starts, 0);
+  assert.equal(byClass(env, "p-amb-title").textContent, "Song");
+  assert.equal(byClass(env, "p-amb-artist").textContent, "Band");
+});
+
+test("with nothing playing the Aurora shows and the ambient layer stays hidden", () => {
+  const env = makeEnv(night());
+  const s = make(env);
+  env.clock.advance(61 * 1000);
+  assert.equal(s.isUp(), true);
+  assert.equal(byClass(env, "p-amb").hidden, true);
+  assert.equal(env.aurora.starts, 1);
+});
+
+test("a track paused under 5 minutes stays ambient, then the Aurora takes over", () => {
+  const env = makeEnv(night());
+  const s = make(env);
+  s.setTrack(track({ status: "paused" }));
+  env.clock.advance(61 * 1000);
+  assert.equal(byClass(env, "p-amb").hidden, false);
+  env.clock.advance(3 * MIN);
+  assert.equal(byClass(env, "p-amb").hidden, false);
+  env.clock.advance(2 * MIN);
+  assert.equal(byClass(env, "p-amb").hidden, true);
+  assert.equal(env.aurora.starts, 1);
+});
+
+test("a track arriving while the Aurora is up switches to ambient", () => {
+  const env = makeEnv(night());
+  const s = make(env);
+  env.clock.advance(61 * 1000);
+  assert.equal(env.aurora.starts, 1);
+  s.setTrack(track());
+  assert.equal(byClass(env, "p-amb").hidden, false);
+  assert.equal(env.aurora.stops >= 1, true);
+});
+
+test("the ambient progress line follows the paused position", () => {
+  const env = makeEnv(night());
+  const s = make(env);
+  s.setTrack(track({ status: "paused" }));
+  env.clock.advance(61 * 1000);
+  assert.equal(byClass(env, "p-amb-fill").style.transform, "scaleX(0.5000)");
+});
+
+test("the first touch dismisses and reports the track so the page lands on Now playing", () => {
+  const env = makeEnv(night());
+  const seen = [];
+  const s = make(env, "?panel=1", { onDismiss: (t) => seen.push(t) });
+  s.setTrack(track());
+  env.clock.advance(61 * 1000);
+  const evt = env.doc.dispatch("pointerdown");
+  assert.equal(evt.prevented, true);
+  assert.equal(s.isUp(), false);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].title, "Song");
+});
+
+test("dismissing the Aurora with no track reports nothing", () => {
+  const env = makeEnv(night());
+  const seen = [];
+  make(env, "?panel=1", { onDismiss: (t) => seen.push(t) });
+  env.clock.advance(61 * 1000);
+  env.doc.dispatch("pointerdown");
+  assert.deepEqual(seen, []);
+});
+
+test("ambient text follows setTrack after a dismiss", () => {
+  const env = makeEnv(night());
+  const s = make(env);
+  s.setTrack(track());
+  env.clock.advance(61 * 1000);
+  env.doc.dispatch("pointerdown");
+  const before = byClass(env, "p-amb-title").textContent;
+  s.setTrack(track({ title: "Later" }));
+  env.clock.advance(5000);
+  assert.equal(byClass(env, "p-amb-title").textContent, "Later");
+  assert.equal(before, "Song");
+});
+
+test("the ambient layer is not redrawn while the page is hidden", () => {
+  const env = makeEnv(night());
+  const s = make(env);
+  s.setTrack(track({ position: 10, positionAt: night().toISOString() }));
+  env.clock.advance(61 * 1000);
+  env.doc.hidden = true;
+  env.doc.dispatch("visibilitychange");
+  const fill = byClass(env, "p-amb-fill");
+  const frozen = fill.style.transform;
+  env.clock.advance(20 * 1000);
+  assert.equal(fill.style.transform, frozen);
+  env.doc.hidden = false;
+  env.doc.dispatch("visibilitychange");
+  assert.notEqual(fill.style.transform, frozen);
 });

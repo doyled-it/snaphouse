@@ -196,6 +196,7 @@ def test_doc_for_playing_track():
         "started_at": dt(0).isoformat(),
         "art_url": "/cover/x.jpg",
         "podcast_id": None,
+        "controllable": False,
     }
     assert tracker.now_playing_changed is True
 
@@ -923,3 +924,125 @@ def test_collapse_history_orders_by_last_played_at():
         _book_row(-8000, title="A", album="A", last_played_at=dt(-1).isoformat()),
     ]
     assert [r["title"] for r in collapse_history(rows)] == ["A", "B"]
+
+
+# ---- resume: a paused Bluetooth track while the phone's player is present ---- #
+
+
+def _bt_props(*, status="playing", control=True, **kw):
+    out = props(status=status, **kw)
+    out["canControl"] = control
+    return out
+
+
+def _bt_server(stream_props, **kw):
+    return server(stream_props, airplay="idle", bluetooth="playing", **kw)
+
+
+def _paused_bluetooth(control=True):
+    tracker = Tracker("House", [], hold_s=600)
+    tracker.on_server(_bt_server(_bt_props(position=0.0, control=control)), dt(0))
+    tracker.on_properties("House", _bt_props(status="paused", position=5.0, control=control), dt(10))
+    return tracker
+
+
+def test_paused_bluetooth_stays_while_player_present():
+    tracker = _paused_bluetooth()
+    tracker.tick(dt(10 + 601))
+    doc = tracker.now_playing_doc(dt(10 + 601))
+    assert doc["track"] is None
+    assert doc["resume"]["status"] == "paused"
+    assert doc["resume"]["title"] == "Song"
+    assert doc["resume"]["controllable"] is True
+    assert doc["resume"]["source"] == "bluetooth"
+    # Hours later it is still resumable.
+    tracker.tick(dt(10 + 7200))
+    assert tracker.now_playing_doc(dt(10 + 7200))["resume"]["title"] == "Song"
+
+
+def test_resume_clears_when_player_goes_away():
+    tracker = _paused_bluetooth()
+    tracker.tick(dt(700))
+    assert tracker.now_playing_doc(dt(700))["resume"] is not None
+    tracker.on_properties("House", _bt_props(status="paused", control=False), dt(710))
+    doc = tracker.now_playing_doc(dt(710))
+    assert doc["resume"] is None
+    assert doc["track"] is None
+
+
+def test_hold_still_clears_sources_without_a_player():
+    tracker = Tracker("House", [], hold_s=600)
+    tracker.on_server(server(props(position=0.0)), dt(0))  # airplay
+    tracker.on_properties("House", props(status="paused", position=5.0), dt(10))
+    tracker.tick(dt(10 + 601))
+    doc = tracker.now_playing_doc(dt(10 + 601))
+    assert doc["track"] is None
+    assert doc["resume"] is None
+
+
+def test_bluetooth_without_a_player_clears_at_the_hold():
+    tracker = _paused_bluetooth(control=False)
+    tracker.tick(dt(10 + 601))
+    doc = tracker.now_playing_doc(dt(10 + 601))
+    assert doc["track"] is None
+    assert doc["resume"] is None
+
+
+def test_within_hold_track_carries_controllable():
+    bt = _paused_bluetooth()
+    assert bt.now_playing_doc(dt(20))["track"]["controllable"] is True
+    assert bt.now_playing_doc(dt(20))["resume"] is None
+    air = Tracker("House", [], hold_s=600)
+    air.on_server(server(props(position=0.0)), dt(0))
+    assert air.now_playing_doc(dt(1))["track"]["controllable"] is False
+
+
+def test_resume_play_returns_the_track():
+    tracker = _paused_bluetooth()
+    tracker.tick(dt(900))
+    tracker.on_properties("House", _bt_props(status="playing", position=5.0), dt(910))
+    tracker.on_server(_bt_server(_bt_props(position=5.0)), dt(910))
+    doc = tracker.now_playing_doc(dt(910))
+    assert doc["track"]["status"] == "playing"
+    assert doc["resume"] is None
+
+
+def test_resume_replaced_by_a_newer_track():
+    tracker = _paused_bluetooth()
+    tracker.tick(dt(900))
+    tracker.on_server(_bt_server(_bt_props(title="Next", position=0.0)), dt(920))
+    doc = tracker.now_playing_doc(dt(920))
+    assert doc["track"]["title"] == "Next"
+    assert doc["resume"] is None
+
+
+def test_frame_view_unchanged():
+    # Before the hold the track keeps the old keys plus only `controllable`;
+    # after it `track` is null and `rooms` is untouched, exactly as a frame saw it.
+    tracker = _paused_bluetooth()
+    old_keys = {
+        "title", "artist", "album", "kind", "genre", "source", "status", "duration",
+        "position", "position_at", "started_at", "art_url", "podcast_id",
+    }
+    assert set(tracker.now_playing_doc(dt(20))["track"]) == old_keys | {"controllable"}
+    tracker.tick(dt(700))
+    doc = tracker.now_playing_doc(dt(700))
+    assert doc["track"] is None
+    assert doc["rooms"] == ["Bedroom", "Office"]
+
+
+def test_new_track_arriving_paused_gets_its_own_hold():
+    tracker = _paused_bluetooth()
+    tracker.tick(dt(900))
+    assert tracker.now_playing_doc(dt(900))["resume"]["title"] == "Song"
+    # A new track arrives already paused: it is a track for its own 600 s hold.
+    tracker.on_properties("House", _bt_props(title="Next", status="paused", position=0.0), dt(1000))
+    doc = tracker.now_playing_doc(dt(1000))
+    assert doc["track"]["title"] == "Next"
+    assert doc["resume"] is None
+    tracker.tick(dt(1000 + 599))
+    assert tracker.now_playing_doc(dt(1599))["track"]["title"] == "Next"
+    tracker.tick(dt(1000 + 601))
+    doc = tracker.now_playing_doc(dt(1601))
+    assert doc["track"] is None
+    assert doc["resume"]["title"] == "Next"

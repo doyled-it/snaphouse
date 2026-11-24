@@ -5,8 +5,12 @@
   The levels, timeout, and quiet-hours window come from panel_backlight in
   vars/all.yml, inlined here so one place in the repo owns them. With the page
   screensaver on (panel_screensaver.enabled) and grab_wake_tap false, the daemon
-  runs with --no-grab: the page swallows the waking tap instead.
+  runs with --no-grab: the page swallows the waking tap instead. The daemon also
+  reads the hub's now-playing.json (the origin comes from panel_url, the same URL
+  the kiosk opens) and holds the screen at full while music plays or was paused
+  under five minutes ago; with the hub unreachable it dims as normal.
 #}
+{% set hub_origin = (panel_url | default('http://house.local/')).split('#')[0].split('?')[0].split('/')[0:3] | join('/') -%}
 [Unit]
 Description=Snaphouse panel backlight schedule
 Documentation=https://github.com/doyled-it/snaphouse
@@ -22,7 +26,8 @@ Type=simple
 # Reads the touchscreen under /dev/input and writes the sysfs backlight, both
 # root-owned device nodes, so it runs as root. It is stdlib only.
 Environment=PYTHONPATH=/opt/snaphouse/lib
-ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight --full-pct {{ panel_backlight.full_pct }} --dim-pct {{ panel_backlight.dim_pct }} --dim-timeout {{ panel_backlight.dim_timeout_s }} --quiet-start {{ panel_backlight.quiet_start }} --quiet-end {{ panel_backlight.quiet_end }}{{ ' --no-grab' if ((panel_screensaver | default({})).enabled | default(false) and not (panel_backlight.grab_wake_tap | default(false))) else '' }}
+Environment=SNAPHOUSE_HUB_ORIGIN={{ hub_origin }}
+ExecStart=/opt/snaphouse/.venv/bin/python -m snaphouse.backlight --full-pct {{ panel_backlight.full_pct }} --dim-pct {{ panel_backlight.dim_pct }} --dim-timeout {{ panel_backlight.dim_timeout_s }} --quiet-start {{ panel_backlight.quiet_start }} --quiet-end {{ panel_backlight.quiet_end }} --now-playing-url ${SNAPHOUSE_HUB_ORIGIN}/now-playing.json{{ ' --no-grab' if ((panel_screensaver | default({})).enabled | default(false) and not (panel_backlight.grab_wake_tap | default(false))) else '' }}
 Restart=always
 RestartSec=2
 
