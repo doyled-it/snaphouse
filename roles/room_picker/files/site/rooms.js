@@ -2137,6 +2137,10 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
         power: setRoomPower,
         volume: (id, percent) => sendControl(volumeRequest(id, percent)),
         playback: onPlayback,
+        phoneName: () => {
+          const phone = devices.state.devices.find((d) => d.connected);
+          return phone ? phone.name : null;
+        },
         comfort: () => climateDraft.comfort_f ?? (state.climate ? state.climate.settings.comfort_f : 0),
         setComfort: (value) => {
           const out = editSetting(climateDraft, climateRefused, "comfort_f", value, {});

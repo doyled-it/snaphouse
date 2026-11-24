@@ -2,6 +2,8 @@
 import { createVolumeController, valueFromPointerVertical } from "./volume-controller.js";
 import { columnFit, nowPlayingBar, progressFraction, roomColumn, snapVolume, stepVolume } from "./panel-model.js";
 import { swapImage } from "./cover-color.js";
+import { formatDuration } from "./rooms-model.js";
+import { nextMusicView, nowView, roomsButtonLabel } from "./now-model.js";
 import { button, el, icon, setText } from "./panel-dom.js";
 
 const TRANSPORT = {
@@ -41,10 +43,71 @@ export function createMusicScreen(panel) {
   progress.appendChild(progressFill);
   bar.append(cover, text, transport, progress);
 
+  // A tap on the bar's art or title goes back to Now playing.
+  const toNow = () => setView("now");
+  cover.addEventListener("click", toNow);
+  text.addEventListener("click", toNow);
+
+  // --- Now playing (the first screen while there is a track)
+  const now = el("div", "p-now");
+  const nowArt = el("img", "p-now-art");
+  nowArt.alt = "";
+  const side = el("div", "p-now-side");
+  const nowTitle = el("div", "p-now-title");
+  const nowArtist = el("div", "p-now-artist");
+  const nowPaused = el("div", "p-now-paused");
+  const head = el("div", "p-now-head");
+  head.append(nowTitle, nowArtist, nowPaused);
+  const nowBar = el("div", "p-now-bar");
+  const elapsedText = el("span", "p-now-elapsed");
+  const nowTrack = el("div", "p-now-track");
+  const nowFill = el("div", "p-now-fill");
+  nowTrack.appendChild(nowFill);
+  const totalText = el("span", "p-now-total");
+  nowBar.append(elapsedText, nowTrack, totalText);
+  const nowTransport = el("div", "p-now-transport");
+  const nPrev = button("p-now-btn", "", () => host.playback("previous"));
+  nPrev.setAttribute("aria-label", "Previous");
+  nPrev.append(icon(TRANSPORT.previous, 48));
+  const nPlay = button("p-now-btn p-now-play", "", () => host.playback("playPause"));
+  const nPlayIcon = icon(TRANSPORT.play, 52);
+  nPlay.append(nPlayIcon);
+  const nNext = button("p-now-btn", "", () => host.playback("next"));
+  nNext.setAttribute("aria-label", "Next");
+  nNext.append(icon(TRANSPORT.next, 48));
+  nowTransport.append(nPrev, nPlay, nNext);
+  const nowAirplay = el("div", "p-now-airplay");
+  const roomsBtn = button("p-now-rooms", "", () => setView("rooms"));
+  const roomsLabel = el("span", "p-now-rooms-label");
+  roomsBtn.append(icon("listen", 28), roomsLabel);
+  side.append(head, nowBar, nowTransport, nowAirplay, roomsBtn);
+  now.append(nowArt, side);
+
   // --- room columns
   const cols = el("div", "p-cols");
   const columns = new Map(); // id -> entry
-  node.append(bar, cols);
+  node.append(now, bar, cols);
+
+  // Which view shows, and when it last changed because of a touch. Music is
+  // re-rendered every 500 ms only while it is the current screen, so a long gap
+  // between renders means the tab was just entered.
+  let view = "rooms";
+  let hadTrack = false;
+  let lastTouch = Date.now();
+  let lastRender = 0;
+  let wantNow = false;
+  function setView(next) {
+    view = next;
+    lastTouch = Date.now();
+    render();
+  }
+  // The screensaver sends the first touch here: land on Now playing.
+  panel.showNow = () => {
+    wantNow = true;
+  };
+  node.addEventListener("pointerdown", () => {
+    lastTouch = Date.now();
+  });
 
   let coverSrc = null;
 
@@ -141,6 +204,7 @@ export function createMusicScreen(panel) {
   function renderBar() {
     const st = host.state;
     const model = nowPlayingBar(st.nowTrack, { btName: st.btName, speakersDown: st.speakers === "down" });
+    cover.style.cursor = model.mode === "track" ? "pointer" : "";
     bar.dataset.mode = model.mode;
     setText(title, model.title);
     setText(artist, model.mode === "idle" ? model.howTo : model.artist);
@@ -193,8 +257,58 @@ export function createMusicScreen(panel) {
     }
   }
 
-  panel.register("listen", node, () => {
+  function renderNow() {
+    const st = host.state;
+    const v = nowView(st.nowTrack, { phoneName: host.phoneName ? host.phoneName() : null, speakersDown: st.speakers === "down" });
+    now.dataset.paused = v.paused ? "1" : "0";
+    setText(nowTitle, v.title);
+    setText(nowArtist, v.artist);
+    nowArtist.hidden = v.artist === "";
+    setText(nowPaused, v.pausedLine);
+    nowPaused.hidden = !v.paused;
+    nowArt.hidden = !v.art;
+    if (v.art !== nowCover) {
+      nowCover = v.art;
+      if (v.art) swapImage(nowArt, v.art);
+    }
+    nowTransport.hidden = v.transport !== "buttons";
+    nowAirplay.hidden = v.transport !== "airplay";
+    setText(nowAirplay, v.airplayText);
+    nPlay.setAttribute("aria-label", v.playing ? "Pause" : "Play");
+    nPlayIcon.firstChild.setAttribute("d", v.playing ? TRANSPORT.pause : TRANSPORT.play);
+    const p = host.progress();
+    nowBar.hidden = !p;
+    if (p) {
+      setText(elapsedText, formatDuration(p.elapsed));
+      setText(totalText, formatDuration(p.total));
+    }
+    nowFill.style.transform = `scaleX(${progressFraction(p).toFixed(4)})`;
+    setText(roomsLabel, roomsButtonLabel(host.rooms()));
+  }
+  let nowCover = null;
+
+  function render() {
+    const t = Date.now();
+    const hasTrack = nowView(host.state.nowTrack, { speakersDown: host.state.speakers === "down" }).mode === "track";
+    const next = nextMusicView(view, {
+      hasTrack,
+      hadTrack,
+      justEntered: t - lastRender > 1500 || wantNow,
+      lastTouchMs: lastTouch,
+      nowMs: t,
+    });
+    wantNow = false;
+    if (next !== view) lastTouch = t;
+    view = next;
+    hadTrack = hasTrack;
+    lastRender = t;
+    now.hidden = view !== "now";
+    bar.hidden = view !== "rooms";
+    cols.hidden = view !== "rooms";
+    if (view === "now") renderNow();
     renderBar();
     renderColumns();
-  });
+  }
+
+  panel.register("listen", node, render);
 }

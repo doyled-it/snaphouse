@@ -67,3 +67,13 @@ export function roomsButtonLabel(rooms) {
 export function returnDue(lastTouchMs, nowMs) {
   return nowMs - lastTouchMs >= ROOMS_RETURN_MS;
 }
+
+// Which Music view shows: "now" (Now playing) or "rooms" (the room columns).
+// Without a track there is only Rooms. Entering Music, a track appearing, or 30 s
+// on Rooms without a touch all land on Now playing; otherwise the view stays.
+export function nextMusicView(prev, { hasTrack, hadTrack, justEntered, lastTouchMs, nowMs }) {
+  if (!hasTrack) return "rooms";
+  if (justEntered || !hadTrack) return "now";
+  if (prev === "rooms" && returnDue(lastTouchMs, nowMs)) return "now";
+  return prev === "rooms" ? "rooms" : "now";
+}

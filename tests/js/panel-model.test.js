@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isPanel } from "../../roles/room_picker/files/site/panel-model.js";
+import { howToText } from "../../roles/room_picker/files/site/listen-model.js";
 
 test("isPanel is true only for panel=1", () => {
   assert.equal(isPanel("?panel=1&idle=60"), true);
@@ -110,6 +111,7 @@ import {
   stepVolume,
   snapVolume,
   nowPlayingBar,
+  panelHowTo,
   roomColumn,
   columnFit,
   progressFraction,
@@ -132,7 +134,7 @@ test("snapVolume rounds a tapped height to steps of 5", () => {
 });
 
 test("nowPlayingBar with a track shows title, artist, and transport only for Bluetooth", () => {
-  const bt = nowPlayingBar({ title: "T", artist: "A", source: "bluetooth", status: "playing" }, {});
+  const bt = nowPlayingBar({ title: "T", artist: "A", source: "bluetooth", status: "playing", controllable: true }, {});
   assert.deepEqual([bt.mode, bt.title, bt.artist, bt.showTransport, bt.playing], ["track", "T", "A", true, true]);
   const ap = nowPlayingBar({ title: "T", artist: null, source: "airplay", status: "paused" }, {});
   assert.deepEqual([ap.showTransport, ap.playing, ap.artist], [false, false, ""]);
@@ -256,4 +258,16 @@ test("pairInstructionPanel says your phone, names the speaker, and leaves the ph
   assert.match(pairInstructionPanel(null), /choose the house speaker,/);
   assert.match(pairInstruction("X"), /on this phone/);
   assert.doesNotMatch(pairInstructionPanel("X"), /this phone/);
+});
+
+test("nowPlayingBar shows no transport for a Bluetooth track whose player is gone", () => {
+  const bar = nowPlayingBar({ title: "T", source: "bluetooth", status: "paused", controllable: false }, {});
+  assert.equal(bar.showTransport, false);
+});
+
+test("panelHowTo stops after connecting over Bluetooth; phones keep their copy", () => {
+  assert.equal(panelHowTo("House"), 'Nothing is playing. Connect your phone to "House" over Bluetooth.');
+  assert.equal(panelHowTo(null), "Nothing is playing. Connect your phone over Bluetooth.");
+  assert.match(howToText("House"), /then play something/);
+  assert.equal(nowPlayingBar(null, { btName: "House" }).howTo, panelHowTo("House"));
 });

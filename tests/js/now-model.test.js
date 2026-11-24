@@ -111,3 +111,22 @@ test("returnDue after 30 s without a touch", () => {
   assert.equal(returnDue(1000, 1000 + 29999), false);
   assert.equal(returnDue(1000, 1000 + 30000), true);
 });
+
+import { nextMusicView } from "../../roles/room_picker/files/site/now-model.js";
+
+const ctx = (over = {}) => ({ hasTrack: true, hadTrack: true, justEntered: false, lastTouchMs: 0, nowMs: 1000, ...over });
+
+test("nextMusicView: no track is the Rooms view", () => {
+  assert.equal(nextMusicView("now", ctx({ hasTrack: false })), "rooms");
+});
+
+test("nextMusicView: a new track, or entering Music, lands on Now playing", () => {
+  assert.equal(nextMusicView("rooms", ctx({ hadTrack: false })), "now");
+  assert.equal(nextMusicView("rooms", ctx({ justEntered: true })), "now");
+});
+
+test("nextMusicView: Rooms returns to Now playing after 30 s without a touch", () => {
+  assert.equal(nextMusicView("rooms", ctx({ nowMs: 29999 })), "rooms");
+  assert.equal(nextMusicView("rooms", ctx({ nowMs: 30000 })), "now");
+  assert.equal(nextMusicView("now", ctx({ nowMs: 99999 })), "now");
+});

@@ -45,3 +45,27 @@ test("style.css keeps the existing landscape block untouched", () => {
   const style = readFileSync(new URL("style.css", site), "utf8");
   assert.match(style, /@media \(min-width: 720px\) and \(max-height: 540px\)/);
 });
+
+function rule(sel) {
+  const found = all.find((r) => r.selector.split(",").some((p) => p.trim() === `html[data-panel] ${sel}`));
+  assert.ok(found, `missing rule ${sel}`);
+  return found.body;
+}
+
+test("Now playing sizes follow the design", () => {
+  assert.match(rule(".p-now-art"), /width:\s*300px/);
+  assert.match(rule(".p-now-art"), /height:\s*300px/);
+  assert.match(rule(".p-now-title"), /font-size:\s*34px/);
+  assert.match(rule(".p-now-title"), /-webkit-line-clamp:\s*2/);
+  assert.match(rule(".p-now-artist"), /font-size:\s*24px/);
+  assert.match(rule(".p-now-btn"), /height:\s*92px/);
+  assert.match(rule(".p-now-rooms"), /height:\s*64px/);
+  assert.match(rule(".p-now-paused"), /font-size:\s*20px/);
+  assert.match(rule(".p-now[data-paused=\"1\"] .p-now-art"), /opacity:/);
+});
+
+test("ambient Now Playing sizes follow the design", () => {
+  assert.match(rule(".p-amb-art"), /width:\s*340px/);
+  assert.match(rule(".p-amb-title"), /font-size:\s*40px/);
+  assert.match(rule(".p-amb-artist"), /font-size:\s*28px/);
+});
