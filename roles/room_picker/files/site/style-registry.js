@@ -6,9 +6,12 @@
 
 import { createAuroraStyle } from "./aurora-style.js";
 import { createClockStyle } from "./clock-style.js";
+import { createFactsStyle, createQuotesStyle } from "./reader-style.js";
 
 export const FACTORIES = {
   aurora: createAuroraStyle,
+  facts: createFactsStyle,
+  quotes: createQuotesStyle,
   clock: createClockStyle,
 };
 

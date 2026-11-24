@@ -574,12 +574,12 @@ test("nextStyle peeks without moving the rotation", () => {
 test("a pick with no module is skipped, and with none shipped Aurora shows", () => {
   const env = makeEnv();
   const s = make(env);
-  s.setSettings({ ...TWO, screensaver_styles: ["facts", "quotes"] });
+  s.setSettings({ ...TWO, screensaver_styles: ["covers", "sky"] });
   env.clock.advance(MIN);
   assert.equal(env.styles.aurora.starts, 1);
   const env2 = makeEnv();
   const s2 = make(env2);
-  s2.setSettings({ ...TWO, screensaver_styles: ["aurora", "facts", "clock"] });
+  s2.setSettings({ ...TWO, screensaver_styles: ["aurora", "covers", "clock"] });
   env2.clock.advance(MIN);
   env2.clock.advance(15 * MIN);
   assert.equal(env2.styles.clock.starts, 1);
