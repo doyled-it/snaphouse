@@ -1856,3 +1856,46 @@ def test_podcast_exact_name_beats_the_publisher_prefix(tmp_path):
     lookup = ArtLookup(tmp_path, fetch)
     result = lookup.find_with_id("Ep", "Show", "Show", "long_form", ["Podcast"])
     assert result.podcast_id == 2
+
+
+# --------------------------------------------------------------------------- #
+# logging: source, reason and outcome
+# --------------------------------------------------------------------------- #
+
+
+def _source_lines(caplog):
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("art lookup apple")
+            or r.getMessage().startswith("art lookup musicbrainz")]
+
+
+def test_each_source_logs_its_outcome_and_reason(tmp_path, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="snaphouse.artlookup")
+
+    def busy(url):
+        raise FetchError("HTTP 503")
+
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", busy),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    lookup.find("x", "Four Tops", "Catfish", "music", None)
+
+    lines = _source_lines(caplog)
+    assert "art lookup apple: miss (no match)" in lines
+    assert "art lookup musicbrainz: error (HTTP 503)" in lines
+
+
+def test_a_found_cover_logs_the_matched_names(tmp_path, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="snaphouse.artlookup")
+    fetch = _apple_fetch("apple_album_catfish.json")
+    lookup = ArtLookup(tmp_path, fetch)
+    lookup.find("x", "Four Tops", "Catfish", "music", None)
+    assert "art lookup apple: found (Four Tops, Catfish)" in _source_lines(caplog)

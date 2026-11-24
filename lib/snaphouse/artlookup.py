@@ -393,6 +393,7 @@ class ArtLookup:
         self._last_musicbrainz: float | None = None
         self._last_reason: str = ""
         self._error_until: dict[str, float] = {}
+        self._matched: str = ""
 
     def _backing_off(self, key: str) -> bool:
         return self._clock() < self._error_until.get(key, 0.0)
@@ -830,7 +831,24 @@ class ArtLookup:
                     return _Resolved(_FOUND, image)
         return _Resolved(_MISS, None)
 
+    def _log_source(self, source: str, resolved: _Resolved) -> _Resolved:
+        """One INFO line per source attempt: source, outcome, then reason or names."""
+        if resolved.outcome == _FOUND:
+            detail = self._matched
+        elif resolved.outcome == _ERROR:
+            detail = self._last_reason
+        else:
+            detail = "no match"
+        self._log.info("art lookup %s: %s (%s)", source, resolved.outcome, detail)
+        return resolved
+
     def _apple_music(
+        self, title: str, artist: Optional[str], album: Optional[str]
+    ) -> _Resolved:
+        self._matched = ""
+        return self._log_source("apple", self._apple_search(title, artist, album))
+
+    def _apple_search(
         self, title: str, artist: Optional[str], album: Optional[str]
     ) -> _Resolved:
         """Search Apple's catalogue for the track's album, or its song with no album.
@@ -856,7 +874,7 @@ class ArtLookup:
         results = _search_list(self._get(url), "results")
         if results is None:
             return _Resolved(_ERROR, None)
-        best_score, best_art = 0, None
+        best_score, best_art, best_names = 0, None, ""
         for result in results:
             if not isinstance(result, dict):
                 continue
@@ -867,14 +885,22 @@ class ArtLookup:
             if not artists_match(artist, result.get("artistName")):
                 continue
             best_score, best_art = score, art
+            best_names = f"{result.get('artistName')}, {result.get(field)}"
         if best_art is None:
             return _Resolved(_MISS, None)
         image = self._get(_APPLE_ART_SIZE.sub(r"/600x600bb\1", best_art))
         if image is None:
             return _Resolved(_ERROR, None)
+        self._matched = best_names
         return _Resolved(_FOUND, image)
 
     def _music(
+        self, name: Optional[str], album: Optional[str]
+    ) -> _Resolved:
+        self._matched = ""
+        return self._log_source("musicbrainz", self._music_lookup(name, album))
+
+    def _music_lookup(
         self, name: Optional[str], album: Optional[str]
     ) -> _Resolved:
         """Search MusicBrainz for a release ``album`` credited exactly to ``name``.
@@ -944,6 +970,7 @@ class ArtLookup:
         for art_url in urls:
             image = self._get(art_url)
             if image is not None:
+                self._matched = f"{_credit_names(matches[0][1].get('artist-credit'))}, {matches[0][1].get('title')}"
                 return _Resolved(_FOUND, image)
             if self._last_reason != "HTTP 404":
                 transient = True
