@@ -382,21 +382,21 @@ def test_music_suffix_finds_base_release(tmp_path):
 
     assert url is not None
     mb_calls = [c for c in fetch.calls if "musicbrainz.org" in c]
-    assert len(mb_calls) == 2
+    # The shared matcher reads "Night Harbor" as the core of the decorated title,
+    # so the first search already finds it and no base search is needed.
+    assert len(mb_calls) == 1
     queries = [
         urllib.parse.parse_qs(urllib.parse.urlsplit(c).query)["query"][0]
         for c in mb_calls
     ]
     assert queries == [
         'artist:"The Lantern Keepers" AND release:"Night Harbor (Deluxe Edition)"',
-        'artist:"The Lantern Keepers" AND release:"Night Harbor"',
     ]
     # Each MusicBrainz request keeps only the query, format, and limit fields.
     for call in mb_calls:
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(call).query)
         assert set(query) == {"query", "fmt", "limit"}
-    # The base attempt waited out the one-per-second gate after the full name.
-    assert slept == pytest.approx([1.0], abs=0.01)
+    assert slept == []
 
 
 def test_music_base_miss_writes_marker_once(tmp_path):
@@ -545,13 +545,29 @@ def _mb_queries(fetch):
     ]
 
 
+def _only_for_artist(body, artist):
+    """A MusicBrainz response that holds the release only for one artist query.
+
+    Real MusicBrainz phrase search does not return a release for a long credit
+    that is not its exact artist, so the lead search is still needed.
+    """
+
+    def respond(url):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["query"][0]
+        if f'artist:"{artist}"' in query:
+            return body
+        return json.dumps({"count": 0, "releases": []}).encode("utf-8")
+
+    return respond
+
+
 def test_music_searches_full_credit_before_lead(tmp_path):
     # The full track credit is searched first; the lead is searched only after the
     # full credit finds nothing, and the lead is the plain part before the first
     # list separator, never a mangled name.
     fetch = FakeFetch(
         [
-            ("musicbrainz.org", _musicbrainz_release("Album", ["Headliner"])),
+            ("musicbrainz.org", _only_for_artist(_musicbrainz_release("Album", ["Headliner"]), "Headliner")),
             ("coverartarchive.org", _jpeg()),
         ]
     )
@@ -595,7 +611,7 @@ def test_featured_album_shares_cover_with_one_fallback_lookup(tmp_path):
     # included, reuses the shared lead cover with no further network call.
     fetch = FakeFetch(
         [
-            ("musicbrainz.org", _musicbrainz_release("Un Verano Sin Ti", ["Bad Bunny"])),
+            ("musicbrainz.org", _only_for_artist(_musicbrainz_release("Un Verano Sin Ti", ["Bad Bunny"]), "Bad Bunny")),
             ("coverartarchive.org", _jpeg()),
         ]
     )
@@ -648,7 +664,7 @@ def test_lil_nas_x_keeps_the_x_in_the_lead(tmp_path):
     # fallback lead is "Lil Nas X", cut at the " & ", not "Lil Nas".
     fetch = FakeFetch(
         [
-            ("musicbrainz.org", _musicbrainz_release("Montero", ["Lil Nas X"])),
+            ("musicbrainz.org", _only_for_artist(_musicbrainz_release("Montero", ["Lil Nas X"]), "Lil Nas X")),
             ("coverartarchive.org", _jpeg()),
         ]
     )
@@ -665,8 +681,10 @@ def test_lil_nas_x_keeps_the_x_in_the_lead(tmp_path):
 
 
 def test_solo_lead_album_key_does_not_collide_with_band(tmp_path):
-    # The band's cover is cached under its full credit, so a solo artist who is
-    # only the band's first word does not borrow it, and its miss is its own.
+    # The band's cover is cached under its full credit. A solo artist who is the
+    # band's first word shares a name with it, so with the same album title the
+    # shared matcher now accepts the release (a design change), but the cover is
+    # looked up and cached under the solo artist's own key.
     fetch = FakeFetch(
         [
             ("musicbrainz.org", _musicbrainz_release("Bookends", ["Simon & Garfunkel"])),
@@ -678,8 +696,10 @@ def test_solo_lead_album_key_does_not_collide_with_band(tmp_path):
     band = lookup.find("Track", "Simon & Garfunkel", "Bookends", "music", None)
     assert band is not None
 
+    searches = len(_mb_queries(fetch))
     solo = lookup.find("Track", "Simon", "Bookends", "music", None)
-    assert solo is None
+    assert solo is not None and solo != band
+    assert len(_mb_queries(fetch)) == searches + 1
 
 
 def test_lead_artist_not_matching_release_is_miss(tmp_path):
@@ -710,7 +730,7 @@ def test_musicbrainz_gate_holds_across_full_and_lead(tmp_path):
 
     fetch = FakeFetch(
         [
-            ("musicbrainz.org", _musicbrainz_release("Album", ["Lead"])),
+            ("musicbrainz.org", _only_for_artist(_musicbrainz_release("Album", ["Lead"]), "Lead")),
             ("coverartarchive.org", _jpeg()),
         ]
     )
@@ -1464,3 +1484,118 @@ def test_no_album_keys_differ_by_track_title():
     assert _lookup_key("music", "Song A", "Artist", "Album") == _lookup_key(
         "music", "Song B", "Artist", "Album"
     )
+
+
+# --------------------------------------------------------------------------- #
+# MusicBrainz: shared matcher and the 503 retry
+# --------------------------------------------------------------------------- #
+
+
+def _music_fetch(musicbrainz, extra=()):
+    return FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", musicbrainz),
+            ("coverartarchive.org", _jpeg()),
+            *extra,
+        ]
+    )
+
+
+def test_musicbrainz_503_retries_once_after_two_seconds(tmp_path):
+    calls = {"n": 0}
+
+    def musicbrainz(url):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise FetchError("HTTP 503")
+        return _fixture_bytes("musicbrainz.json")
+
+    clock, sleep, slept = _gate_recorder()
+    fetch = _music_fetch(musicbrainz)
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find("Airbag", "Radiohead", "OK Computer", "music", None)
+
+    assert url is not None
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 2
+    assert 2.0 in slept
+
+
+def test_musicbrainz_503_twice_is_an_error_not_a_miss(tmp_path):
+    def musicbrainz(url):
+        raise FetchError("HTTP 503")
+
+    clock, sleep, slept = _gate_recorder()
+    fetch = _music_fetch(musicbrainz)
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find("Airbag", "Radiohead", "OK Computer", "music", None)
+
+    assert url is None
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 2
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_musicbrainz_other_errors_are_not_retried(tmp_path):
+    def musicbrainz(url):
+        raise FetchError("HTTP 500")
+
+    fetch = _music_fetch(musicbrainz)
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    assert lookup.find("Airbag", "Radiohead", "OK Computer", "music", None) is None
+    assert len([c for c in fetch.calls if "musicbrainz.org" in c]) == 1
+
+
+def test_musicbrainz_matches_an_edition_by_core_title(tmp_path):
+    # The track says "Remastered 2013"; MusicBrainz has "Deluxe Edition". Only
+    # the shared core-title rule connects them.
+    body = _musicbrainz_release("Kaya (Deluxe Edition)", ["Bob Marley & The Wailers"])
+    fetch = _music_fetch(body)
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("Kaya", "Bob Marley & The Wailers", "Kaya (Remastered 2013)",
+                       "music", None) is not None
+
+
+def test_musicbrainz_reads_ampersand_as_and_in_credits(tmp_path):
+    body = _musicbrainz_release("Kaya", ["Bob Marley and the Wailers"])
+    fetch = _music_fetch(body)
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("Kaya", "Bob Marley & The Wailers", "Kaya", "music", None) is not None
+
+
+def test_musicbrainz_unrelated_artist_with_same_title_stays_a_miss(tmp_path):
+    body = _musicbrainz_release("House of Balloons", ["Goomp"])
+    fetch = _music_fetch(body)
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("x", "The Weeknd", "House of Balloons (Original)", "music", None) is None
+    assert not any("coverartarchive.org" in c for c in fetch.calls)
+
+
+def test_a_full_credit_hit_is_shared_with_the_albums_lead_key(tmp_path):
+    # Apple matches the first featured track under its full credit. A later track
+    # of the same album with another guest finds the shared lead copy with no
+    # network call, as the lead-key sharing worked before.
+    apple = json.dumps(
+        {
+            "results": [
+                {
+                    "artistName": "Bad Bunny",
+                    "collectionName": "Un Verano Sin Ti",
+                    "artworkUrl100": "https://is1-ssl.mzstatic.com/x/100x100bb.jpg",
+                }
+            ]
+        }
+    ).encode("utf-8")
+    fetch = FakeFetch([("itunes.apple.com", apple), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    first = lookup.find("A", "Bad Bunny & Ñengo Flow", "Un Verano Sin Ti", "music", None)
+    calls = len(fetch.calls)
+    second = lookup.find("B", "Bad Bunny, Chencho Corleone", "Un Verano Sin Ti", "music", None)
+
+    assert first is not None and second is not None
+    assert len(fetch.calls) == calls

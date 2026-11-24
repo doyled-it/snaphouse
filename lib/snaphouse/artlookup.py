@@ -90,6 +90,8 @@ _COVER_ART_ARCHIVE = "https://coverartarchive.org/release/{mbid}/front-500"
 
 # MusicBrainz asks for no more than one request per second.
 _MUSICBRAINZ_MIN_INTERVAL = 1.0
+# A busy MusicBrainz answers 503; one retry after this wait.
+_MUSICBRAINZ_RETRY_WAIT = 2.0
 
 # A feed that carries a show, book, or release under a decorated name ("<Show> -
 # Patreon Feed") hides the public title before one of these separators. When the
@@ -553,7 +555,17 @@ class ArtLookup:
             if resolved.outcome == _ERROR:
                 return (None, "failure", None)
             if resolved.image is not None:
-                return self._store_cover(full_key, full_image, full_miss, resolved.image)
+                stored = self._store_cover(
+                    full_key, full_image, full_miss, resolved.image
+                )
+                if lead_image is not None and full_image.is_file():
+                    # Share the cover with the rest of the album: a later track
+                    # with another guest finds the lead copy with no network call.
+                    try:
+                        _atomic_write(lead_image, full_image.read_bytes())
+                    except OSError:
+                        pass
+                return stored
             self._write_miss(full_miss)
 
         # Step 2: fall back to the lead, only when the credit named extra artists.
@@ -872,7 +884,13 @@ class ArtLookup:
             {"query": query, "fmt": "json", "limit": 5}
         )
         try:
-            releases = _search_list(self._get(url), "releases")
+            body = self._get(url)
+            if body is None and self._last_reason == "HTTP 503":
+                # MusicBrainz is busy: wait 2 s and ask once more before this
+                # counts as an error.
+                self._sleep(_MUSICBRAINZ_RETRY_WAIT)
+                body = self._get(url)
+            releases = _search_list(body, "releases")
         finally:
             self._last_musicbrainz = self._clock()
         if releases is None:
@@ -880,9 +898,9 @@ class ArtLookup:
         for release in releases:
             if not isinstance(release, dict):
                 continue
-            if not _names_match(release.get("title"), album):
+            if title_score(album, release.get("title")) == 0:
                 continue
-            if not _credit_equals(release.get("artist-credit"), name):
+            if not artists_match(name, _credit_names(release.get("artist-credit"))):
                 continue
             mbid = release.get("id")
             if isinstance(mbid, str):
@@ -1059,17 +1077,12 @@ def _lead_artist(credit: Optional[str]) -> Optional[str]:
     return lead
 
 
-def _credit_equals(credit, name: Optional[str]) -> bool:
-    """Whether a MusicBrainz ``artist-credit`` equals ``name`` exactly.
-
-    With no name there is nothing to match against, so a release never matches
-    (its cover would be a guess). The credit is a list of parts; their joined
-    names are compared as one name, so a release stands only when its whole artist
-    credit is the searched name, never when it merely contains it.
-    """
-    if not name:
-        return False
+def _credit_names(credit) -> str:
+    """A MusicBrainz ``artist-credit`` list joined into one credit string."""
     if not isinstance(credit, list):
-        return False
-    names = "".join(part.get("name", "") for part in credit if isinstance(part, dict))
-    return _names_match(names, name)
+        return ""
+    return "".join(
+        part.get("name", "") + part.get("joinphrase", "")
+        for part in credit
+        if isinstance(part, dict)
+    )
