@@ -151,6 +151,7 @@ import {
 import { createToaster, snapshotRooms, undoPlan } from "./undo.js";
 import { classifyMachines, healthMessage, healthRows, reasonLabel, speakerBanner } from "./health-model.js";
 import { applyPlan, everythingOffPlan, heldStatus, howToText, loadBluetoothName, onlyHerePlan, playbackControls, playbackRequest, roomState } from "./listen-model.js";
+import { createStatusRefresher } from "./status-refresher.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
@@ -822,6 +823,7 @@ function connect() {
   socket.addEventListener("open", () => {
     stopPolling();
     setConnection("");
+    statusRefresher.reset();
     requestStatus();
   });
   socket.addEventListener("message", (event) => {
@@ -829,6 +831,7 @@ function connect() {
   });
   socket.addEventListener("close", () => {
     state.socket = null;
+    statusRefresher.reset();
     startPolling();
     scheduleReconnect();
   });
@@ -851,12 +854,24 @@ function onMessage(data) {
   const messages = Array.isArray(message) ? message : [message];
   for (const one of messages) {
     if (one.result && one.result.server) {
+      statusRefresher.answered();
       clearStatusMessage();
       render(one.result);
       continue;
     }
+    if (statusRefresher.owns(one.id)) {
+      // The status read itself failed: free the gate so later reads can go out.
+      statusRefresher.answered();
+      continue;
+    }
     if (one.method && one.id === undefined) {
       requestStatus();
+      continue;
+    }
+    // Snapserver sends a change notification to every other connection, never to
+    // the one that made the change, so this page's own write is only seen by asking.
+    if (one.id !== undefined && (one.result || one.error)) {
+      statusRefresher.want();
     }
   }
 }
@@ -865,9 +880,18 @@ function clearStatusMessage() {
   setConnection(state.pollTimer ? OFFLINE_MSG : "");
 }
 
+const statusRefresher = createStatusRefresher({
+  send: () => {
+    const id = state.nextId;
+    state.socket.send(envelope("Server.GetStatus", {}));
+    return id;
+  },
+  now: () => Date.now(),
+});
+
 function requestStatus() {
   if (state.socket && state.socket.readyState === WebSocket.OPEN) {
-    state.socket.send(envelope("Server.GetStatus", {}));
+    statusRefresher.want();
     return;
   }
   postRpc("Server.GetStatus", {})
