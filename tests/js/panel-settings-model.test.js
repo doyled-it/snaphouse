@@ -179,17 +179,17 @@ test("the More tile line names one style or counts several", () => {
 
 test("stylesView lists only shipped styles in registry order with checks", () => {
   const view = stylesView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["aurora", "clock"] });
-  assert.deepEqual(view.tiles.map((t) => t.id), ["aurora", "facts", "quotes", "clock"]);
-  assert.deepEqual(view.tiles.map((t) => t.name), ["Aurora", "Weird facts", "Quotes", "Clock"]);
-  assert.deepEqual(view.tiles.map((t) => t.on), [true, false, false, true]);
+  assert.deepEqual(view.tiles.map((t) => t.id), ["aurora", "facts", "quotes", "clock", "flow", "contours", "life", "harmonograph"]);
+  assert.deepEqual(view.tiles.map((t) => t.name), ["Aurora", "Weird facts", "Quotes", "Clock", "Flow field", "Contours", "Game of Life", "Harmonograph"]);
+  assert.deepEqual(view.tiles.map((t) => t.on), [true, false, false, true, false, false, false, false]);
   assert.equal(view.columns, 4);
 });
 
 test("stylesView locks the last picked tile", () => {
   const one = stylesView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["clock"] });
-  assert.deepEqual(one.tiles.map((t) => [t.id, t.on, t.locked]), [["aurora", false, false], ["facts", false, false], ["quotes", false, false], ["clock", true, true]]);
+  assert.deepEqual(one.tiles.map((t) => [t.id, t.on, t.locked]), [["aurora", false, false], ["facts", false, false], ["quotes", false, false], ["clock", true, true], ["flow", false, false], ["contours", false, false], ["life", false, false], ["harmonograph", false, false]]);
   const two = stylesView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["aurora", "clock"] });
-  assert.deepEqual(two.tiles.map((t) => t.locked), [false, false, false, false]);
+  assert.deepEqual(two.tiles.map((t) => t.locked), [false, false, false, false, false, false, false, false]);
 });
 
 test("changeView hides or disables Change every with one pick and marks the choice", () => {

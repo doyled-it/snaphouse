@@ -6,6 +6,10 @@
 
 import { createAuroraStyle } from "./aurora-style.js";
 import { createClockStyle } from "./clock-style.js";
+import { createContoursStyle } from "./contours-style.js";
+import { createFlowStyle } from "./flow-style.js";
+import { createHarmonographStyle } from "./harmonograph-style.js";
+import { createLifeStyle } from "./life-style.js";
 import { createFactsStyle, createQuotesStyle } from "./reader-style.js";
 
 export const FACTORIES = {
@@ -13,6 +17,10 @@ export const FACTORIES = {
   facts: createFactsStyle,
   quotes: createQuotesStyle,
   clock: createClockStyle,
+  flow: createFlowStyle,
+  contours: createContoursStyle,
+  life: createLifeStyle,
+  harmonograph: createHarmonographStyle,
 };
 
 // The style for an id, or null when this page has no module for it.
