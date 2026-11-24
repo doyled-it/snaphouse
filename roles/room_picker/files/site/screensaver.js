@@ -186,7 +186,7 @@ export function createScreensaver({
     inst.wrap.classList.remove("is-snap");
     inst.wrap.classList.add("is-in");
     if (prev) {
-      prev.wrap.classList.remove("is-in");
+      prev.wrap.classList.remove("is-in", "is-snap");
       fadeStops.set(prev.id, setTimeout(() => {
         fadeStops.delete(prev.id);
         stopInst(prev);

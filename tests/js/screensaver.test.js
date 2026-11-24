@@ -38,7 +38,7 @@ function makeEnv(startDate = new Date(2026, 10, 22, 12, 0, 0)) {
       const classes = new Set();
       const node = {
         tag, children: [], style: {}, attrs: {}, removed: false,
-        classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c) },
+        classList: { add: (...c) => c.forEach((x) => classes.add(x)), remove: (...c) => c.forEach((x) => classes.delete(x)), contains: (c) => classes.has(c) },
         setAttribute(k, v) { node.attrs[k] = v; },
         append(...c) { node.children.push(...c); },
         remove() { node.removed = true; },
@@ -505,6 +505,16 @@ test("after the change time it crossfades to the next pick, the old one stops af
   assert.equal(running(env.styles.clock), true);
   env.clock.advance(15 * MIN);
   assert.equal(env.styles.aurora.starts, 2);
+});
+
+test("the first crossfade of a session fades the outgoing layer, it is not left snapped", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(TWO);
+  env.clock.advance(MIN);
+  env.clock.advance(15 * MIN);
+  const snapped = env.doc.created.filter((n) => n.classList.contains("is-snap"));
+  assert.equal(snapped.length, 0);
 });
 
 test("with Change every off, or one pick, the style never changes", () => {
