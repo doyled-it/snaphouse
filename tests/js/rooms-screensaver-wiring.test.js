@@ -37,3 +37,10 @@ test("the overlay css covers the page and is inert until up", () => {
   assert.match(up[1], /pointer-events:\s*auto/);
   assert.match(css, /prefers-reduced-motion[^{]*\{[\s\S]*?\.screensaver/);
 });
+
+test("the page feeds the track to the screensaver and lands on Now playing after a dismiss", () => {
+  assert.match(rooms, /screensaver\?\.setTrack\(track\)/);
+  assert.match(rooms, /screensaver\?\.setTrack\(state\.nowTrack\)/);
+  assert.match(rooms, /onDismiss:/);
+  assert.match(rooms, /panelLayout\?\.showNow\?\.\(\)/);
+});
