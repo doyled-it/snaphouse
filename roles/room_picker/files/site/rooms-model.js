@@ -233,19 +233,28 @@ function httpsUrlOrNull(value) {
 // 2) parses with those fields null so the card renders without empty lines.
 // `positionAt` and `startedAt` stay as ISO strings for progressAt to anchor on;
 // `artUrl` is kept only when it is a same-origin /cover/ path.
+function usableTrack(t) {
+  return Boolean(t) && typeof t === "object" && !Array.isArray(t) && typeof t.title === "string" && t.title.length > 0;
+}
+
 export function parseNowPlayingDoc(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
   }
-  const t = raw.track;
-  if (!t || typeof t !== "object" || Array.isArray(t)) {
-    return null;
-  }
-  if (typeof t.title !== "string" || t.title.length === 0) {
+  // `resume` is a paused Bluetooth track kept past the hub's hold while the
+  // phone's player is present; it is only read when `track` is empty, so a
+  // newer track always wins.
+  const held = !usableTrack(raw.track) && usableTrack(raw.resume);
+  const t = held ? raw.resume : raw.track;
+  if (!usableTrack(t)) {
     return null;
   }
   return {
     title: t.title,
+    // True when the phone's player is present (the hub's additive
+    // `controllable`); `held` marks a track read from `resume`.
+    controllable: t.controllable === true,
+    held,
     artist: nonEmptyStringOrNull(t.artist),
     album: nonEmptyStringOrNull(t.album),
     kind: nonEmptyStringOrNull(t.kind),

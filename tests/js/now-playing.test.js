@@ -467,3 +467,29 @@ test("parseNowPlayingDoc keeps genre for the book rule", () => {
   const out = parseNowForBooks({ track: { title: "T", kind: "long_form", genre: ["Audiobook"] }, rooms: [] });
   assert.deepEqual(out.genre, ["Audiobook"]);
 });
+
+// --------------------------------------------------------------------------- #
+// resume: a paused Bluetooth track kept past the hub's hold
+// --------------------------------------------------------------------------- #
+
+test("parseNowPlayingDoc reads a resume block when track is null, marked held", () => {
+  const doc = nowPlayingDoc({ top: { track: null, resume: { title: "Held", status: "paused", source: "bluetooth", controllable: true } } });
+  const np = parseNowPlayingDoc(doc);
+  assert.equal(np.title, "Held");
+  assert.equal(np.held, true);
+  assert.equal(np.controllable, true);
+  assert.equal(np.status, "paused");
+});
+
+test("parseNowPlayingDoc prefers a track over a resume block", () => {
+  const doc = nowPlayingDoc({ top: { resume: { title: "Old", status: "paused" } } });
+  const np = parseNowPlayingDoc(doc);
+  assert.equal(np.title, "Episode 412");
+  assert.equal(np.held, false);
+  assert.equal(np.controllable, false);
+});
+
+test("parseNowPlayingDoc ignores a malformed resume block", () => {
+  assert.equal(parseNowPlayingDoc(nowPlayingDoc({ top: { track: null, resume: { title: "" } } })), null);
+  assert.equal(parseNowPlayingDoc(nowPlayingDoc({ top: { track: null, resume: [] } })), null);
+});
