@@ -185,6 +185,42 @@
   .item .s.ok { color: var(--ok); }
   .item .btn { height: 72px; font-size: 22px; font-weight: 700; padding: 0 22px; }
   .pairbig { flex: none; height: 96px; font-size: 28px; font-weight: 800; }
+
+  /* Screen settings */
+  .tiles.six { grid-template-rows: repeat(3, 1fr); }
+  .tiles.five [data-tile="screen"] { grid-column: 1 / -1; }
+  .stabs { display: flex; gap: 8px; }
+  .stabs .btn { height: 48px; padding: 0 20px; font-size: 22px; font-weight: 700; }
+  .stabs .btn.on { background: var(--accent); color: var(--ink); }
+  .sset { flex: 1; padding: 16px 18px; display: flex; flex-direction: column; justify-content: space-between; }
+  .srow { height: 72px; display: grid; grid-template-columns: 180px 1fr; align-items: center; gap: 12px; }
+  .srow .lbl { font-size: 22px; font-weight: 700; }
+  .srow .lbl small { display: block; font-size: 20px; font-weight: 500; color: var(--muted); }
+  .ctl { display: flex; gap: 10px; height: 72px; min-width: 0; }
+  .ctl .btn { width: 72px; flex: none; }
+  .ctl .btn svg { width: 30px; height: 30px; }
+  .hbar { flex: 1; position: relative; border-radius: 16px; background: var(--card2); overflow: hidden; cursor: pointer; }
+  .hbar i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #8a84ea, #b7b2ff); }
+  .hbar span { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); font-size: 26px; font-weight: 800; color: var(--ink); }
+  .hbar.low span { color: var(--text); left: auto; right: 16px; }
+  .tval { flex: 1; display: grid; place-items: center; font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums;
+    background: var(--card2); border-radius: 16px; }
+  .chips { flex: 1; display: flex; gap: 8px; }
+  .chips .btn { flex: 1; width: auto; font-size: 22px; font-weight: 700; }
+  .chips .btn.on { background: var(--accent); color: var(--ink); }
+  .chips .btn.soon { background: transparent; border: 2px dashed var(--line); color: var(--muted); font-weight: 600; cursor: default; }
+  .ctl .wide { width: auto; flex: 1; font-size: 22px; font-weight: 800; }
+
+  /* Brightness preview veil and the screensaver preview */
+  .veil { position: absolute; inset: 0; z-index: 8; background: #000; pointer-events: none; opacity: 0; transition: opacity .25s; }
+  .veil b { position: absolute; left: 50%; top: 24px; transform: translateX(-50%); font-size: 22px; color: #fff;
+    background: rgba(0,0,0,.6); padding: 6px 16px; border-radius: 12px; }
+  .saver { position: absolute; inset: 0; z-index: 6; cursor: pointer;
+    background: radial-gradient(60% 80% at 30% 40%, oklch(0.55 0.14 200 / .8), transparent 70%),
+      radial-gradient(70% 90% at 75% 60%, oklch(0.5 0.16 290 / .8), transparent 70%), #04060c;
+    background-size: 160% 160%; animation: drift 9s ease-in-out infinite alternate; }
+  .saver .hint { position: absolute; left: 0; right: 0; bottom: 18px; text-align: center; font-size: 20px; color: rgba(255,255,255,.6); }
+  @keyframes drift { from { background-position: 0% 30%; } to { background-position: 100% 70%; } }
 </style>
 </head>
 <body>
@@ -193,6 +229,8 @@
   <p class="note" id="note"></p>
 
   <div class="panel">
+    <div class="veil" id="veil"><b id="veiltxt"></b></div>
+    <div class="saver hide" id="saver"><div class="hint">Preview. Tap to end.</div></div>
     <div class="ambient hide" id="ambient">
       <div class="bigart"></div>
       <div><div class="t1">Song title goes here</div><div class="t2">Artist name</div><div class="prog"><i></i></div></div>
@@ -207,7 +245,8 @@
     <main class="main">
       <div class="strip" id="strip">
         <button class="btn back hide" id="back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>More</button>
-        <span><b>68°</b> <span class="dim">cooling to 74°</span></span>
+        <span class="stabs hide" id="stabs"><button class="btn" data-tab="screen">Screen</button><button class="btn" data-tab="saver">Screensaver</button></span>
+        <span class="stripinfo"><b>68°</b> <span class="dim">cooling to 74°</span></span>
         <span class="sep"></span>
         <span>Garage <b style="font-size:24px" id="stripdoor">closed</b></span>
         <span class="grow"></span>
@@ -323,11 +362,31 @@
 
       <!-- MORE -->
       <section class="view" data-v="more:grid">
-        <div class="tiles">
+        <div class="tiles" id="tiles">
           <button class="btn tile" data-go="frame"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 21h10"/></svg><div><div class="t">Frames</div><div class="s">2 frames</div></div></button>
           <button class="btn tile" data-go="gallery"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><div><div class="t">Gallery</div><div class="s">143 pictures</div></div></button>
           <button class="btn tile" data-go="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10-5 4V3l5 4L7 17"/></svg><div><div class="t">Bluetooth</div><div class="s">Pair a phone, devices</div></div></button>
           <button class="btn tile" data-go="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><div><div class="t">House health</div><div class="s warn">1 needs attention</div></div></button>
+          <button class="btn tile" data-go="display" data-tile="screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><div><div class="t" id="screentile-t">Screen</div><div class="s" id="screentile-s">Brightness, night, screensaver</div></div></button>
+          <button class="btn tile" data-go="display" data-tile="saver"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><div><div class="t">Screensaver</div><div class="s">Aurora after 1 min</div></div></button>
+        </div>
+      </section>
+
+      <!-- SCREEN SETTINGS -->
+      <section class="view" data-v="display:screen">
+        <div class="card sset">
+          <div class="srow"><div class="lbl">Brightness</div><div class="ctl" data-bar="day"></div></div>
+          <div class="srow"><div class="lbl">Night dim<small>tap to preview</small></div><div class="ctl" data-bar="night"></div></div>
+          <div class="srow"><div class="lbl">Night starts</div><div class="ctl" data-time="qs"></div></div>
+          <div class="srow"><div class="lbl">Night ends</div><div class="ctl" data-time="qe"></div></div>
+        </div>
+      </section>
+      <section class="view" data-v="display:saver">
+        <div class="card sset">
+          <div class="srow"><div class="lbl">Screensaver</div><div class="ctl"><div class="chips" data-chips="on"></div><button class="btn primary wide" id="preview">Preview</button></div></div>
+          <div class="srow"><div class="lbl">Starts after</div><div class="ctl"><div class="chips" data-chips="wait"></div></div></div>
+          <div class="srow"><div class="lbl">Style</div><div class="ctl"><div class="chips" data-chips="style"></div></div></div>
+          <div class="srow"><div class="lbl">Brightness<small>tap to preview</small></div><div class="ctl" data-bar="saver"></div></div>
         </div>
       </section>
 
@@ -389,16 +448,19 @@
       note: "Away temperature and timing rules stay on the phone." },
     garage: { label: "Garage", vars: { split: "A: status + big button", stack: "B: status bar + recent" },
       note: "The button fill shows how closed the door is and follows it as it moves (sped up to 6 s here). Open asks for a second tap within 4 seconds." },
-    more: { label: "More", vars: { grid: "Four big tiles" }, note: "Tap a tile to go there." },
+    more: { label: "More", vars: { a: "A: one Screen tile (tabs inside)", b: "B: Screen and Screensaver tiles" },
+      note: "Tap a tile to go there. A adds one wide Screen tile; B adds two tiles, one per settings page." },
+    display: { label: "More: Screen", vars: { screen: "Screen", saver: "Screensaver" },
+      note: "Changes save on their own. Dragging or tapping a brightness bar shows that brightness for 3 s. Preview runs the screensaver at its brightness until you tap. While music plays the screensaver is always the song view; Style picks what shows otherwise. Settings are per panel." },
     frame: { label: "More: Frames", vars: { main: "Mirror + three buttons" },
       note: "Frame settings (quiet hours, weather, folders) stay on the phone." },
     gallery: { label: "More: Gallery", vars: { grid: "Pages of 3", viewer: "One picture" },
       note: "Paged with big arrows instead of a scrolling list. Tap a picture to open it. Uploads and trash stay on the phone." },
     settings: { label: "More: Bluetooth", vars: { bt: "Pair + devices" }, note: "" },
   };
-  let page = "music", variant = "np";
-  try { const s = JSON.parse(localStorage.getItem("panel-mock") || "null"); if (s && PAGES[s.page] && PAGES[s.page].vars[s.variant]) { page = s.page; variant = s.variant; } } catch (e) {}
-  const hp = location.hash.slice(1).split(":"); if (PAGES[hp[0]]) { page = hp[0]; variant = PAGES[hp[0]].vars[hp[1]] ? hp[1] : Object.keys(PAGES[hp[0]].vars)[0]; }
+  let page = "music", variant = "np", mode = "a";
+  try { const s = JSON.parse(localStorage.getItem("panel-mock") || "null"); if (s && PAGES[s.page] && PAGES[s.page].vars[s.variant]) { page = s.page; variant = s.variant; } if (s && (s.mode === "a" || s.mode === "b")) mode = s.mode; } catch (e) {}
+  const hp = location.hash.slice(1).split(":"); if (PAGES[hp[0]]) { page = hp[0]; variant = PAGES[hp[0]].vars[hp[1]] ? hp[1] : Object.keys(PAGES[hp[0]].vars)[0]; if (page === "more") mode = variant; }
 
   const PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
   const PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>';
@@ -475,7 +537,65 @@
     drawDoor();
   }));
 
-  document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
+  // Screen settings: per-panel values, saved on change (here, kept in memory).
+  const S = { day: 100, night: 15, saver: 40, qs: 22 * 60, qe: 6 * 60, on: "On", wait: "1 min", style: "Aurora" };
+  const BAR_NAME = { day: "Brightness", night: "Night dim", saver: "Screensaver" };
+  const CHIPS = { on: ["On", "Off"], wait: ["30 s", "1 min", "2 min", "5 min", "10 min"], style: ["Aurora"] };
+  let veilTimer = null, saverTimer = null;
+  function veil(pct, label) {
+    const v = document.getElementById("veil");
+    v.style.opacity = String((1 - pct / 100) * 0.92);
+    document.getElementById("veiltxt").textContent = label;
+    document.getElementById("veiltxt").style.display = label ? "" : "none";
+    clearTimeout(veilTimer);
+    if (label) veilTimer = setTimeout(() => { v.style.opacity = "0"; }, 3000);
+  }
+  function fmt(m) { const h = Math.floor(m / 60) % 24, mm = String(m % 60).padStart(2, "0"); return `${h % 12 || 12}:${mm} ${h < 12 ? "AM" : "PM"}`; }
+  function drawSettings() {
+    document.querySelectorAll("[data-bar]").forEach((c) => {
+      const k = c.dataset.bar, v = S[k];
+      c.innerHTML = `<button class="btn" aria-label="Dimmer">${MINUS}</button><div class="hbar${v < 30 ? " low" : ""}"><i style="width:${v}%"></i><span>${v}%</span></div><button class="btn" aria-label="Brighter">${PLUS}</button>`;
+      const set = (n) => { S[k] = Math.max(k === "day" ? 20 : 0, Math.min(100, n)); drawSettings(); veil(S[k], `${BAR_NAME[k]} ${S[k]}%`); };
+      const [minus, plus] = c.querySelectorAll(".btn");
+      minus.onclick = () => set(v - 5); plus.onclick = () => set(v + 5);
+      const bar = c.querySelector(".hbar");
+      bar.onclick = (e) => { const r = bar.getBoundingClientRect(); set(Math.round(((e.clientX - r.left) / r.width) * 20) * 5); };
+    });
+    document.querySelectorAll("[data-time]").forEach((c) => {
+      const k = c.dataset.time;
+      c.innerHTML = `<button class="btn" aria-label="Earlier">${MINUS}</button><div class="tval">${fmt(S[k])}</div><button class="btn" aria-label="Later">${PLUS}</button>`;
+      const [minus, plus] = c.querySelectorAll(".btn");
+      minus.onclick = () => { S[k] = (S[k] + 1410) % 1440; drawSettings(); };
+      plus.onclick = () => { S[k] = (S[k] + 30) % 1440; drawSettings(); };
+    });
+    document.querySelectorAll("[data-chips]").forEach((c) => {
+      const k = c.dataset.chips;
+      c.innerHTML = "";
+      CHIPS[k].forEach((label) => {
+        const b = document.createElement("button");
+        b.className = "btn" + (S[k] === label ? " on" : ""); b.textContent = label;
+        b.onclick = () => { S[k] = label; drawSettings(); };
+        c.append(b);
+      });
+      if (k === "style") { const s = document.createElement("button"); s.className = "btn soon"; s.textContent = "More soon"; c.append(s); }
+    });
+    const off = S.on === "Off";
+    document.querySelectorAll('[data-v="display:saver"] .srow').forEach((r, i) => { if (i > 0) r.style.opacity = off ? ".35" : ""; });
+    document.getElementById("preview").disabled = off;
+    document.getElementById("preview").style.opacity = off ? ".35" : "";
+    const sub = off ? "Off" : `${S.style} after ${S.wait}`;
+    document.querySelectorAll('[data-tile="saver"] .s').forEach((e) => { e.textContent = sub; });
+  }
+  document.getElementById("preview").addEventListener("click", () => {
+    document.getElementById("saver").classList.remove("hide");
+    veil(S.saver, "");
+    clearTimeout(saverTimer); saverTimer = setTimeout(endPreview, 15000);
+  });
+  function endPreview() { clearTimeout(saverTimer); document.getElementById("saver").classList.add("hide"); veil(100, ""); }
+  document.getElementById("saver").addEventListener("click", endPreview);
+  document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => go("display", b.dataset.tab)));
+
+  document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go, b.dataset.tile)));
   document.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => go("gallery", "viewer")));
   document.querySelectorAll("[data-go-v]").forEach((b) => b.addEventListener("click", () => go("music", b.dataset.goV)));
   document.querySelectorAll('[data-v="music:rooms"] .bar .meta, [data-v="music:rooms"] .bar .art').forEach((b) => b.addEventListener("click", () => go("music", "np")));
@@ -485,8 +605,11 @@
   document.querySelectorAll(".rail button").forEach((b) => b.addEventListener("click", () => go(b.dataset.page)));
 
   function go(p, v) {
-    page = p; variant = v || Object.keys(PAGES[p].vars)[0];
-    try { localStorage.setItem("panel-mock", JSON.stringify({ page, variant })); } catch (e) {}
+    page = p;
+    if (p === "more") variant = v || mode;
+    else variant = PAGES[p].vars[v] ? v : Object.keys(PAGES[p].vars)[0];
+    if (p === "more") mode = variant;
+    try { localStorage.setItem("panel-mock", JSON.stringify({ page, variant, mode })); } catch (e) {}
     render();
   }
   function render() {
@@ -504,17 +627,29 @@
     document.getElementById("note").textContent = PAGES[page].note;
     const amb = page === "music" && variant === "ambient";
     document.getElementById("ambient").classList.toggle("hide", !amb);
-    document.querySelectorAll("[data-v]").forEach((s) => s.classList.toggle("hide", s.dataset.v !== `${page}:${amb ? "np" : variant}`));
-    const top = ["frame", "gallery", "settings"].includes(page) ? "more" : page;
+    const shown = amb ? "np" : page === "more" ? "grid" : variant;
+    document.querySelectorAll("[data-v]").forEach((s) => s.classList.toggle("hide", s.dataset.v !== `${page}:${shown}`));
+    const top = ["frame", "gallery", "settings", "display"].includes(page) ? "more" : page;
     document.querySelectorAll(".rail button").forEach((b) => b.classList.toggle("on", b.dataset.page === top));
     const sub = top === "more" && page !== "more";
     document.getElementById("back").classList.toggle("hide", !sub);
     document.getElementById("clock").classList.toggle("hide", sub);
+    // Mode A: one Screen tile, tabs in the strip. Mode B: two tiles, no tabs.
+    const tabs = page === "display" && mode === "a";
+    document.getElementById("stabs").classList.toggle("hide", !tabs);
+    document.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === variant));
+    [...document.getElementById("strip").children].forEach((c) => {
+      if (!["back", "stabs", "clock"].includes(c.id) && !c.classList.contains("grow")) c.classList.toggle("hide", tabs);
+    });
+    const tiles = document.getElementById("tiles");
+    tiles.classList.toggle("five", mode === "a"); tiles.classList.toggle("six", mode === "b");
+    document.querySelector('[data-tile="saver"]').classList.toggle("hide", mode === "a");
+    document.getElementById("screentile-s").textContent = mode === "a" ? "Brightness, night hours, screensaver" : "Brightness, night";
   }
 
   function tick() { document.getElementById("clock").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
   tick(); setInterval(tick, 15000);
-  drawPlay(); drawCols(); drawDoor(); render();
+  drawPlay(); drawCols(); drawDoor(); drawSettings(); render();
 </script>
 </body>
 </html>
