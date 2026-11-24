@@ -160,3 +160,14 @@ export function tileLines(settings) {
     saver: settings.screensaver_on ? `${style} after ${waitLabel(settings.screensaver_wait_s)}` : "Off",
   };
 }
+
+// A brightness bar's view: fill percent, label, and which steppers are spent.
+export function barView(value, min) {
+  return { fill: value, label: `${value}%`, low: value < 30, minusDisabled: value <= min, plusDisabled: value >= 100 };
+}
+
+// With the screensaver off its other rows read as inactive and Preview is off.
+export function saverView(settings) {
+  const off = settings.screensaver_on === false;
+  return { rowsDimmed: off, previewDisabled: off };
+}

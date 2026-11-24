@@ -2110,6 +2110,9 @@ function followCover(url) {
 // only then is the module fetched, so phones create no overlay, canvas or timer.
 let screensaver = null;
 let currentHues = DEFAULT_HUES;
+// The panel's own settings from the hub (the Screen and Screensaver pages), kept so
+// a screensaver module that finishes loading after the first read still gets them.
+let panelSettings = null;
 if (new URLSearchParams(location.search).get("panel") === "1") {
   import("./screensaver.js")
     .then((m) => {
@@ -2122,6 +2125,7 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
       });
       screensaver?.setHues(currentHues);
       screensaver?.setTrack(state.nowTrack);
+      if (panelSettings) screensaver?.setSettings(panelSettings);
     })
     .catch(() => {});
 }
@@ -2156,6 +2160,11 @@ if (new URLSearchParams(location.search).get("panel") === "1") {
           if (Object.keys(out.accepted).length > 0) climateQueue.edit(out.accepted);
         },
         setScreen: showScreen,
+        settingsChanged: (next) => {
+          panelSettings = next;
+          screensaver?.setSettings(next);
+        },
+        hues: () => currentHues,
         frames: () => frameList(state.frameControl, state.mirrors),
         framesVisible: () => navVisible().frame,
         selectedFrame: () => state.selectedFrame,

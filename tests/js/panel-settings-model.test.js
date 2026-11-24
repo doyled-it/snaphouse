@@ -127,3 +127,16 @@ test("tileLines reads Brightness, night and the screensaver line", () => {
   assert.equal(tileLines({ ...SETTINGS_DEFAULTS, screensaver_on: false }).saver, "Off");
   assert.equal(tileLines({ ...SETTINGS_DEFAULTS, screensaver_wait_s: 600 }).saver, "Aurora after 10 min");
 });
+
+import { barView, saverView } from "../../roles/room_picker/files/site/panel-settings-model.js";
+
+test("barView gives the fill, label and which steppers are at their limit", () => {
+  assert.deepEqual(barView(100, 20), { fill: 100, label: "100%", low: false, minusDisabled: false, plusDisabled: true });
+  assert.deepEqual(barView(20, 20), { fill: 20, label: "20%", low: true, minusDisabled: true, plusDisabled: false });
+  assert.deepEqual(barView(0, 0), { fill: 0, label: "0%", low: true, minusDisabled: true, plusDisabled: false });
+});
+
+test("saverView dims the other rows and disables Preview when the screensaver is off", () => {
+  assert.deepEqual(saverView({ ...SETTINGS_DEFAULTS, screensaver_on: false }), { rowsDimmed: true, previewDisabled: true });
+  assert.deepEqual(saverView(SETTINGS_DEFAULTS), { rowsDimmed: false, previewDisabled: false });
+});

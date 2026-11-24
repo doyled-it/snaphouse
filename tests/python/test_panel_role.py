@@ -576,7 +576,7 @@ SS_CTX = {
     "panel_screensaver": {"enabled": True, "day_idle_s": 300},
     "panel_backlight": {**BACKLIGHT_CTX, "grab_wake_tap": False},
 }
-SS_QUERY = "panel=1&pid=panel&ss=1&idle=300&nidle=300&qs=22:00&qe=06:00"
+SS_QUERY = "panel=1&pid=panel&ss=1&lp=8784&idle=300&nidle=300&qs=22:00&qe=06:00"
 
 
 def _panel_url(**context) -> str:
@@ -627,6 +627,11 @@ def test_kiosk_url_uses_one_wait_for_day_and_night():
     assert "idle=120&nidle=120&qs=23:30&qe=06:00" in url
 
 
+def test_kiosk_url_carries_the_backlight_local_port_for_previews():
+    assert "&lp=8784&" in _panel_url(backlight_local_port=8784, **SS_CTX)
+    assert "&lp=9000&" in _panel_url(backlight_local_port=9000, **SS_CTX)
+
+
 def test_kiosk_url_carries_the_panel_id():
     assert "&pid=panel&" in _panel_url(snaphouse_host="panel", **SS_CTX)
     assert "&pid=hall&" in _panel_url(snaphouse_host="hall", **SS_CTX)
@@ -640,7 +645,7 @@ def test_kiosk_url_is_panel_mode_even_when_the_screensaver_is_off():
         panel_screensaver={"enabled": False, "day_idle_s": 300},
         panel_backlight=BACKLIGHT_CTX,
     )
-    assert url == "http://h.example/?panel=1&pid=panel&ss=0&idle=300&nidle=300&qs=22:00&qe=06:00#x"
+    assert url == "http://h.example/?panel=1&pid=panel&ss=0&lp=8784&idle=300&nidle=300&qs=22:00&qe=06:00#x"
 
 
 def test_kiosk_env_change_restarts_the_kiosk():

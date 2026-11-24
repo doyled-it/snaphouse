@@ -364,3 +364,85 @@ test("the ambient layer is not redrawn while the page is hidden", () => {
   env.doc.dispatch("visibilitychange");
   assert.notEqual(fill.style.transform, frozen);
 });
+
+const SETTINGS = { screensaver_on: true, screensaver_wait_s: 120, night_start: "22:00", night_end: "06:00", screensaver_style: "aurora" };
+const TRACK = { title: "Song", artist: "Band", status: "playing", artUrl: null, controllable: false, held: false, position: 0, duration: 200, updatedAt: 0 };
+
+test("setSettings changes the wait live, for day and night", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(SETTINGS);
+  env.clock.advance(2 * MIN - 1000);
+  assert.equal(s.isUp(), false);
+  env.clock.advance(1000);
+  assert.equal(s.isUp(), true);
+  s.setSettings({ ...SETTINGS, screensaver_wait_s: 30 });
+  assert.equal(s.isUp(), true);
+});
+
+test("a shorter wait takes effect for the idle time already spent", () => {
+  const env = makeEnv();
+  const s = make(env);
+  env.clock.advance(60 * 1000);
+  s.setSettings({ ...SETTINGS, screensaver_wait_s: 30 });
+  env.clock.advance(1000);
+  assert.equal(s.isUp(), true);
+});
+
+test("setSettings off hides an overlay that is up and it never shows again", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(SETTINGS);
+  env.clock.advance(2 * MIN);
+  assert.equal(s.isUp(), true);
+  let dismissed = 0;
+  s.setSettings({ ...SETTINGS, screensaver_on: false });
+  assert.equal(s.isUp(), false);
+  assert.equal(overlay(env).classList.contains("is-up"), false);
+  env.clock.advance(60 * MIN);
+  assert.equal(s.isUp(), false);
+  assert.equal(dismissed, 0);
+});
+
+test("with the screensaver off the ambient view never shows either", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings({ ...SETTINGS, screensaver_on: false });
+  s.setTrack(TRACK);
+  env.clock.advance(60 * MIN);
+  assert.equal(s.isUp(), false);
+});
+
+test("turning it off does not count as a dismiss (no jump to Now playing)", () => {
+  const env = makeEnv();
+  let dismissed = 0;
+  const s = make(env, "?panel=1", { onDismiss: () => { dismissed += 1; } });
+  s.setSettings(SETTINGS);
+  s.setTrack(TRACK);
+  env.clock.advance(2 * MIN);
+  assert.equal(s.isUp(), true);
+  s.setSettings({ ...SETTINGS, screensaver_on: false });
+  assert.equal(dismissed, 0);
+});
+
+test("turning it back on starts a fresh wait", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings({ ...SETTINGS, screensaver_on: false });
+  env.clock.advance(10 * MIN);
+  s.setSettings(SETTINGS);
+  env.clock.advance(2 * MIN - 1000);
+  assert.equal(s.isUp(), false);
+  env.clock.advance(2000);
+  assert.equal(s.isUp(), true);
+});
+
+test("setSettings with the same values changes nothing", () => {
+  const env = makeEnv();
+  const s = make(env);
+  s.setSettings(SETTINGS);
+  env.clock.advance(MIN);
+  s.setSettings({ ...SETTINGS });
+  env.clock.advance(MIN);
+  assert.equal(s.isUp(), true);
+});

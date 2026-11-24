@@ -12,7 +12,7 @@ import { createAurora as realCreateAurora } from "./aurora.js";
 import { swapImage as realSwapImage } from "./cover-color.js";
 import { ambientWanted, pausedClock } from "./now-model.js";
 import { progressAt } from "./rooms-model.js";
-import { parsePanelParams, shouldShow, idleLimitMs } from "./screensaver-model.js";
+import { parsePanelParams, paramsFromSettings, shouldShow, idleLimitMs } from "./screensaver-model.js";
 
 const FADE_OUT_MS = 300;
 const SWALLOW_MS = 400;
@@ -29,7 +29,7 @@ const DISMISS = new Set(["pointerdown", "keydown"]);
 export function createScreensaver({
   doc,
   win,
-  params,
+  params: initialParams,
   createAurora = realCreateAurora,
   swapImage = realSwapImage,
   onDismiss = () => {},
@@ -76,6 +76,9 @@ export function createScreensaver({
     nowMs: () => win.performance.now(),
   });
 
+  // The wait, hours and on/off. They start from the kiosk URL and are replaced by
+  // the panel's own settings from the hub (setSettings).
+  let params = initialParams;
   let up = false;
   let held = false;
   let lastInput = now();
@@ -135,7 +138,7 @@ export function createScreensaver({
   function check() {
     if (checkTimer !== null) clearTimeout(checkTimer);
     checkTimer = null;
-    if (up) return;
+    if (up || params.enabled === false) return;
     const date = new Date(now());
     const idleMs = now() - lastInput;
     if (shouldShow({ idleMs, date, params, inputHeld: held })) {
@@ -158,14 +161,16 @@ export function createScreensaver({
     ambientTimer = setInterval(applyMode, AMBIENT_TICK_MS);
   }
 
-  function dismiss() {
+  // `silent` closes the overlay without the dismiss callback: the screensaver was
+  // switched off, so nothing should jump to Now playing.
+  function dismiss(silent = false) {
     up = false;
     shown = null;
     if (ambientTimer !== null) {
       clearInterval(ambientTimer);
       ambientTimer = null;
     }
-    if (track) onDismiss(track);
+    if (track && !silent) onDismiss(track);
     held = false;
     lastInput = now();
     node.classList.remove("is-up");
@@ -208,6 +213,25 @@ export function createScreensaver({
 
   return {
     setHues: (h) => aurora.setHues(h),
+    // This panel's settings from the hub (panel-settings-model.js). A new wait,
+    // hours or style apply at once; switching it off closes an open overlay and
+    // switching it on starts a fresh wait.
+    setSettings(settings) {
+      const next = paramsFromSettings(settings, params);
+      if (JSON.stringify(next) === JSON.stringify(params)) return;
+      const wasOn = params.enabled !== false;
+      params = next;
+      if (!params.enabled) {
+        if (checkTimer !== null) {
+          clearTimeout(checkTimer);
+          checkTimer = null;
+        }
+        if (up) dismiss(true);
+        return;
+      }
+      if (!wasOn) lastInput = now();
+      check();
+    },
     // The page's current track (a parseNowPlayingDoc result) or null. The paused
     // moment is this device's own clock, never a hub timestamp.
     setTrack(next) {
