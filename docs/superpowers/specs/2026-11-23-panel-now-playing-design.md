@@ -1,6 +1,6 @@
 # Panel Now Playing design
 
-Date: 2026-11-23. Status: draft for owner approval.
+Date: 2026-11-23. Status: draft for owner approval (builder check done).
 
 ## Intent
 
@@ -91,3 +91,30 @@ phone that has nothing to resume).
 - Tests: model tests for the Music tab's screen choice, the 30 s return, the
   5-minute rule, the paused and AirPlay views; hub tests for the hold; backlight
   tests for the no-dim rule. Panel sizes per the panel layout design.
+
+## Calls made after the builder check
+
+Level 1's calls after a builder read the draft; they refine the sections above.
+
+1. **The phone name** in "Paused on <phone>" comes from the page's existing
+   Bluetooth devices list (the connected device the panel already shows on its
+   Bluetooth screen). No new field in `now-playing.json`. With no connected
+   device name, the line reads "Paused".
+2. **A hub restart forgets a paused track.** The nightly reboot or a service
+   restart clears it, as today; resuming then needs the phone. Recorded as a
+   known limit, no persistence.
+3. **The backlight service** gets the hub origin from the same `panel_url` the
+   kiosk uses (through the unit's environment), reads the hub's
+   `now-playing.json` every 10 s, and on a failed read keeps its last answer for
+   up to 2 minutes, then behaves as if nothing is playing (normal dimming). It
+   stays stdlib-only.
+4. **"Paused less than 5 minutes ago" is measured on each device's own clock**
+   from the moment it first sees the track paused (the page and the backlight
+   service each keep that moment), never by comparing a hub timestamp with a Pi
+   clock. A kiosk restart during a pause restarts that count (at most 5 extra
+   minutes of the ambient view).
+5. **Held tracks without a player** (a paused AirPlay track, or a Bluetooth track
+   whose player went away, during the existing 600 s hold) still show on Now
+   playing and count for the 5-minute ambient rule, but never show Play: AirPlay
+   shows "Control from the phone", a Bluetooth track with no player shows no
+   transport.
