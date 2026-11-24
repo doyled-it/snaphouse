@@ -1,0 +1,75 @@
+{
+ "resultCount": 10,
+ "results": [
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "MF DOOM",
+   "collectionName": "Metal Fingers Presents: Special Herbs, Vol. 1 & 2",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/62/aa/f4/62aaf4b9-d184-61b1-e19d-77e2aea29289/56044.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "MF DOOM",
+   "collectionName": "Metal Fingers Presents: Special Herbs Vol. 5 & 6",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/91/ad/71/91ad7129-b4cc-8b2b-0856-90aa036e5a39/56048.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "MF DOOM",
+   "collectionName": "Metal Fingers Presents: Special Herbs Vol. 3 & 4",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/6b/78/c3/6b78c38e-c530-96fe-6f3a-6c53d5650696/56046.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "MF DOOM",
+   "collectionName": "Metal Fingers Presents: Special Herbs Vol. 9 & 0",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/6a/ac/73/6aac73df-6370-f1b5-a177-1d9746d576bc/55749.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "MF DOOM",
+   "collectionName": "Metal Fingers Presents: Special Herbs, Vol. 7 And 8",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/af/70/1d/af701d68-5dec-42d6-33ef-bc99533a8be1/56047.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "MF DOOM",
+   "collectionName": "Metal Fingers Presents: Special Herbs, Vol. 3 & 4",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music/ba/9c/58/mzi.rsnouyrc.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "MF DOOM",
+   "collectionName": "Metal Fingers Presents: Special Herbs, The Box Set Vol. 0 - 9",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/e3/df/d6/e3dfd627-b0a1-b615-6435-94f701fd64b5/36766.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "DANGERDOOM, MF DOOM & Danger Mouse",
+   "collectionName": "THE MOUSE & THE MASK",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/23/40/b5/2340b514-8149-da62-3fe5-f6e5bd3ec172/0878390000593_cover.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "JJ DOOM, MF DOOM & Jneiro Jarel",
+   "collectionName": "Key to the Kuffs",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/0d/f1/2c/0df12cc5-dc90-acc1-f025-a87bdda3c1e7/0878390001996_cover.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "MF DOOM & FloFilz",
+   "collectionName": "Coco Mango (FloFilz Remix) - Single",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/83/03/61/830361c8-81b0-7190-b42c-6ef2762fda0c/5860.jpg/100x100bb.jpg"
+  }
+ ]
+}

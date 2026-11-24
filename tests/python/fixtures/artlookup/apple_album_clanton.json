@@ -1,0 +1,47 @@
+{
+ "resultCount": 6,
+ "results": [
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "George Clanton",
+   "collectionName": "100% Electronica",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/81/3b/4d/813b4d32-16da-5db4-599f-58c6f7e652c4/artwork.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "George Clanton",
+   "collectionName": "100% Electronica (Bonus Tracks)",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/40/1f/92/401f921d-963f-93e9-a3c6-afc39141d59e/artwork.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "George Clanton",
+   "collectionName": "Slide",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/09/12/99/09129969-2ebe-9706-8682-e7c4565cc1f3/artwork.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "ESPRIT 空想 & George Clanton",
+   "collectionName": "200% Electronica",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/ee/3a/6c/ee3a6c86-194f-b8c8-4b07-262cbfab5962/artwork.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "George Clanton",
+   "collectionName": "I Been Young - Single",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/72/8d/0b/728d0b50-5d8c-3ea0-0757-c393fdcb9a74/659783467434_cover.jpg/100x100bb.jpg"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "artistName": "ESPRIT 空想 & George Clanton",
+   "collectionName": "Virtua.Zip (Bonus Track) [s] - EP",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/da/8d/ed/da8ded8f-f91a-1402-4539-1ac513b80935/artwork.jpg/100x100bb.jpg"
+  }
+ ]
+}

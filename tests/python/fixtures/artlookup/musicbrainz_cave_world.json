@@ -1,0 +1,40 @@
+{
+ "releases": [
+  {
+   "id": "67020dff-2c0b-470f-8104-e157f168e035",
+   "title": "Cave World",
+   "artist-credit": [
+    {
+     "name": "Viagra Boys"
+    }
+   ],
+   "release-group": {
+    "id": "bed07eb0-f5b6-4e42-b6b8-c2416b86cbfc"
+   }
+  },
+  {
+   "id": "0baa1bb0-9314-4d58-abec-316d39b1f1cb",
+   "title": "Cave World",
+   "artist-credit": [
+    {
+     "name": "Viagra Boys"
+    }
+   ],
+   "release-group": {
+    "id": "bed07eb0-f5b6-4e42-b6b8-c2416b86cbfc"
+   }
+  },
+  {
+   "id": "a35dd240-a22e-428f-86ed-28d2261e3635",
+   "title": "Cave World",
+   "artist-credit": [
+    {
+     "name": "Viagra Boys"
+    }
+   ],
+   "release-group": {
+    "id": "bed07eb0-f5b6-4e42-b6b8-c2416b86cbfc"
+   }
+  }
+ ]
+}

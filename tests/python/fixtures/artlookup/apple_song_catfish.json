@@ -1,0 +1,40 @@
+{
+ "resultCount": 5,
+ "results": [
+  {
+   "wrapperType": "track",
+   "artistName": "Four Tops",
+   "collectionName": "Catfish",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music128/v4/eb/30/61/eb306143-e9a7-10b8-f4f4-68cd045557a5/00602547480057.rgb.jpg/100x100bb.jpg",
+   "trackName": "Strung Out For Your Love"
+  },
+  {
+   "wrapperType": "track",
+   "artistName": "Four Tops",
+   "collectionName": "Their Greatest Love Songs",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music128/v4/f5/77/52/f5775289-37ca-1167-2cf3-d2f7528da1b7/00076744014726.rgb.jpg/100x100bb.jpg",
+   "trackName": "Strung Out for Your Love"
+  },
+  {
+   "wrapperType": "track",
+   "artistName": "Various Artists",
+   "collectionName": "Smooth Sax Tribute to the Four Tops",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music/4e/b3/b4/dj.ikhpmjmm.jpg/100x100bb.jpg",
+   "trackName": "Strung Out for Your Love"
+  },
+  {
+   "wrapperType": "track",
+   "artistName": "Metallica",
+   "collectionName": "Garage Inc.",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/ec/2f/09/ec2f0972-db2a-ef0d-52eb-7167fee36d5a/0075596229968.jpg/100x100bb.jpg",
+   "trackName": "Turn the Page"
+  },
+  {
+   "wrapperType": "track",
+   "artistName": "Outkast",
+   "collectionName": "Speakerboxxx/The Love Below",
+   "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/71/ae/6a/71ae6a46-99a6-e9d8-d7f3-41c0f2df45c4/196872579123.jpg/100x100bb.jpg",
+   "trackName": "Last Call (feat. Slimm Calhoun, Lil Jon, The Eastside Boyz & Mello)"
+  }
+ ]
+}
