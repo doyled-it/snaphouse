@@ -56,6 +56,10 @@ class FakeFetch:
         for substring, response in self.routes:
             if substring in url:
                 return response(url) if callable(response) else response
+        if "itunes.apple.com" in url and "media=music" in url:
+            # A music test that names no Apple route sees Apple answer with an
+            # empty result; a test that wants an Apple failure routes one.
+            return _fixture_bytes("apple_album_empty.json")
         return None
 
 
@@ -1600,3 +1604,141 @@ def test_a_full_credit_hit_is_shared_with_the_albums_lead_key(tmp_path):
 
     assert first is not None and second is not None
     assert len(fetch.calls) == calls
+
+
+# --------------------------------------------------------------------------- #
+# MusicBrainz art fallbacks, and an Apple error is not a miss
+# --------------------------------------------------------------------------- #
+
+
+def _caa(responses):
+    """A Cover Art Archive route: URL substring to bytes or None, in a dict."""
+
+    def respond(url):
+        for needle, body in responses.items():
+            if needle in url:
+                return body
+        return None
+
+    return ("coverartarchive.org", respond)
+
+
+def _caa_calls(fetch):
+    return [c for c in fetch.calls if "coverartarchive.org" in c]
+
+
+def test_preachers_son_falls_back_to_release_group_art(tmp_path):
+    release = "1bae7e13-4f1c-486e-8432-7aacb835a9f1"
+    group = "72ac2c3b-a935-4748-a649-d01b1f1831c9"
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_preachers_son.json")),
+            _caa({f"/release-group/{group}/": _jpeg()}),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find("Sheba With Angel Mae", "YGTUT", "Preacher's Son", "music", None)
+
+    assert url is not None
+    assert _caa_calls(fetch) == [
+        f"https://coverartarchive.org/release/{release}/front-500",
+        f"https://coverartarchive.org/release-group/{group}/front-500",
+    ]
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_special_herbs_falls_back_to_release_group_art(tmp_path):
+    group = "f4d95efb-f5d0-3222-bf9d-2045cb3389f2"
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_special_herbs.json")),
+            _caa({f"/release-group/{group}/": _jpeg()}),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    url = lookup.find("Arrow Root", "MF DOOM",
+                      "Metal Fingers Presents: Special Herbs, Vol. 1 & 2", "music", None)
+    assert url is not None
+
+
+def test_next_matching_release_is_tried_before_release_group_art(tmp_path):
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_cave_world.json")),
+            _caa({"/release/0baa1bb0-9314-4d58-abec-316d39b1f1cb/": _jpeg()}),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+
+    url = lookup.find("Track", "Viagra Boys", "Cave World (Deluxe)", "music", None)
+
+    assert url is not None
+    assert [c.split("/")[4] for c in _caa_calls(fetch)] == ["67020dff-2c0b-470f-8104-e157f168e035", "0baa1bb0-9314-4d58-abec-316d39b1f1cb"]
+    assert not any("release-group" in c for c in fetch.calls)
+
+
+def test_every_art_fetch_a_404_is_a_cached_miss(tmp_path):
+    def missing(url):
+        raise FetchError("HTTP 404")
+
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_preachers_son.json")),
+            ("coverartarchive.org", missing),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("x", "YGTUT", "Preacher's Son", "music", None) is None
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_art_fetch_that_times_out_is_an_error_not_a_miss(tmp_path):
+    def slow(url):
+        raise FetchError("TimeoutError")
+
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes("apple_album_empty.json")),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz_preachers_son.json")),
+            ("coverartarchive.org", slow),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("x", "YGTUT", "Preacher's Son", "music", None) is None
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_apple_error_with_musicbrainz_miss_is_a_failure_not_a_miss(tmp_path):
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", lambda url: None),
+            ("musicbrainz.org", _empty_musicbrainz()),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("x", "Radiohead", "OK Computer", "music", None) is None
+    assert not list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_apple_error_with_musicbrainz_hit_still_finds_the_cover(tmp_path):
+    fetch = FakeFetch(
+        [
+            ("itunes.apple.com", lambda url: None),
+            ("musicbrainz.org", _fixture_bytes("musicbrainz.json")),
+            ("coverartarchive.org", _jpeg()),
+        ]
+    )
+    clock, sleep, _slept = _gate_recorder()
+    lookup = ArtLookup(tmp_path, fetch, clock=clock, sleep=sleep)
+    assert lookup.find("Airbag", "Radiohead", "OK Computer", "music", None) is not None

@@ -87,6 +87,7 @@ _OPEN_LIBRARY_SEARCH = "https://openlibrary.org/search.json"
 _OPEN_LIBRARY_COVER = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
 _MUSICBRAINZ_SEARCH = "https://musicbrainz.org/ws/2/release/"
 _COVER_ART_ARCHIVE = "https://coverartarchive.org/release/{mbid}/front-500"
+_COVER_ART_ARCHIVE_GROUP = "https://coverartarchive.org/release-group/{mbid}/front-500"
 
 # MusicBrainz asks for no more than one request per second.
 _MUSICBRAINZ_MIN_INTERVAL = 1.0
@@ -549,11 +550,10 @@ class ArtLookup:
         # names), then MusicBrainz on the full track credit. Skip both when a
         # fresh miss marker already records that this exact credit found nothing.
         if not self._miss_fresh(full_miss):
-            resolved = self._apple_music(title, artist, album)
-            if resolved.outcome != _FOUND:
+            apple = self._apple_music(title, artist, album)
+            resolved = apple
+            if apple.outcome != _FOUND:
                 resolved = self._music(artist, album)
-            if resolved.outcome == _ERROR:
-                return (None, "failure", None)
             if resolved.image is not None:
                 stored = self._store_cover(
                     full_key, full_image, full_miss, resolved.image
@@ -566,9 +566,14 @@ class ArtLookup:
                     except OSError:
                         pass
                 return stored
+            if _ERROR in (apple.outcome, resolved.outcome):
+                # One source failed to answer, so "no cover" is not proven.
+                return (None, "failure", None)
             self._write_miss(full_miss)
 
         # Step 2: fall back to the lead, only when the credit named extra artists.
+        # Apple already matched the whole credit by any of its names, so only
+        # MusicBrainz is asked again.
         if lead_key is None:
             return (None, "miss", None)
         if self._miss_fresh(lead_miss):
@@ -895,20 +900,38 @@ class ArtLookup:
             self._last_musicbrainz = self._clock()
         if releases is None:
             return _Resolved(_ERROR, None)
+        matches: list[tuple[int, dict]] = []
         for release in releases:
             if not isinstance(release, dict):
                 continue
-            if title_score(album, release.get("title")) == 0:
+            score = title_score(album, release.get("title"))
+            if score == 0:
                 continue
             if not artists_match(name, _credit_names(release.get("artist-credit"))):
                 continue
-            mbid = release.get("id")
-            if isinstance(mbid, str):
-                image = self._get(_COVER_ART_ARCHIVE.format(mbid=mbid))
-                if image is None:
-                    return _Resolved(_ERROR, None)
+            if isinstance(release.get("id"), str):
+                matches.append((score, release))
+        if not matches:
+            return _Resolved(_MISS, None)
+        # Exact full-title matches rank above core matches; the sort is stable,
+        # so MusicBrainz's own order breaks ties.
+        matches.sort(key=lambda match: -match[0])
+        urls = [_COVER_ART_ARCHIVE.format(mbid=release["id"]) for _, release in matches]
+        group = matches[0][1].get("release-group")
+        group_id = group.get("id") if isinstance(group, dict) else None
+        if isinstance(group_id, str):
+            urls.append(_COVER_ART_ARCHIVE_GROUP.format(mbid=group_id))
+        # A release with no picture is a miss for that release only: try the next
+        # matching release, then the album-wide picture. If every fetch was a 404
+        # there is no art to find (a miss); any other failure is transient.
+        transient = False
+        for art_url in urls:
+            image = self._get(art_url)
+            if image is not None:
                 return _Resolved(_FOUND, image)
-        return _Resolved(_MISS, None)
+            if self._last_reason != "HTTP 404":
+                transient = True
+        return _Resolved(_ERROR if transient else _MISS, None)
 
     def _await_musicbrainz_gate(self) -> None:
         """Wait, if needed, so MusicBrainz is called at most once per second."""
