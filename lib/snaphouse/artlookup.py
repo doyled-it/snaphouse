@@ -764,18 +764,22 @@ class ArtLookup:
         results = _search_list(self._get(url), "results")
         if results is None:
             return _Resolved(_ERROR, None)
-        result = _pick_show(results, show)
+        # Only a show whose artwork is on Apple's artwork CDN can be used; one
+        # pointing anywhere else is skipped as if it had no artwork.
+        usable = [
+            r for r in results
+            if isinstance(r, dict) and _apple_artwork_ok(r.get("artworkUrl600"))
+        ]
+        result = _pick_show(usable, show)
         if result is not None:
-            artwork = result.get("artworkUrl600")
-            if isinstance(artwork, str):
-                image = self._get(artwork)
-                if image is None:
-                    return _Resolved(_ERROR, None)
-                # The id is validated here and again on the way out of
-                # _find, so a non-integer or non-positive value never
-                # reaches the cache or the published shape.
-                podcast_id = _valid_podcast_id(result.get("collectionId"))
-                return _Resolved(_FOUND, image, podcast_id)
+            image = self._get(result["artworkUrl600"])
+            if image is None:
+                return _Resolved(_ERROR, None)
+            # The id is validated here and again on the way out of
+            # _find, so a non-integer or non-positive value never
+            # reaches the cache or the published shape.
+            podcast_id = _valid_podcast_id(result.get("collectionId"))
+            return _Resolved(_FOUND, image, podcast_id)
         return _Resolved(_MISS, None)
 
     def _podcast_id(
@@ -890,7 +894,7 @@ class ArtLookup:
                 continue
             score = title_score(wanted, result.get(field))
             art = result.get("artworkUrl100")
-            if score <= best_score or not isinstance(art, str):
+            if score <= best_score or not _apple_artwork_ok(art):
                 continue
             if not artists_match(artist, result.get("artistName")):
                 continue
@@ -1130,6 +1134,25 @@ def _search_list(data: Optional[bytes], field: str) -> Optional[list]:
         return None
     value = parsed.get(field)
     return value if isinstance(value, list) else []
+
+
+def _apple_artwork_ok(url: object) -> bool:
+    """Whether ``url`` is an https URL on Apple's artwork CDN (``mzstatic.com``).
+
+    The host is parsed, not substring-matched, so "evilmzstatic.com" and
+    "mzstatic.com.evil.host" are refused. A reply never names an arbitrary host
+    for the lookup to fetch.
+    """
+    if not isinstance(url, str):
+        return False
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname
+    except ValueError:
+        return False
+    if parts.scheme != "https" or not host:
+        return False
+    return host == "mzstatic.com" or host.endswith(".mzstatic.com")
 
 
 def _pick_show(results: list, show: str) -> Optional[dict]:

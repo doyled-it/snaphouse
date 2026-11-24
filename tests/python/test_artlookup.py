@@ -1899,3 +1899,92 @@ def test_a_found_cover_logs_the_matched_names(tmp_path, caplog):
     lookup = ArtLookup(tmp_path, fetch)
     lookup.find("x", "Four Tops", "Catfish", "music", None)
     assert "art lookup apple: found (Four Tops, Catfish)" in _source_lines(caplog)
+
+
+# --------------------------------------------------------------------------- #
+# artwork is accepted only from Apple's artwork CDN
+# --------------------------------------------------------------------------- #
+
+_BAD_ART_URLS = [
+    "https://elsewhere.example/a/100x100bb.jpg",
+    "https://evilmzstatic.com/a/100x100bb.jpg",
+    "https://mzstatic.com.evil.host/a/100x100bb.jpg",
+    "http://is1-ssl.mzstatic.com/a/100x100bb.jpg",
+    "https://user@evil.host/mzstatic.com/100x100bb.jpg",
+]
+
+
+def _apple_body(*entries):
+    return json.dumps({"results": list(entries)}).encode("utf-8")
+
+
+@pytest.mark.parametrize("bad", _BAD_ART_URLS)
+def test_album_artwork_off_the_apple_cdn_is_never_fetched(tmp_path, bad):
+    body = _apple_body(
+        {"artistName": "Four Tops", "collectionName": "Catfish", "artworkUrl100": bad}
+    )
+    fetch = FakeFetch([("itunes.apple.com", body)])
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+
+    url = lookup.find("x", "Four Tops", "Catfish", "music", None)
+
+    assert url is None
+    assert [c for c in fetch.calls if "itunes.apple.com" not in c and "musicbrainz" not in c] == []
+
+
+def test_album_with_bad_artwork_falls_to_the_next_valid_candidate(tmp_path):
+    good = "https://is1-ssl.mzstatic.com/image/good/100x100bb.jpg"
+    body = _apple_body(
+        {"artistName": "Four Tops", "collectionName": "Catfish",
+         "artworkUrl100": "https://evil.example/100x100bb.jpg"},
+        {"artistName": "Four Tops", "collectionName": "Catfish - Single",
+         "artworkUrl100": good},
+    )
+    fetch = FakeFetch([("itunes.apple.com", body), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    assert lookup.find("x", "Four Tops", "Catfish", "music", None) is not None
+    assert "https://is1-ssl.mzstatic.com/image/good/600x600bb.jpg" in fetch.calls
+    assert not any("evil.example" in c for c in fetch.calls)
+
+
+def test_song_artwork_off_the_apple_cdn_is_never_fetched(tmp_path):
+    body = _apple_body(
+        {"artistName": "Four Tops", "trackName": "Strung Out", "collectionName": "Catfish",
+         "artworkUrl100": "https://evilmzstatic.com/a/100x100bb.jpg"}
+    )
+    fetch = FakeFetch([("itunes.apple.com", body)])
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    assert lookup.find("Strung Out", "Four Tops", None, "music", None) is None
+    assert not any("evilmzstatic" in c for c in fetch.calls)
+
+
+@pytest.mark.parametrize("bad", _BAD_ART_URLS)
+def test_podcast_artwork_off_the_apple_cdn_is_never_fetched(tmp_path, bad):
+    body = _apple_body(
+        {"artistName": "Show", "collectionName": "Show", "collectionId": 9,
+         "artworkUrl600": bad.replace("100x100bb", "600x600bb")}
+    )
+    fetch = FakeFetch([("itunes.apple.com", body)])
+    lookup = ArtLookup(tmp_path, fetch)
+
+    # kind "music" with a podcast genre keeps the lookup on the podcast route only.
+    assert lookup.find("Ep", "Show", "Show", "music", ["Podcast"]) is None
+    assert [c for c in fetch.calls if "itunes.apple.com" not in c] == []
+    # A real miss, not a transient failure.
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_podcast_with_bad_artwork_takes_the_next_valid_show(tmp_path):
+    good = "https://is1-ssl.mzstatic.com/image/good/600x600bb.jpg"
+    body = _apple_body(
+        {"artistName": "Show", "collectionName": "Show", "collectionId": 1,
+         "artworkUrl600": "https://evil.example/600x600bb.jpg"},
+        {"artistName": "Show", "collectionName": "Show", "collectionId": 2,
+         "artworkUrl600": good},
+    )
+    fetch = FakeFetch([("itunes.apple.com", body), ("mzstatic.com", _jpeg())])
+    lookup = ArtLookup(tmp_path, fetch)
+    result = lookup.find_with_id("Ep", "Show", "Show", "long_form", ["Podcast"])
+    assert result.podcast_id == 2
+    assert good in fetch.calls
