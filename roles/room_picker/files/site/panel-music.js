@@ -4,7 +4,7 @@ import { columnFit, nowPlayingBar, progressFraction, roomColumn, snapVolume, ste
 import { swapImage } from "./cover-color.js";
 import { formatDuration } from "./rooms-model.js";
 import { nextMusicView, nowView, roomsButtonLabel } from "./now-model.js";
-import { button, el, icon, setText } from "./panel-dom.js";
+import { button, el, icon, setText, solidIcon } from "./panel-dom.js";
 
 const TRANSPORT = {
   previous: "M6 5h2.2v14H6zM19 5.5v13a.6.6 0 0 1-.95.5L9.6 13a1.2 1.2 0 0 1 0-2l8.45-6a.6.6 0 0 1 .95.5z",
@@ -30,13 +30,13 @@ export function createMusicScreen(panel) {
   const transport = el("div", "p-np-transport");
   const prev = button("p-np-btn", "", () => host.playback("previous"));
   prev.setAttribute("aria-label", "Previous");
-  prev.append(icon(TRANSPORT.previous, 40));
+  prev.append(solidIcon(TRANSPORT.previous, 40));
   const play = button("p-np-btn p-np-play", "", () => host.playback("playPause"));
-  const playIcon = icon(TRANSPORT.play, 44);
+  const playIcon = solidIcon(TRANSPORT.play, 44);
   play.append(playIcon);
   const next = button("p-np-btn", "", () => host.playback("next"));
   next.setAttribute("aria-label", "Next");
-  next.append(icon(TRANSPORT.next, 40));
+  next.append(solidIcon(TRANSPORT.next, 40));
   transport.append(prev, play, next);
   const progress = el("div", "p-np-progress");
   const progressFill = el("div", "p-np-progress-fill");
@@ -68,13 +68,13 @@ export function createMusicScreen(panel) {
   const nowTransport = el("div", "p-now-transport");
   const nPrev = button("p-now-btn", "", () => host.playback("previous"));
   nPrev.setAttribute("aria-label", "Previous");
-  nPrev.append(icon(TRANSPORT.previous, 48));
+  nPrev.append(solidIcon(TRANSPORT.previous, 48));
   const nPlay = button("p-now-btn p-now-play", "", () => host.playback("playPause"));
-  const nPlayIcon = icon(TRANSPORT.play, 52);
+  const nPlayIcon = solidIcon(TRANSPORT.play, 52);
   nPlay.append(nPlayIcon);
   const nNext = button("p-now-btn", "", () => host.playback("next"));
   nNext.setAttribute("aria-label", "Next");
-  nNext.append(icon(TRANSPORT.next, 48));
+  nNext.append(solidIcon(TRANSPORT.next, 48));
   nowTransport.append(nPrev, nPlay, nNext);
   const nowAirplay = el("div", "p-now-airplay");
   const roomsBtn = button("p-now-rooms", "", () => setView("rooms"));
