@@ -5,6 +5,7 @@ import pytest
 from snaphouse.covermatch import (
     artist_names,
     artists_match,
+    core_text,
     core_title,
     normalize,
     title_score,
@@ -62,3 +63,9 @@ def test_artist_names_split_and_drop_the():
 )
 def test_artists_match(track, candidate, expected):
     assert artists_match(track, candidate) is expected
+
+
+def test_core_text_keeps_the_original_spelling_for_a_search_term():
+    assert core_text("THE MOUSE AND THE MASK (METALFACE EDITION)") == "THE MOUSE AND THE MASK"
+    assert core_text("Catfish - Single") == "Catfish"
+    assert core_text("Kaya") == "Kaya"

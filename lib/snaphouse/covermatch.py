@@ -34,12 +34,13 @@ def normalize(value: Optional[str]) -> str:
     return re.sub(r"[^0-9a-z]+", " ", without_marks.casefold()).strip()
 
 
-def core_title(value: str) -> str:
-    """The normalized title without trailing edition parts.
+def core_text(value: str) -> str:
+    """The title without trailing edition parts, in its original spelling.
 
     Drops trailing ``(...)`` and ``[...]`` groups and everything after the first
-    `` - `` (which covers Apple's `` - Single`` and `` - EP``). A title that is
-    nothing but a group keeps its full normalized form.
+    `` - `` (which covers Apple's `` - Single`` and `` - EP``). Used as a search
+    term, where the original spelling matters. A title that is nothing but a
+    group comes back whole.
     """
     text = value
     while True:
@@ -47,8 +48,13 @@ def core_title(value: str) -> str:
         if cut == text:
             break
         text = cut
-    text = _DASH_SUFFIX.sub("", text)
-    return normalize(text) or normalize(value)
+    text = _DASH_SUFFIX.sub("", text).strip()
+    return text if normalize(text) else value.strip()
+
+
+def core_title(value: str) -> str:
+    """The normalized form of :func:`core_text`, for comparison."""
+    return normalize(core_text(value))
 
 
 def title_score(track_title: Optional[str], candidate_title: Optional[str]) -> int:

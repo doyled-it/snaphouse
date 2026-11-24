@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple, Optional
 
 from .airplay_meta import downscale_cover
+from .covermatch import artists_match, core_text, title_score
 
 
 class LookupResult(NamedTuple):
@@ -116,6 +117,8 @@ _LEAD_SEPARATOR_RE = re.compile(
     "|".join(re.escape(separator) for separator in _LEAD_SEPARATORS),
     re.IGNORECASE,
 )
+
+_APPLE_ART_SIZE = re.compile(r"/100x100bb(\.\w+)$")
 
 _NONE_SUFFIX = ".none"
 # A podcast cover's iTunes collectionId is cached in a sidecar next to the cover,
@@ -518,11 +521,6 @@ class ArtLookup:
         lookup. Each step keeps its own miss marker, so neither suppresses the
         other.
         """
-        if not album:
-            # Music needs an album to search a release on; a track with neither an
-            # album nor the means to find one has nothing to look up.
-            return (None, "miss", None)
-
         full_key = _lookup_key("music", title, artist, album)
         full_image = self._lookup_dir() / f"{full_key}.jpg"
         full_miss = self._lookup_dir() / f"{full_key}{_NONE_SUFFIX}"
@@ -545,10 +543,13 @@ class ArtLookup:
         if lead_image is not None and lead_image.is_file():
             return (_lookup_url(lead_key), "cover found", None)
 
-        # Step 1: the full track credit. Skip the search when a fresh miss marker
-        # already records that this exact credit found nothing.
+        # Step 1: Apple first (one search matches the whole credit by any of its
+        # names), then MusicBrainz on the full track credit. Skip both when a
+        # fresh miss marker already records that this exact credit found nothing.
         if not self._miss_fresh(full_miss):
-            resolved = self._music(artist, album)
+            resolved = self._apple_music(title, artist, album)
+            if resolved.outcome != _FOUND:
+                resolved = self._music(artist, album)
             if resolved.outcome == _ERROR:
                 return (None, "failure", None)
             if resolved.image is not None:
@@ -796,6 +797,50 @@ class ArtLookup:
                     return _Resolved(_FOUND, image)
         return _Resolved(_MISS, None)
 
+    def _apple_music(
+        self, title: str, artist: Optional[str], album: Optional[str]
+    ) -> _Resolved:
+        """Search Apple's catalogue for the track's album, or its song with no album.
+
+        The term is the lead artist plus the album's core title (a term carrying
+        "(Deluxe)" came back empty in testing). A candidate must match the album
+        (or, with no album, the song title) and the artist; the best title score
+        wins and Apple's order breaks ties. The artwork is the 100 px URL
+        rewritten to 600 px.
+        """
+        if not artist:
+            return _Resolved(_MISS, None)
+        lead = _lead_artist(artist) or artist
+        if album:
+            entity, wanted, field = "album", album, "collectionName"
+            term = f"{lead} {core_text(album)}"
+        else:
+            entity, wanted, field = "song", title, "trackName"
+            term = f"{lead} {title}"
+        url = _ITUNES_SEARCH + "?" + urllib.parse.urlencode(
+            {"media": "music", "entity": entity, "term": term, "limit": 10}
+        )
+        results = _search_list(self._get(url), "results")
+        if results is None:
+            return _Resolved(_ERROR, None)
+        best_score, best_art = 0, None
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            score = title_score(wanted, result.get(field))
+            art = result.get("artworkUrl100")
+            if score <= best_score or not isinstance(art, str):
+                continue
+            if not artists_match(artist, result.get("artistName")):
+                continue
+            best_score, best_art = score, art
+        if best_art is None:
+            return _Resolved(_MISS, None)
+        image = self._get(_APPLE_ART_SIZE.sub(r"/600x600bb\1", best_art))
+        if image is None:
+            return _Resolved(_ERROR, None)
+        return _Resolved(_FOUND, image)
+
     def _music(
         self, name: Optional[str], album: Optional[str]
     ) -> _Resolved:
@@ -935,6 +980,10 @@ def _lookup_key(chosen: str, title: str, artist: Optional[str], album: Optional[
         parts = ["audiobook", _normalize(album), _normalize(artist)]
     else:
         parts = ["music", _normalize(artist), _normalize(album)]
+        if not album:
+            # With no album the track title is the only thing that tells one
+            # song from another, so it joins the key (an album key never has it).
+            parts.append(_normalize(title))
     raw = "\x1f".join(parts)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 

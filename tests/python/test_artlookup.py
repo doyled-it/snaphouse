@@ -946,8 +946,9 @@ def test_request_urls_carry_only_names(tmp_path):
     assert itunes_calls
     for call in itunes_calls:
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(call).query)
-        # The only free-text field is the show name.
-        assert query.get("term") == ["This American Life"]
+        # The only free-text field is the show name, or the artist and album
+        # for the music search (Apple is searched first for music now).
+        assert query.get("term") in (["This American Life"], ["Radiohead OK Computer"])
 
     mb_calls = [c for c in fetch.calls if "musicbrainz.org" in c]
     assert mb_calls
@@ -1319,3 +1320,147 @@ def test_fetch_error_reason_is_kept(tmp_path):
     lookup = ArtLookup(tmp_path, lambda url: None)
     assert lookup._get("https://musicbrainz.org/x") is None
     assert lookup._last_reason == "no data"
+
+
+# --------------------------------------------------------------------------- #
+# Apple first for music
+# --------------------------------------------------------------------------- #
+
+
+def _apple_fetch(fixture, extra=()):
+    return FakeFetch(
+        [
+            ("itunes.apple.com", _fixture_bytes(fixture)),
+            ("mzstatic.com", _jpeg()),
+            *extra,
+        ]
+    )
+
+
+def _apple_calls(fetch):
+    return [c for c in fetch.calls if "itunes.apple.com" in c]
+
+
+def _apple_params(call):
+    return {
+        k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(call).query).items()
+    }
+
+
+@pytest.mark.parametrize(
+    "fixture, title, artist, album, term",
+    [
+        ("apple_album_catfish.json", "Strung Out For Your Love", "Four Tops", "Catfish",
+         "Four Tops Catfish"),
+        ("apple_album_clanton.json", "Keep a Secret", "George Clanton", "100% Electronica",
+         "George Clanton 100% Electronica"),
+        ("apple_album_special_herbs.json", "Arrow Root", "MF DOOM",
+         "Metal Fingers Presents: Special Herbs, Vol. 1 & 2",
+         "MF DOOM Metal Fingers Presents: Special Herbs, Vol. 1 & 2"),
+        ("apple_album_nehruviandoom.json", "First Day of Class (Edit)",
+         "MF DOOM & Bishop Nehru", "NEHRUVIANDOOM (REDUX)", "MF DOOM NEHRUVIANDOOM"),
+        ("apple_album_kaya.json", "Kaya", "Bob Marley & The Wailers",
+         "Kaya (Remastered 2013)", "Bob Marley Kaya"),
+        ("apple_album_mouse_and_mask.json", "Sofa King",
+         "DANGERDOOM, MF DOOM & Danger Mouse",
+         "THE MOUSE AND THE MASK (METALFACE EDITION)",
+         "DANGERDOOM THE MOUSE AND THE MASK"),
+    ],
+)
+def test_apple_album_search_finds_recorded_misses(
+    tmp_path, fixture, title, artist, album, term
+):
+    fetch = _apple_fetch(fixture)
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+
+    url = lookup.find(title, artist, album, "music", None)
+
+    assert url is not None and url.startswith("/cover/lookup/")
+    assert not any("musicbrainz.org" in c for c in fetch.calls)
+    calls = _apple_calls(fetch)
+    assert len(calls) == 1
+    params = _apple_params(calls[0])
+    assert params["term"] == term
+    assert (params["media"], params["entity"], params["limit"]) == ("music", "album", "10")
+    art = [c for c in fetch.calls if "mzstatic.com" in c]
+    assert len(art) == 1 and art[0].endswith("/600x600bb.jpg")
+    # The cover is cached under the full-credit key, as before.
+    assert (_lookup_dir(tmp_path) / Path(url).name).is_file()
+
+
+def test_apple_prefers_the_exact_redux_release(tmp_path):
+    fetch = _apple_fetch("apple_album_nehruviandoom.json")
+    lookup = ArtLookup(tmp_path, fetch)
+    lookup.find("First Day of Class", "MF DOOM & Bishop Nehru", "NEHRUVIANDOOM (REDUX)",
+                "music", None)
+    art = [c for c in fetch.calls if "mzstatic.com" in c][0]
+    redux = json.loads(_fixture_bytes("apple_album_nehruviandoom.json"))["results"][0]
+    assert art == redux["artworkUrl100"].replace("100x100bb", "600x600bb")
+
+
+def test_apple_does_not_take_a_different_volume_or_edition_number(tmp_path):
+    # "100% Electronica" must not match "200% Electronica" by another act.
+    fetch = _apple_fetch("apple_album_clanton.json")
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    lookup.find("x", "George Clanton", "300% Electronica", "music", None)
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+
+
+def test_apple_song_search_finds_a_track_with_no_album(tmp_path):
+    fetch = _apple_fetch("apple_song_catfish.json")
+    lookup = ArtLookup(tmp_path, fetch)
+
+    url = lookup.find("Strung Out For Your Love", "Four Tops", None, "music", None)
+
+    assert url is not None
+    params = _apple_params(_apple_calls(fetch)[0])
+    assert params["entity"] == "song"
+    assert params["term"] == "Four Tops Strung Out For Your Love"
+    assert not any("musicbrainz.org" in c for c in fetch.calls)
+
+
+def test_apple_song_with_another_title_or_artist_is_a_miss(tmp_path):
+    fetch = _apple_fetch("apple_song_catfish.json")
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    assert lookup.find("A Different Song", "Four Tops", None, "music", None) is None
+    assert lookup.find("Strung Out For Your Love", "Another Band", None, "music", None) is None
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+
+
+def test_apple_covers_by_unrelated_acts_stay_a_miss(tmp_path):
+    # Apple's results for "House of Balloons" are covers by other acts.
+    fetch = _apple_fetch("apple_album_house_of_balloons.json")
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    url = lookup.find("Glass Table Girls", "The Weeknd", "House of Balloons (Original)",
+                      "music", None)
+    assert url is None
+    assert not any("mzstatic.com" in c for c in fetch.calls)
+
+
+def test_apple_various_artists_compilation_stays_a_miss(tmp_path):
+    # The song fixture holds "Smooth Sax Tribute to the Four Tops", credited to
+    # Various Artists: a named artist must not match it.
+    fetch = _apple_fetch("apple_song_catfish.json")
+    lookup = ArtLookup(tmp_path, fetch, clock=_frozen_clock(), sleep=lambda _s: None)
+    url = lookup.find("x", "Four Tops", "Smooth Sax Tribute to the Four Tops", "music", None)
+    assert url is None
+
+
+def test_video_with_no_album_and_no_song_stays_a_miss(tmp_path):
+    fetch = _apple_fetch("apple_album_empty.json")
+    lookup = ArtLookup(tmp_path, fetch)
+    url = lookup.find("Dan Soder on 9 11 | On The Road", "Vacuum Wars", None, "music", None)
+    assert url is None
+    assert list(_lookup_dir(tmp_path).glob("*.none"))
+
+
+def test_no_album_keys_differ_by_track_title():
+    from snaphouse.artlookup import _lookup_key
+
+    assert _lookup_key("music", "Song A", "Artist", None) != _lookup_key(
+        "music", "Song B", "Artist", None
+    )
+    # With an album the key is unchanged and ignores the track title.
+    assert _lookup_key("music", "Song A", "Artist", "Album") == _lookup_key(
+        "music", "Song B", "Artist", "Album"
+    )
