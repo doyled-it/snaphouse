@@ -2727,6 +2727,101 @@ a.row-title {
   font-size: 26px;
 }
 
+/* Weird facts and Quotes styles: one entry on a dark blue field with a faint slow glow,
+   moved to a new place each time (reader-model.js). The tint follows the album hue. */
+.saver-reader {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  --rd-h: 255;
+  background: oklch(0.15 0.02 var(--rd-h));
+}
+
+.saver-reader-glow {
+  position: absolute;
+  inset: -20%;
+  background: radial-gradient(ellipse 50% 45% at 30% 70%, oklch(0.3 0.06 var(--rd-h) / 0.55), transparent 70%);
+  --ss-glow: 40s;
+  animation: saver-reader-glow var(--ss-glow) ease-in-out infinite alternate;
+}
+
+@keyframes saver-reader-glow {
+  to {
+    translate: 30% -20%;
+  }
+}
+
+.saver-reader-box {
+  position: absolute;
+  --rd-x: 0.5;
+  --rd-y: 0.5;
+  --rd-size: 32px;
+  left: calc(var(--rd-x) * 100%);
+  top: calc(var(--rd-y) * 100%);
+  translate: calc(var(--rd-x) * -100%) calc(var(--rd-y) * -100%);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(680px, 100%);
+  padding: 28px 32px;
+  opacity: 0;
+  --ss-reader-fade: 1.6s;
+  transition: opacity var(--ss-reader-fade) ease;
+}
+
+.saver-reader-box.is-in {
+  opacity: 1;
+}
+
+.saver-reader-label {
+  margin-bottom: 10px;
+  font-size: 20px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: oklch(0.7 0.05 var(--rd-h));
+}
+
+.saver-reader-text {
+  font-size: var(--rd-size);
+  line-height: 1.25;
+  font-weight: 600;
+  color: oklch(0.95 0.01 var(--rd-h));
+  overflow-wrap: break-word;
+}
+
+.saver-reader-by {
+  margin-top: 16px;
+  font-size: 24px;
+  color: oklch(0.75 0.04 var(--rd-h));
+}
+
+.saver-reader.is-night {
+  background: #000;
+}
+
+.saver-reader.is-night .saver-reader-glow,
+.saver-reader.is-night .saver-reader-label {
+  display: none;
+}
+
+.saver-reader.is-night .saver-reader-text {
+  font-weight: 500;
+  color: oklch(0.55 0.03 70);
+}
+
+.saver-reader.is-night .saver-reader-by {
+  color: oklch(0.45 0.03 70);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .saver-reader-glow {
+    animation: none;
+  }
+
+  .saver-reader-box {
+    transition-duration: 0.2s;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .screensaver.is-up {
     transition-duration: var(--ss-out);

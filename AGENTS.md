@@ -569,7 +569,7 @@ no overlay, canvas, timer or rAF loop (`tests/js/rooms-screensaver-wiring.test.j
 **Styles and rotation** (design: `docs/superpowers/specs/2026-11-24-panel-screensavers-design.md`, a
 five-PR epic). Aurora is one style among a registry. `style-list.js` (pure) holds the twelve fixed ids
 and names in registry order (`aurora, facts, quotes, covers, clock, sky, planets, moon, flow, contours,
-life, harmonograph`), `SHIPPED_IDS` (the styles with a module on the page: Aurora and Clock so far), the
+life, harmonograph`), `SHIPPED_IDS` (the styles with a module on the page: Aurora, Weird facts, Quotes and Clock so far), the
 same pick validation the hub applies (`checkStyles`), `togglePick` (the last picked shipped style cannot
 be turned off), `nextPick`, `shippedPicks` (ids with no module are skipped; with none shipped, Aurora)
 and `stylesLabel`. `style-registry.js` maps a shipped id to a factory taking `{ doc, win, now,
@@ -589,6 +589,28 @@ styles cap at 30 fps; the Clock is DOM text.
 `pickSpot`): a large thin 12-hour time without AM/PM, the date below, in the panel's local time, redrawn
 once at each whole minute (one timer, none while stopped) and moved to a new spot every
 `MOVE_EVERY_MIN` (4) minutes. At night it is smaller, dim warm grey on black.
+
+**Weird facts and Quotes styles.** `reader-style.js` (the two factories, `createFactsStyle` and
+`createQuotesStyle`) over `reader-model.js` (`createDeck`, `holdMs`, `textSize`, `pickPlace`, `parseEntries`; tests in
+`tests/js/reader-model.test.js` and `reader-style.test.js`): one entry at a time on a dark blue field with a faint slow glow
+(`.saver-reader` in `style.css`, tinted by the album hue), moved to a new place for each entry and faded over 1.6 s.
+A fact is held about 60 s (up to 90 s when long) under a small "Weird fact" label; a quote is held 45 to 90 s by length with
+the author below in a smaller size, never under 28 px. The order is a shuffled deck: no repeat until the list is used up,
+a reshuffle never starts with the entry that ended the last round, and two quotes by one author never follow each other.
+At night the field is black, the text dim warm grey, and the label and glow are gone. DOM text and an opacity transition
+only; no timer while stopped. The page fetches `facts.json` or `quotes.json` (same origin, in the site directory) the first
+time the style starts, so a phone never loads them; a failed fetch shows nothing and retries every 30 s while running.
+
+The lists are data and need care, because a false fact or a misattributed quote is the worst failure here.
+`facts.json` is `[{ "text", "source" }]` (at least 150 entries, text at most 160 characters in our own words, `source` an
+https Wikipedia page the claim was checked against, one fact per page, no topic mostly animals). `quotes.json` is
+`[{ "text", "author", "source", "sourceUrl" }]` (at least 120 entries, text at most 220 characters, at least 12 authors, no
+author above 12 percent). Quote text must match the cited source word for word, trimmed only to an excerpt on a clean
+break, and may come only from the sourced section of the author's Wikiquote page or from the primary text (never from a
+"Misattributed", "Disputed", "Attributed" or "Quotes about" section). `source` names the work, speech or interview and its
+year (and the translation where one applies); for the Buddha it is a named Dhammapada verse in the public-domain
+Muller translation. `sourceUrl` is where it was checked and the page ignores it. If an entry cannot be verified, drop it.
+No em dashes or en dashes in any entry. `tests/js/reader-data.test.js` pins the shape, limits, counts and spread.
 
 Modules in `roles/room_picker/files/site/`: `aurora-math.js` (pure colors, hue mixing,
 ribbon curves), `aurora.js` (canvas drawing, 200 px wide, one rAF loop capped at 30 fps,
