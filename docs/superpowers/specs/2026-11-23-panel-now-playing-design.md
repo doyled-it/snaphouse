@@ -1,6 +1,6 @@
 # Panel Now Playing design
 
-Date: 2026-11-23. Status: draft for owner approval (builder check done).
+Date: 2026-11-23. Status: approved by the owner 2026-11-23.
 
 ## Intent
 
