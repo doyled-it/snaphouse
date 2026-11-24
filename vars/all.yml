@@ -114,7 +114,7 @@ panel_backlight:
 # quiet hours. The role passes these to the kiosk URL as query parameters.
 panel_screensaver:
   enabled: true
-  day_idle_s: 300
+  day_idle_s: 60
 
 # Pinned Snapcast release. Chosen as the newest release (v0.35.0, 2026-03-10) that
 # supports everything the hub needs: the meta stream (meta:// priority/merge
