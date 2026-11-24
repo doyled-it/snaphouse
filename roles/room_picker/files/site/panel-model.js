@@ -11,13 +11,15 @@ export function isPanel(search) {
 
 export const BACK_HASH = "#more";
 
-const SUB_SCREENS = ["frame", "gallery", "settings", "health"];
+const SUB_SCREENS = ["frame", "gallery", "settings", "health", "screen", "screensaver"];
 const TOP_SCREENS = ["listen", "climate", "garage", "more"];
 
 function present(screen, visible) {
   if (screen === "frame") return Boolean(visible && visible.frame);
   if (screen === "climate") return Boolean(visible && visible.climate);
   if (screen === "garage") return Boolean(visible && visible.garage);
+  // Screen and Screensaver need this panel's id (kiosk URL pid) to save anything.
+  if (screen === "screen" || screen === "screensaver") return Boolean(visible && visible.settings);
   return true;
 }
 

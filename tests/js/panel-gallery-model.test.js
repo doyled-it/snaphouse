@@ -64,3 +64,22 @@ test("every More tile hash resolves to its own screen, not Music", async () => {
     assert.equal(resolvePanelScreen(t.hash, visible).screen, want[t.id], t.id);
   }
 });
+
+test("moreTiles adds Screen and Screensaver only when settings are available", () => {
+  const settings = { screenLine: "Brightness, night", saverLine: "Aurora after 1 min" };
+  const t = moreTiles({ frames: 2, pictureCount: 143, troubled: 0, settings });
+  assert.deepEqual(t.map((x) => x.id), ["frames", "gallery", "bluetooth", "health", "screen", "screensaver"]);
+  assert.deepEqual(t.slice(4).map((x) => [x.hash, x.title, x.line, x.warn]), [
+    ["#screen", "Screen", "Brightness, night", false],
+    ["#screensaver", "Screensaver", "Aurora after 1 min", false],
+  ]);
+  assert.equal(moreTiles({ frames: 2, pictureCount: 1, troubled: 0, settings: null }).length, 4);
+});
+
+test("the Screen and Screensaver tile hashes resolve to their own screens", async () => {
+  const { resolvePanelScreen } = await import("../../roles/room_picker/files/site/panel-model.js");
+  const settings = { screenLine: "a", saverLine: "b" };
+  for (const t of moreTiles({ frames: 2, pictureCount: 3, troubled: 0, settings }).slice(4)) {
+    assert.equal(resolvePanelScreen(t.hash, { frame: true, settings: true }).screen, t.id);
+  }
+});

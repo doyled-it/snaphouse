@@ -26,6 +26,25 @@ export function parsePanelParams(search) {
     nightIdleMs: seconds(q.get("nidle"), DEFAULTS.nidle) * 1000,
     quietStart: hhmm(q.get("qs"), DEFAULTS.qs),
     quietEnd: hhmm(q.get("qe"), DEFAULTS.qe),
+    // ss=0 is the kiosk URL's "screensaver off" (until the hub's settings arrive).
+    enabled: q.get("ss") !== "0",
+    style: "aurora",
+  };
+}
+
+// The same params from a panel's settings document entry (panel-settings-model.js):
+// one wait covers day and night, the hours and the on/off switch come from the
+// settings, and `base` keeps anything the settings do not carry.
+export function paramsFromSettings(settings, base) {
+  const wait = Number(settings.screensaver_wait_s) * 1000;
+  return {
+    ...base,
+    dayIdleMs: wait,
+    nightIdleMs: wait,
+    quietStart: hhmm(settings.night_start, base.quietStart),
+    quietEnd: hhmm(settings.night_end, base.quietEnd),
+    enabled: settings.screensaver_on !== false,
+    style: settings.screensaver_style || base.style || "aurora",
   };
 }
 
@@ -44,5 +63,6 @@ export function idleLimitMs(date, params) {
 }
 
 export function shouldShow({ idleMs, date, params, inputHeld }) {
+  if (params.enabled === false) return false;
   return !inputHeld && idleMs >= idleLimitMs(date, params);
 }

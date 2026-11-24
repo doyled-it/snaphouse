@@ -271,3 +271,18 @@ test("panelHowTo stops after connecting over Bluetooth; phones keep their copy",
   assert.match(howToText("House"), /then play something/);
   assert.equal(nowPlayingBar(null, { btName: "House" }).howTo, panelHowTo("House"));
 });
+
+test("resolvePanelScreen routes #screen and #screensaver only when settings are visible", () => {
+  assert.deepEqual(resolvePanelScreen("#screen", { settings: true }), { screen: "screen", hash: "#screen" });
+  assert.deepEqual(resolvePanelScreen("#screensaver", { settings: true }), { screen: "screensaver", hash: "#screensaver" });
+  assert.deepEqual(resolvePanelScreen("#screen", {}), { screen: "listen", hash: "#listen" });
+  assert.deepEqual(resolvePanelScreen("#screensaver", { settings: false }), { screen: "listen", hash: "#listen" });
+});
+
+test("Screen and Screensaver are More sub-screens", () => {
+  for (const s of ["screen", "screensaver"]) {
+    assert.equal(isSubScreen(s), true);
+    assert.equal(railActive(s), "more");
+    assert.equal(stripBack(s), true);
+  }
+});
