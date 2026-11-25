@@ -269,6 +269,7 @@ def test_every_post_route_requires_the_header(client):
         "/api/art/folder/enable",
         "/api/art/settings",
         "/api/art/command",
+        "/api/art/crop",
     ]
     for path in routes:
         status, _ = client.post_json(path, {}, header=False)
@@ -1199,3 +1200,104 @@ def test_main_builds_panels_from_flags(tmp_path, monkeypatch):
         "screensaver_pct": 25,
     }
     assert captured["app"].panel_settings_path == tmp_path / "p" / "art" / "panel-settings.json"
+
+
+# --------------------------------------------------------------------------- #
+# Frame crop: POST /api/art/crop
+# --------------------------------------------------------------------------- #
+
+CROP = {"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5}  # exact 5:3 on a 2000x1200 picture
+
+
+def test_crop_save_publishes_it_in_the_index_and_wakes_the_thumbnail_pass(client):
+    _write_image(client.app.library.root / "a.jpg", size=(2000, 1200))
+    client.app.publish()
+    client.app._wake.clear()
+
+    status, body = client.post_json("/api/art/crop", {"id": "a.jpg", "crop": CROP})
+    assert status == 200
+    assert body == {"id": "a.jpg", "crop": CROP}
+    piece = next(p for p in _index(client.app)["pieces"] if p["id"] == "a.jpg")
+    assert piece["crop"] == CROP
+    assert "auto_crop" in piece
+    assert client.app._wake.is_set()
+
+
+def test_crop_null_removes_it(client):
+    _write_image(client.app.library.root / "a.jpg", size=(2000, 1200))
+    client.post_json("/api/art/crop", {"id": "a.jpg", "crop": CROP})
+    status, body = client.post_json("/api/art/crop", {"id": "a.jpg", "crop": None})
+    assert status == 200
+    assert body == {"id": "a.jpg", "crop": None}
+    piece = next(p for p in _index(client.app)["pieces"] if p["id"] == "a.jpg")
+    assert piece["crop"] is None
+
+
+def test_crop_requires_the_header(client):
+    _write_image(client.app.library.root / "a.jpg", size=(2000, 1200))
+    status, _ = client.post_json("/api/art/crop", {"id": "a.jpg", "crop": CROP}, header=False)
+    assert status == 403
+    assert not (client.app.library.state.parent / "crops.json").exists()
+
+
+def test_crop_unknown_piece_is_404(client):
+    status, body = client.post_json("/api/art/crop", {"id": "nope.jpg", "crop": CROP})
+    assert status == 404
+    assert body["error"]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"x": 0, "y": 0, "w": 0.5, "h": 0.1},
+        {"x": "0", "y": 0, "w": 0.5, "h": 0.5},
+        {"x": 0.8, "y": 0, "w": 0.5, "h": 0.5},
+        {"x": 0, "y": 0, "w": 0.01, "h": 0.01},
+        [],
+        "crop",
+        5,
+    ],
+)
+def test_crop_bad_value_is_400_with_a_short_message(client, bad):
+    _write_image(client.app.library.root / "a.jpg", size=(2000, 1200))
+    status, body = client.post_json("/api/art/crop", {"id": "a.jpg", "crop": bad})
+    assert status == 400
+    assert body["error"]
+    assert not (client.app.library.state.parent / "crops.json").exists()
+
+
+def test_crop_missing_or_non_string_id_is_400(client):
+    assert client.post_json("/api/art/crop", {"crop": CROP})[0] == 400
+    assert client.post_json("/api/art/crop", {"id": 5, "crop": CROP})[0] == 400
+
+
+def test_crop_without_a_crop_key_is_400(client):
+    _write_image(client.app.library.root / "a.jpg", size=(2000, 1200))
+    assert client.post_json("/api/art/crop", {"id": "a.jpg"})[0] == 400
+
+
+def test_crop_nan_is_rejected(client):
+    _write_image(client.app.library.root / "a.jpg", size=(2000, 1200))
+    raw = b'{"id": "a.jpg", "crop": {"x": NaN, "y": 0, "w": 0.5, "h": 0.5}}'
+    status, _ = client.request("POST", "/api/art/crop", body=raw, content_type="application/json")
+    assert status == 400
+
+
+def test_crop_an_ente_piece_is_allowed_though_ente_writes_are_not(ente_client):
+    ente_client.app.library.scan()
+    ente_client.app.publish()
+    status, body = ente_client.post_json("/api/art/delete", {"id": "ente-alb1/f1.jpg"})
+    assert status == 409
+    size = next(
+        (p["width"], p["height"])
+        for p in _index(ente_client.app)["pieces"]
+        if p["id"] == "ente-alb1/f1.jpg"
+    )
+    w = round(size[1] * 5 / 3 / size[0], 6)  # the largest box that fits
+    crop = {"x": 0.0, "y": 0.0, "w": w, "h": w * size[0] / size[1] * 0.6}
+    status, body = ente_client.post_json(
+        "/api/art/crop", {"id": "ente-alb1/f1.jpg", "crop": crop}
+    )
+    assert status == 200, body
+    piece = next(p for p in _index(ente_client.app)["pieces"] if p["id"] == "ente-alb1/f1.jpg")
+    assert piece["crop"]["w"] == w

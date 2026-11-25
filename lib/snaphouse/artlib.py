@@ -38,6 +38,7 @@ from typing import Callable, Optional
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from snaphouse import framecrop
 from snaphouse.enteexport import ENTE_ID_RE, ENTE_PREFIX, EnteAlbum, EntePicture, scan_export
 from snaphouse.enterender import ensure_rendition, prune_renditions, rendition_path
 from snaphouse.enterun import read_status
@@ -126,6 +127,33 @@ _TRASH_STAMP_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-
 
 _TRASH_META = "meta.json"
 
+#: Saved crops, one JSON file beside the control state file, keyed by piece id.
+CROPS_FILE = "crops.json"
+
+#: Suffix of the automatic-box cache written beside each thumbnail
+#: (``<thumbnail stem>.crop.json``). ``AUTO_CROP_VERSION`` is bumped when the
+#: window algorithm changes so old caches are recomputed.
+AUTO_CROP_SUFFIX = ".crop.json"
+AUTO_CROP_VERSION = 1
+
+_NO_CACHE = object()
+
+
+def _clean_box(box) -> Optional[dict]:
+    """A stored or cached box as four finite floats in [0, 1], else ``None``."""
+    if not isinstance(box, dict) or set(box) != {"x", "y", "w", "h"}:
+        return None
+    clean = {}
+    for key in ("x", "y", "w", "h"):
+        value = box[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        value = float(value)
+        if not math.isfinite(value) or value < 0 or value > 1:
+            return None
+        clean[key] = value
+    return clean
+
 
 class ArtError(Exception):
     """A library error with an HTTP status and a message safe to show the user.
@@ -201,6 +229,7 @@ class Library:
         control = self._load_state()
         enabled = set(control["settings"]["folders_enabled"])
         min_aspect = control["settings"]["min_aspect"]
+        crops = self._load_crops()
 
         pieces: list[dict] = []
         folder_counts: dict[str, int] = {BUILTIN_FOLDER: 0}
@@ -220,14 +249,14 @@ class Library:
                 for child in self._iter_dir(entry):
                     if child.is_file():
                         piece = self._build_piece(
-                            child, entry.name, referenced, ensure_thumbnails, min_aspect
+                            child, entry.name, referenced, ensure_thumbnails, min_aspect, crops
                         )
                         if piece is not None:
                             pieces.append(piece)
                             folder_counts[entry.name] += 1
             elif entry.is_file():
                 piece = self._build_piece(
-                    entry, BUILTIN_FOLDER, referenced, ensure_thumbnails, min_aspect
+                    entry, BUILTIN_FOLDER, referenced, ensure_thumbnails, min_aspect, crops
                 )
                 if piece is not None:
                     pieces.append(piece)
@@ -235,7 +264,7 @@ class Library:
 
         albums = self._ente_albums()
         ente_pieces, ente_keep = self._build_ente_pieces(
-            albums, referenced, ensure_thumbnails, min_aspect
+            albums, referenced, ensure_thumbnails, min_aspect, crops
         )
         if self._reconcile_ente(control, [a.folder for a in albums]):
             self._save_state(control)
@@ -248,6 +277,7 @@ class Library:
         trash = self._build_trash(referenced, ensure_thumbnails)
         self._prune_thumbnails(referenced)
         self._prune_ente(ente_keep)
+        self._prune_crops(crops)
 
         index = {
             "generated_at": self._now_iso(),
@@ -272,6 +302,7 @@ class Library:
         referenced: set[str],
         ensure_thumbnails: bool,
         min_aspect: float,
+        crops: dict,
     ) -> tuple[list[dict], set[Path]]:
         """Index pieces for every album picture that has a rendition.
 
@@ -295,7 +326,7 @@ class Library:
                     continue
                 keep.add(dest)
                 piece = self._build_ente_piece(
-                    album, picture, dest, referenced, ensure_thumbnails, min_aspect
+                    album, picture, dest, referenced, ensure_thumbnails, min_aspect, crops
                 )
                 if piece is not None:
                     pieces.append(piece)
@@ -309,6 +340,7 @@ class Library:
         referenced: set[str],
         ensure_thumbnails: bool,
         min_aspect: float,
+        crops: dict,
     ) -> Optional[dict]:
         piece_id = f"{album.folder}/{picture.file_id}.jpg"
         try:
@@ -329,7 +361,10 @@ class Library:
             "source_url": None,
             "width": width,
             "height": height,
-            "landscape": self._is_landscape(width, height, min_aspect),
+            "landscape": self._is_landscape(width, height, min_aspect)
+            or piece_id in crops,
+            "crop": crops.get(piece_id),
+            "auto_crop": self._auto_crop_if_cached(thumb_name),
             "size": stat.st_size,
             "mtime": int(stat.st_mtime),
             "thumb": self._thumb_url_if_present(thumb_name),
@@ -442,6 +477,7 @@ class Library:
         referenced: set[str],
         ensure_thumbnails: bool,
         min_aspect: float,
+        crops: dict,
     ) -> Optional[dict]:
         if path.suffix.lower() not in IMAGE_EXTENSIONS:
             return None
@@ -474,7 +510,10 @@ class Library:
             "source_url": source_url,
             "width": width,
             "height": height,
-            "landscape": self._is_landscape(width, height, min_aspect),
+            "landscape": self._is_landscape(width, height, min_aspect)
+            or piece_id in crops,
+            "crop": crops.get(piece_id),
+            "auto_crop": self._auto_crop_if_cached(thumb_name),
             "size": stat.st_size,
             "mtime": int(stat.st_mtime),
             "thumb": self._thumb_url_if_present(thumb_name),
@@ -547,7 +586,7 @@ class Library:
             try:
                 stat = path.stat()
                 name = self._thumbnail_name(piece_id, stat.st_size, int(stat.st_mtime))
-                if (self.thumbs / name).is_file():
+                if self._derived_complete(name):
                     continue
                 self._ensure_thumbnail(path, piece_id, stat.st_size, int(stat.st_mtime))
             except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
@@ -570,7 +609,7 @@ class Library:
                     stat = dest.stat()
                     piece_id = f"{album.folder}/{picture.file_id}.jpg"
                     name = self._thumbnail_name(piece_id, stat.st_size, int(stat.st_mtime))
-                    if (self.thumbs / name).is_file():
+                    if self._derived_complete(name):
                         continue
                     self._ensure_thumbnail(dest, piece_id, stat.st_size, int(stat.st_mtime))
                 except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
@@ -713,6 +752,8 @@ class Library:
 
         destination = trash_dir / source.name
         self._move_with_sidecar(source, destination)
+        trash_id = f"{TRASH_DIR}/{trash_dir.name}/{source.name}"
+        self._rekey_crops([(piece_id, trash_id)])
         meta = {
             "original": piece_id,
             "deleted_at": self._now_iso(),
@@ -721,7 +762,7 @@ class Library:
         self._atomic_write(
             trash_dir / _TRASH_META, json.dumps(meta).encode("utf-8"), 0o664
         )
-        return f"{TRASH_DIR}/{trash_dir.name}/{source.name}"
+        return trash_id
 
     def restore(self, trash_id: str) -> str:
         """Move a trashed piece back to its original place; return the new id.
@@ -747,9 +788,9 @@ class Library:
         self._move_with_sidecar(trash_file, destination)
         shutil.rmtree(trash_dir, ignore_errors=True)
 
-        if folder == BUILTIN_FOLDER:
-            return name
-        return f"{folder}/{name}"
+        new_id = name if folder == BUILTIN_FOLDER else f"{folder}/{name}"
+        self._rekey_crops([(trash_id, new_id)])
+        return new_id
 
     def move(self, piece_id: str, folder: str) -> str:
         """Move a piece and its sidecar into ``folder`` (``Collection`` is the
@@ -763,9 +804,121 @@ class Library:
         destination = target_dir / name
         self._move_with_sidecar(source, destination)
 
-        if folder == BUILTIN_FOLDER:
-            return name
-        return f"{folder}/{name}"
+        new_id = name if folder == BUILTIN_FOLDER else f"{folder}/{name}"
+        self._rekey_crops([(piece_id, new_id)])
+        return new_id
+
+    # -- frame crops -------------------------------------------------------- #
+
+    def set_crop(self, piece_id, crop) -> Optional[dict]:
+        """Save (``crop`` a box) or remove (``None``) a piece's frame crop.
+
+        The crop is a note on the hub: it is kept in ``crops.json`` by piece id
+        and nothing is written to the picture, so an Ente picture can be cropped
+        too. The box is validated against the UPRIGHT picture (see
+        ``framecrop.validate_crop``). Returns the stored box, or ``None``.
+        """
+        path = self._resolve_ente_piece(piece_id)
+        if path is None:
+            path = self._resolve_piece(piece_id)
+        crops = self._load_crops()
+        if crop is None:
+            if crops.pop(piece_id, None) is not None:
+                self._save_crops(crops)
+            return None
+        try:
+            width, height = self._upright_dimensions(path)
+        except (OSError, UnidentifiedImageError, Image.DecompressionBombError):
+            raise ArtError(404, "That piece is no longer in the library.")
+        try:
+            box = framecrop.validate_crop(crop, width, height)
+        except framecrop.CropError as error:
+            raise ArtError(400, error.message)
+        crops[piece_id] = box
+        self._save_crops(crops)
+        return box
+
+    @property
+    def crops_path(self) -> Path:
+        return self.state.parent / CROPS_FILE
+
+    def _load_crops(self) -> dict:
+        """The stored crops by piece id; a missing or damaged file reads as empty
+        and a malformed entry is skipped, so a bad file never breaks a scan."""
+        try:
+            data = json.loads(self.crops_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        raw = data.get("crops") if isinstance(data, dict) else None
+        if not isinstance(raw, dict):
+            return {}
+        crops: dict = {}
+        for piece_id, box in raw.items():
+            clean = _clean_box(box)
+            if isinstance(piece_id, str) and clean is not None:
+                crops[piece_id] = clean
+        return crops
+
+    def _save_crops(self, crops: dict) -> None:
+        payload = {"version": 1, "crops": crops}
+        self._atomic_write(
+            self.crops_path, json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"), 0o644
+        )
+
+    def _rekey_crops(self, pairs: list[tuple[str, str]]) -> None:
+        """Move the crop of each ``(old id, new id)`` to the new id, once the
+        file itself has moved. Callers run under the admin lock."""
+        crops = self._load_crops()
+        changed = False
+        for old, new in pairs:
+            box = crops.pop(old, None)
+            if box is not None:
+                crops[new] = box
+                changed = True
+        if changed:
+            self._save_crops(crops)
+
+    def _prune_crops(self, crops: dict) -> None:
+        """Drop crops whose picture no longer exists (a delete or rename over
+        SMB, a purged trash entry, a picture gone from an Ente album).
+
+        Existence comes from directory listings, not from decoding, so a file
+        that fails to open for a moment keeps its crop. Ente ids are judged only
+        while the mirror root is readable, and by the album listing, not by the
+        rendition cache, so a cold cache never costs anyone a crop.
+        """
+        if not crops:
+            return
+        exists = {piece_id for _, piece_id in self._thumbnail_targets()}
+        ente_ids: Optional[set[str]] = None
+        if self.ente_root is not None and self.ente_cache is not None and self.ente_root.is_dir():
+            ente_ids = {
+                f"{album.folder}/{picture.file_id}.jpg"
+                for album in self._ente_albums()
+                for picture in album.pictures
+            }
+        kept = {}
+        for piece_id, box in crops.items():
+            if _is_ente_name(piece_id.partition("/")[0]):
+                if ente_ids is None or piece_id in ente_ids:
+                    kept[piece_id] = box
+            elif piece_id in exists:
+                kept[piece_id] = box
+        if kept != crops:
+            self._save_crops(kept)
+            crops.clear()
+            crops.update(kept)
+
+    @staticmethod
+    def _upright_dimensions(path: Path) -> tuple[int, int]:
+        """Width and height of the picture as shown upright (EXIF orientation 5
+        to 8 swap them), read from the header without decoding."""
+        with Image.open(path) as image:
+            width, height = image.size
+            orientation = image.getexif().get(0x0112)
+        if orientation in (5, 6, 7, 8):
+            return height, width
+        return width, height
 
     # -- folders ----------------------------------------------------------- #
 
@@ -801,6 +954,14 @@ class Library:
         if destination.exists() and new_name != old_name:
             raise ArtError(409, "A folder with that name already exists.")
         os.rename(source, destination)
+        prefix = f"{old_name}/"
+        self._rekey_crops(
+            [
+                (piece_id, f"{new_name}/{piece_id[len(prefix):]}")
+                for piece_id in self._load_crops()
+                if piece_id.startswith(prefix)
+            ]
+        )
 
         control = self._load_state()
         folders = control["settings"]["folders_enabled"]
@@ -887,7 +1048,9 @@ class Library:
             if self._resolve_ente_piece(piece) is None:
                 path = self._resolve_piece(piece)
                 width, height = self._dimensions(path)
-                if not self._is_landscape(width, height, control["settings"]["min_aspect"]):
+                if piece not in self._load_crops() and not self._is_landscape(
+                    width, height, control["settings"]["min_aspect"]
+                ):
                     raise ArtError(409, "That piece is too tall for the frame.")
         else:
             piece = None
@@ -1047,19 +1210,61 @@ class Library:
         """
         name = self._thumbnail_name(piece_id, size, mtime)
         target = self.thumbs / name
-        if target.is_file():
+        need_thumb = not target.is_file()
+        need_auto = self._read_auto_crop(name) is _NO_CACHE
+        if not need_thumb and not need_auto:
             return name
         with Image.open(path) as image:
             image.load()
-            thumb = ImageOps.exif_transpose(image) or image
-            if thumb.mode != "RGB":
-                thumb = thumb.convert("RGB")
-            thumb.thumbnail((THUMB_LONG_SIDE, THUMB_LONG_SIDE))
-            buffer = BytesIO()
-            thumb.save(buffer, format="JPEG", quality=85)
-        self.thumbs.mkdir(parents=True, exist_ok=True)
-        self._atomic_write(target, buffer.getvalue(), 0o644)
+            upright = ImageOps.exif_transpose(image) or image
+            if need_auto:
+                # The automatic frame box, measured once on the upright picture
+                # and cached beside the thumbnail so an index build never
+                # recomputes it. A picture that cannot be measured caches null.
+                self._write_auto_crop(name, framecrop.auto_crop(upright))
+            if need_thumb:
+                thumb = upright if upright.mode == "RGB" else upright.convert("RGB")
+                thumb.thumbnail((THUMB_LONG_SIDE, THUMB_LONG_SIDE))
+                buffer = BytesIO()
+                thumb.save(buffer, format="JPEG", quality=85)
+                self.thumbs.mkdir(parents=True, exist_ok=True)
+                self._atomic_write(target, buffer.getvalue(), 0o644)
         return name
+
+    def _derived_complete(self, thumb_name: str) -> bool:
+        """True when the thumbnail and its automatic-box cache both exist."""
+        return (self.thumbs / thumb_name).is_file() and (
+            self._read_auto_crop(thumb_name) is not _NO_CACHE
+        )
+
+    def _auto_crop_path(self, thumb_name: str) -> Path:
+        return self.thumbs / (thumb_name[: -len(".jpg")] + AUTO_CROP_SUFFIX)
+
+    def _read_auto_crop(self, thumb_name: str):
+        """The cached automatic box, ``None`` for a cached "cannot measure", or
+        ``_NO_CACHE`` when there is no valid cache for this thumbnail yet."""
+        try:
+            data = json.loads(self._auto_crop_path(thumb_name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return _NO_CACHE
+        if not isinstance(data, dict) or data.get("version") != AUTO_CROP_VERSION:
+            return _NO_CACHE
+        box = data.get("auto_crop")
+        if box is None:
+            return None
+        clean = _clean_box(box)
+        return clean if clean is not None else _NO_CACHE
+
+    def _auto_crop_if_cached(self, thumb_name: str) -> Optional[dict]:
+        cached = self._read_auto_crop(thumb_name)
+        return None if cached is _NO_CACHE else cached
+
+    def _write_auto_crop(self, thumb_name: str, box: Optional[dict]) -> None:
+        payload = {"version": AUTO_CROP_VERSION, "auto_crop": box}
+        self.thumbs.mkdir(parents=True, exist_ok=True)
+        self._atomic_write(
+            self._auto_crop_path(thumb_name), json.dumps(payload).encode("utf-8"), 0o644
+        )
 
     def _prune_thumbnails(self, referenced: set[str]) -> None:
         try:
@@ -1068,6 +1273,10 @@ class Library:
             return
         for entry in entries:
             if entry.name in referenced:
+                continue
+            if entry.name.endswith(AUTO_CROP_SUFFIX) and (
+                entry.name[: -len(AUTO_CROP_SUFFIX)] + ".jpg" in referenced
+            ):
                 continue
             try:
                 entry.unlink()
