@@ -24,7 +24,7 @@ export const STYLE_IDS = STYLES.map((s) => s.id);
 
 // The styles with a module on this page. A later style's PR adds its id here and its
 // factory to style-registry.js (a test pins that the two agree).
-export const SHIPPED_IDS = ["aurora", "facts", "quotes", "clock", "sky", "planets", "moon", "flow", "contours", "life", "harmonograph"];
+export const SHIPPED_IDS = ["aurora", "facts", "quotes", "covers", "clock", "sky", "planets", "moon", "flow", "contours", "life", "harmonograph"];
 
 export const CHANGE_CHOICES = [0, 5, 15, 30, 60];
 export const DEFAULT_STYLES = ["aurora"];

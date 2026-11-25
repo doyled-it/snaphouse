@@ -197,3 +197,50 @@ def test_nginx_serves_the_two_files_as_exact_match_locations():
         # root untouched.
         assert "root /var/lib/snaphouse/public/nowplaying;" in block
         assert "application/json" in block
+
+
+# --------------------------------------------------------------------------- #
+# the cover collection seam (role, nginx, verify)
+# --------------------------------------------------------------------------- #
+
+
+def test_role_creates_the_snapserver_owned_cover_archive_dir():
+    dirs = [
+        args
+        for task in _tasks()
+        for module, args in [_module(task)]
+        if module.endswith("file") and args.get("state") == "directory"
+    ]
+    archive = [a for a in dirs if str(a.get("path")) == "/var/lib/snaphouse/public/cover/archive"]
+    assert archive, "no task creates the cover collection directory"
+    assert archive[0].get("owner") == "snapserver"
+    assert archive[0].get("group") == "snapserver"
+    assert archive[0].get("mode") == "0755"
+
+
+def test_service_restarts_when_the_cover_archive_module_changes():
+    text = (REPO / "roles/metadata/tasks/main.yml").read_text()
+    digest_loop = text.split("Record the now-playing module digests", 1)[1]
+    assert "- coverarchive.py" in digest_loop
+
+
+def test_unit_gains_no_new_write_paths_or_network_rules():
+    unit = _render(UNIT_TEMPLATE, house_stream_name="House")
+    assert "cover/archive" not in unit
+    assert "IPAddress" not in unit and "RestrictAddress" not in unit
+
+
+def test_nginx_serves_the_cover_archive_index_uncached():
+    conf = _render(ROOM_PICKER_CONF, snaphouse_connection_upgrade="$connection_upgrade")
+    marker = "location = /cover-archive.json {"
+    assert marker in conf
+    block = conf.split(marker, 1)[1].split("}", 1)[0]
+    assert "root /var/lib/snaphouse/public/nowplaying;" in block
+    assert "application/json" in block
+    assert 'add_header Cache-Control "no-cache";' in block
+
+
+def test_verify_check_reads_the_cover_archive_index():
+    text = VERIFY_CHECK.read_text()
+    assert "cover-archive.json" in text
+    assert "covers" in text

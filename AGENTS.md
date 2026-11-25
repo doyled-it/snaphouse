@@ -569,7 +569,7 @@ no overlay, canvas, timer or rAF loop (`tests/js/rooms-screensaver-wiring.test.j
 **Styles and rotation** (design: `docs/superpowers/specs/2026-11-24-panel-screensavers-design.md`, a
 five-PR epic). Aurora is one style among a registry. `style-list.js` (pure) holds the twelve fixed ids
 and names in registry order (`aurora, facts, quotes, covers, clock, sky, planets, moon, flow, contours,
-life, harmonograph`), `SHIPPED_IDS` (the styles with a module on the page: every one but Album covers so far), the
+life, harmonograph`), `SHIPPED_IDS` (the styles with a module on the page: all twelve), the
 same pick validation the hub applies (`checkStyles`), `togglePick` (the last picked shipped style cannot
 be turned off), `nextPick`, `shippedPicks` (ids with no module are skipped; with none shipped, Aurora)
 and `stylesLabel`. `style-registry.js` maps a shipped id to a factory taking `{ doc, win, now,
@@ -642,6 +642,21 @@ value noise with time as the third axis). Tests: `tests/js/{noise-math,flow-mode
   stretch of line is drawn each frame and nothing during the hold; the fade is a black rect with alpha set so it reaches 2 percent
   in `fadeS`. Night: line alpha 0.3 instead of 0.6.
 
+**Album cover mosaic** (`covers`, `covers-model.js`, `covers-style.js`; the hub half is "The cover collection"
+below). Six columns of square covers (800x480 canvas, 8 px gaps, 6 px corners) scrolling up about 1 px a second, half
+that at night; every 20 to 40 s one visible tile crossfades (2.5 s) to another cover. The page reads `cover-archive.json`
+when the style starts and every 10 minutes while it runs, and the covers are the color (album hues are ignored).
+No cover is ever on the grid twice: the grid holds every row (visible, partly visible and one buffer row), and a new
+bottom row, a swap or a replacement for a failed image only picks covers not on the grid or fading (`createGrid`,
+`pickCovers`; the tests run hundreds of recycles and swaps in a pool of 16). `chooseLayout` takes the most columns (6
+down to 3) whose grid plus 2 spare the collection fills, so a small collection gets fewer, larger columns; under
+`MIN_COVERS` (14, the three column grid plus spare) the style shows Aurora itself (its own `createAuroraStyle`
+inside `.saver-covers`, `is-aurora`) and switches to the mosaic when a refresh brings enough. Columns never change
+while it runs, and a refresh only grows the pool, so nothing jumps. Cost: a timer, never a rAF loop (a redraw every
+250 ms by day, 500 ms at night, 40 ms while a crossfade runs); images decode off the hot path (`img.decode()`), only the
+ones on the grid are kept, and a cover that fails to load leaves the pool. Night is CSS on the canvas (brightness and
+saturation down) with a radial shade to black at the edges. Tests: `tests/js/covers-{model,style}.test.js`.
+
 **Sky styles** (Night sky `sky`, Planets `planets`, Moon `moon`; design: `docs/superpowers/specs/2026-11-24-panel-screensavers-design.md`).
 Same shape as the generative styles: a pure model plus a thin style on `canvas-style.js`, tested in
 `tests/js/{sky-model,planets-model,moon-model,night-styles,moon-data}.test.js`. All three read the panel's own
@@ -698,6 +713,32 @@ screensaver off. `panel_backlight.grab_wake_tap: true` becomes `--force-grab` (g
 dim shows); the role no longer passes `--no-grab`. `dim_pct` is
 tuned separately on the live panel, never in a screensaver change. Pass mark on the board at
 the 30 fps cap: at most 20 percent total CPU on the Pi 3, 10 percent on the Pi 5.
+
+## The cover collection
+
+The hub keeps a collection of distinct MUSIC covers for the Album cover mosaic (`lib/snaphouse/coverarchive.py`,
+fed by the now-playing service). Images are in `/var/lib/snaphouse/public/cover/archive/`, one file per picture named
+by the SHA-256 of its bytes (`<hash>.jpg` or `.png`, so the same picture is stored once), served at
+`/cover/archive/<name>` by the existing `/cover/` location. The index is
+`/var/lib/snaphouse/public/nowplaying/cover-archive.json`, served at `/cover-archive.json` (nginx exact match, `no-cache`)
+beside `play-history.json`: `{"covers": [{"url", "album", "artist", "added_at"}]}`, newest first, written atomically
+and reloaded at start.
+
+A cover joins when the current track's cover is found, by lookup or from the phone's own art (`Service._archive_current`,
+once per cover, album and artist). It is skipped when its bytes are already held or a cover with the same normalized
+album and artist is (casefolded, punctuation and whitespace collapsed, as the lookup does), and when the kind is known to
+be a podcast or audiobook (`artlookup.route`). A track with an unknown kind is included. The file must be a JPEG or PNG
+by its magic bytes and at most 4 MB; the source is only ever a `/cover/...` file that resolves inside the cover directory
+(no `..`, no symlink out), and names from metadata are trimmed text, never paths. The cap is 1000; the oldest added entry
+and its file go first. The collection is independent of the 50-play history and its covers pruning.
+
+On first start with an empty collection it seeds from the history covers (with their album and artist, skipping known
+podcasts and audiobooks and their lookup originals) and then every file in `cover/lookup` and `cover/history`; a
+cached cover whose kind cannot be told is included with empty album and artist and is deduplicated by bytes only, and
+its date is the file time. Nothing of the collection is committed: tests build tiny images from bytes. No new network
+access: the collection only copies files the service already holds. The unit gains no write path (it has none to
+restrict, it runs as `snapserver`, who owns `cover/`); the `metadata` role creates `cover/archive` (`snapserver`,
+0755), the restart digest list includes `coverarchive.py`, and the on-device `nowplaying.sh` check reads the index.
 
 ## Panel layout
 

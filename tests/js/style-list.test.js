@@ -23,7 +23,7 @@ test("the registry order is the twelve fixed ids", () => {
 });
 
 test("Aurora, Weird facts, Quotes and Clock are shipped in this PR", () => {
-  assert.deepEqual([...SHIPPED_IDS], ["aurora", "facts", "quotes", "clock", "sky", "planets", "moon", "flow", "contours", "life", "harmonograph"]);
+  assert.deepEqual([...SHIPPED_IDS], ["aurora", "facts", "quotes", "covers", "clock", "sky", "planets", "moon", "flow", "contours", "life", "harmonograph"]);
 });
 
 test("change choices are Off, 5, 15, 30, 60", () => {
@@ -40,8 +40,8 @@ test("checkStyles mirrors the hub: non-empty, known ids, registry order, no dupl
 });
 
 test("shippedPicks drops ids with no module and falls back to Aurora", () => {
-  assert.deepEqual(shippedPicks(["aurora", "covers", "clock"]), ["aurora", "clock"]);
-  assert.deepEqual(shippedPicks(["covers"]), ["aurora"]);
+  assert.deepEqual(shippedPicks(["aurora", "nope", "clock"]), ["aurora", "clock"]);
+  assert.deepEqual(shippedPicks(["nope"]), ["aurora"]);
   assert.deepEqual(shippedPicks([]), ["aurora"]);
   assert.deepEqual(shippedPicks(undefined), ["aurora"]);
 });
@@ -54,8 +54,8 @@ test("nextPick starts at the first pick and moves on after the last shown", () =
 });
 
 test("nextPick skips ids with no module and handles a last id that is no longer picked", () => {
-  assert.equal(nextPick(["aurora", "covers", "clock"], "aurora"), "clock");
-  assert.equal(nextPick(["covers"], null), "aurora");
+  assert.equal(nextPick(["aurora", "nope", "clock"], "aurora"), "clock");
+  assert.equal(nextPick(["nope"], null), "aurora");
   // clock was shown, then the owner unpicked it: continue after it in registry order
   assert.equal(nextPick(["aurora", "moon"], "clock"), "moon");
   assert.equal(nextPick(["aurora", "clock"], "aurora"), "clock");
@@ -72,24 +72,24 @@ test("the last picked shipped tile cannot be turned off", () => {
   const got = togglePick(["aurora"], "aurora");
   assert.equal(got.ok, false);
   assert.deepEqual(got.picks, ["aurora"]);
-  assert.equal(togglePick(["aurora", "covers"], "aurora").ok, false);
+  assert.equal(togglePick(["aurora", "nope"], "aurora").ok, false);
 });
 
 test("a style with no module cannot be toggled", () => {
-  assert.equal(togglePick(["aurora"], "covers").ok, false);
+  assert.equal(togglePick(["aurora"], "nope").ok, false);
 });
 
 test("stylesLabel names one pick and counts several", () => {
   assert.equal(stylesLabel(["aurora"]), "Aurora");
   assert.equal(stylesLabel(["clock"]), "Clock");
   assert.equal(stylesLabel(["aurora", "clock"]), "2 styles");
-  assert.equal(stylesLabel(["covers"]), "Aurora");
+  assert.equal(stylesLabel(["nope"]), "Aurora");
 });
 
 test("Preview on the Styles screen shows the style last tapped, else the first pick", () => {
   assert.equal(tappedPreviewId(["aurora", "clock"], "clock"), "clock");
   assert.equal(tappedPreviewId(["aurora", "clock"], null), "aurora");
   assert.equal(tappedPreviewId(["clock"], null), "clock");
-  assert.equal(tappedPreviewId(["aurora"], "covers"), "aurora");
-  assert.equal(tappedPreviewId(["covers"], undefined), "aurora");
+  assert.equal(tappedPreviewId(["aurora"], "nope"), "aurora");
+  assert.equal(tappedPreviewId(["nope"], undefined), "aurora");
 });

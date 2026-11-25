@@ -2727,6 +2727,59 @@ a.row-title {
   font-size: 26px;
 }
 
+/* Album cover mosaic: a canvas of covers from the hub's collection (covers-style.js).
+   At night the covers are darkened and muted and the edges fade to black; with too few
+   covers the style shows Aurora in the same wrapper (.is-aurora). */
+.saver-covers {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+  --ss-tone: 3s;
+}
+
+.saver-covers > canvas {
+  position: absolute;
+  inset: 0;
+  transition: filter var(--ss-tone) ease;
+}
+
+.saver-covers.is-night > canvas:first-child {
+  filter: brightness(0.38) saturate(0.55);
+}
+
+.saver-covers-shade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(transparent 70%, rgba(0, 0, 0, 0.35));
+}
+
+.saver-covers-shade::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 40%, rgba(0, 0, 0, 0.85));
+  opacity: 0;
+  transition: opacity var(--ss-tone) ease;
+}
+
+.saver-covers.is-night .saver-covers-shade::after {
+  opacity: 1;
+}
+
+.saver-covers.is-aurora > canvas:first-child,
+.saver-covers.is-aurora > .saver-covers-shade {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .saver-covers > canvas,
+  .saver-covers-shade::after {
+    transition: none;
+  }
+}
+
 /* Weird facts and Quotes styles: one entry on a dark blue field with a faint slow glow,
    moved to a new place each time (reader-model.js). The tint follows the album hue. */
 .saver-reader {

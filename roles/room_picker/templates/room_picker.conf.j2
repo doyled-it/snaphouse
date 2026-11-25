@@ -104,6 +104,16 @@ location = /play-history.json {
     default_type application/json;
 }
 
+# The cover collection index for the panel's Album cover mosaic, written by the
+# same service into the same subdir. The images are served by the /cover/
+# location (immutable, named by content hash); this index changes as covers are
+# added, so it is never cached.
+location = /cover-archive.json {
+    root /var/lib/snaphouse/public/nowplaying;
+    default_type application/json;
+    add_header Cache-Control "no-cache";
+}
+
 # snapserver's JSON-RPC, proxied with the WebSocket upgrade so the page can hold
 # a notification socket open and also POST plain JSON-RPC calls. Port 1780 stays
 # reachable on the LAN directly for Snapweb and the nightstand frame (the
