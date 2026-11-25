@@ -641,7 +641,7 @@ value noise with time as the third axis). Tests: `tests/js/{noise-math,flow-mode
   second; a thread restarts elsewhere when it leaves the canvas or at 0.24 chance a second. Trails are the canvas faded by a
   black rect each frame with only this frame's segments stroked (`trailFade`: 0.07 day, 0.12 night
   at a 30 fps frame gap, rescaled by the real `dt` so trails last the same seconds at 60 fps; stroke alpha
-  `trailAlpha`: 0.65 by day, 0.32 at night), batched into one stroke per
+  `trailAlpha`: 0.9 by day, 0.32 at night; colors at `trailLightness`: 0.84 by day, 0.5 at night), batched into one stroke per
   color bin (12). Night: fewer, fainter, darker threads.
 - **Contours** (`contours-model.js`, `contours-style.js`): 400x240 canvas, 60 fps (the field moves slowly, and `t` advances by `dt`), a 51x31 grid of
   8 px cells over `fbm3`. `marchLevel` is marching squares with linear interpolation; the two saddle cells join their high

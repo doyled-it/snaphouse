@@ -28,10 +28,16 @@ export function trailFade(nightMix, dt) {
   return 1 - (1 - base) ** (dt * FADE_REF_FPS);
 }
 
-// Stroke alpha of a trail segment: 0.65 by day (was 0.5, raised with the richer colors,
-// chosen by eye against the 30 fps mockup), 0.32 at night.
+// Stroke alpha of a trail segment: 0.9 by day (was 0.65, raised after the owner judged the
+// trails too dim on the panel), 0.32 at night.
 export function trailAlpha(nightMix) {
-  return lerp(0.65, 0.32, nightMix);
+  return lerp(0.9, 0.32, nightMix);
+}
+
+// Lightness the trail colors are built at: 0.84 by day (was 0.78, raised with trailAlpha),
+// 0.5 at night.
+export function trailLightness(nightMix) {
+  return lerp(0.84, 0.5, nightMix);
 }
 
 export function flowAngle(x, y, t) {

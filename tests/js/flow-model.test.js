@@ -94,10 +94,16 @@ test("trailFade is 0 for no time and below 1 for a long gap", () => {
   assert.ok(trailFade(0, 0.25) < 1);
 });
 
-import { trailAlpha } from "../../roles/room_picker/files/site/flow-model.js";
+import { trailAlpha, trailLightness } from "../../roles/room_picker/files/site/flow-model.js";
 
-test("trailAlpha is brighter by day than the old 0.5 and stays dim at night", () => {
-  assert.equal(trailAlpha(0), 0.65);
-  assert.equal(trailAlpha(1), 0.32);
+test("trailAlpha is brighter by day than the old 0.65 and stays dim at night", () => {
+  assert.equal(trailAlpha(0), 0.9);
+  assert.ok(Math.abs(trailAlpha(1) - 0.32) < 1e-9);
   assert.ok(trailAlpha(0.5) < trailAlpha(0) && trailAlpha(0.5) > trailAlpha(1));
+});
+
+test("trailLightness is lighter by day than the old 0.78 and unchanged at night", () => {
+  assert.equal(trailLightness(0), 0.84);
+  assert.equal(trailLightness(1), 0.5);
+  assert.ok(trailLightness(0.5) < trailLightness(0) && trailLightness(0.5) > trailLightness(1));
 });
