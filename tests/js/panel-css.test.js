@@ -106,5 +106,6 @@ test("the progress fills glide for 1s linear only when marked, and not under red
   const raw = readFileSync(new URL("panel.css", site), "utf8");
   assert.match(raw, /\.p-np-progress-fill\[data-glide="1"\][^{]*\{[^}]*transition:\s*transform 1s linear/);
   assert.match(raw, /\.p-amb-fill\[data-glide="1"\]/);
+  assert.match(raw, /\.p-now-fill\[data-glide="1"\]/);
   assert.match(raw, /prefers-reduced-motion:\s*reduce\)[\s\S]*data-glide/);
 });

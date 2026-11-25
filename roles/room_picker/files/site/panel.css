@@ -1279,6 +1279,7 @@ html[data-panel] .p-screen-out {
     opacity: 0;
   }
 }
+html[data-panel] .p-now-fill[data-glide="1"],
 html[data-panel] .p-np-progress-fill[data-glide="1"],
 html[data-panel] .p-amb-fill[data-glide="1"] {
   transition: transform 1s linear;
@@ -1288,6 +1289,7 @@ html[data-panel] .p-amb-fill[data-glide="1"] {
   html[data-panel] .p-screen-out {
     animation: none;
   }
+  html[data-panel] .p-now-fill[data-glide="1"],
   html[data-panel] .p-np-progress-fill[data-glide="1"],
   html[data-panel] .p-amb-fill[data-glide="1"] {
     transition: none;
