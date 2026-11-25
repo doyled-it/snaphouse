@@ -14,10 +14,12 @@ test("rooms.js loads the screensaver only by dynamic import, guarded by panel=1"
   assert.ok(guard > -1 && at - guard < 200, "dynamic import must sit right under the panel=1 guard");
 });
 
-test("followCover forwards hues to the screensaver in both branches", () => {
-  const start = rooms.indexOf("function followCover");
-  const body = rooms.slice(start, rooms.indexOf("\n}\n", start));
-  assert.equal(body.split("screensaver?.setHues").length - 1, 2);
+test("followCover is the cover follower and hands the last cover's hues to the screensaver", () => {
+  const start = rooms.indexOf("const followCover = createCoverFollower(");
+  assert.ok(start > -1);
+  const body = rooms.slice(start, rooms.indexOf("\n});\n", start));
+  assert.equal(body.split("screensaver?.setHues").length - 1, 1);
+  assert.match(body, /setPage:[^\n]*applyCoverColor/);
 });
 
 test("the overlay css covers the page and is inert until up", () => {

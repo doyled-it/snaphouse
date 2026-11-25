@@ -61,12 +61,20 @@ export function mixHues(from, to, f) {
   };
 }
 
-// Color at position k (0..1) between the two hues. The page's chromaScale keeps
-// a faint tint when nothing plays (chroma 0), the same way --k does.
+// Color at position k (0..1) between the two hues, for the screensaver styles. It is
+// richer than the page tokens: chroma 0.19 with a floor of 0.8 on chromaScale (so a grey
+// or missing cover still gives a visible colour), and the two hues are spread at least
+// MIN_SPREAD degrees apart. The spread keeps the shorter way from h1 to h2; equal hues
+// spread upward (toward h1 + 110). A wider spread is left as it is.
+export const MIN_SPREAD = 110;
+const TINT_CHROMA = 0.19;
+const TINT_FLOOR = 0.8;
+
 export function tintColor(hues, L, k) {
   const h = cleanHues(hues);
-  const hue = h.h1 + shortHueDiff(h.h1, h.h2) * k;
-  return oklchToRgb(L, 0.17 * chromaScale(h.chroma), hue);
+  const d = shortHueDiff(h.h1, h.h2);
+  const spread = Math.abs(d) < MIN_SPREAD ? (d < 0 ? -MIN_SPREAD : MIN_SPREAD) : d;
+  return oklchToRgb(L, TINT_CHROMA * Math.max(TINT_FLOOR, chromaScale(h.chroma)), h.h1 + spread * k);
 }
 
 export function ribbonColumn(ribbon, x, t, H) {

@@ -6,7 +6,7 @@
 
 import { createCanvasStyle } from "./canvas-style.js";
 import { buildColors, lerp, rgba } from "./gen-color.js";
-import { FLOW, activeCount, createFlow, stepFlow } from "./flow-model.js";
+import { FLOW, activeCount, createFlow, stepFlow, trailAlpha, trailFade } from "./flow-model.js";
 
 export function createFlowStyle(env) {
   return createCanvasStyle(env, {
@@ -27,12 +27,12 @@ export function createFlowStyle(env) {
           t += dt * FLOW.timeRate;
           const active = activeCount(view.night);
           stepFlow(flow, t, dt, active, random);
-          ctx.fillStyle = `rgba(0,0,0,${lerp(0.07, 0.12, view.night).toFixed(3)})`;
+          ctx.fillStyle = `rgba(0,0,0,${trailFade(view.night, dt).toFixed(3)})`;
           ctx.fillRect(0, 0, width, height);
           if (view.hueVersion !== keyVersion || view.night !== keyNight) {
             keyVersion = view.hueVersion;
             keyNight = view.night;
-            const a = lerp(0.5, 0.32, view.night);
+            const a = trailAlpha(view.night);
             styles = buildColors(view.hues, FLOW.bins, lerp(0.78, 0.5, view.night)).map((c) => rgba(c, a));
           }
           for (let b = 0; b < FLOW.bins; b += 1) {

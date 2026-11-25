@@ -156,6 +156,7 @@ import { classifyMachines, healthMessage, healthRows, reasonLabel, speakerBanner
 import { applyPlan, everythingOffPlan, heldStatus, howToText, loadBluetoothName, onlyHerePlan, playbackControls, playbackRequest, roomState } from "./listen-model.js";
 import { createStatusRefresher } from "./status-refresher.js";
 import { DEFAULT_HUES, applyCoverColor, loadCoverHues, swapImage } from "./cover-color.js";
+import { createCoverFollower } from "./cover-follow.js";
 
 // The fallback poll is deliberately slow: it only runs when the live WebSocket
 // is down, and each Server.GetStatus is a full status read, so a slow cadence
@@ -2191,24 +2192,16 @@ function withPlayHold(track) {
 
 // The page color follows the now-playing cover. A token drops a slow older
 // extraction so it can never overwrite a newer cover's color.
-let coverColorToken = 0;
-function followCover(url) {
-  coverColorToken += 1;
-  const token = coverColorToken;
-  if (!url) {
-    applyCoverColor(document.documentElement, DEFAULT_HUES);
-    currentHues = DEFAULT_HUES;
-    screensaver?.setHues(DEFAULT_HUES);
-    return;
-  }
-  loadCoverHues(url).then((hues) => {
-    if (token === coverColorToken) {
-      applyCoverColor(document.documentElement, hues);
-      currentHues = hues;
-      screensaver?.setHues(hues);
-    }
-  });
-}
+const followCover = createCoverFollower({
+  defaults: DEFAULT_HUES,
+  load: loadCoverHues,
+  setPage: (hues) => applyCoverColor(document.documentElement, hues),
+  // The screensaver keeps the last cover's hues when the track clears.
+  setSaver: (hues) => {
+    currentHues = hues;
+    screensaver?.setHues(hues);
+  },
+});
 
 // The wall panel's screensaver. The kiosk URL carries ?panel=1 (and the timing);
 // only then is the module fetched, so phones create no overlay, canvas or timer.

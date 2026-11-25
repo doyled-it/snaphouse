@@ -551,7 +551,12 @@ picking a random hue. `@property` registers the three variables so the hue eases
 over 1.4 s; browsers without `@property` change hue instantly, and reduced motion
 turns the easing off. In `rooms.js`, `followCover` guards out-of-order results with
 a token. The frame mirror image only preloads through `swapImage`; the now-playing
-cover is the single source of color. Tests: `tests/js/cover-color.test.js`.
+cover is the single source of color. The page tokens are unchanged by the screensaver
+colors below. `cover-follow.js` (`createCoverFollower`, tests in `tests/js/cover-follow.test.js`)
+holds the follow rule `rooms.js` uses: the page tint resets to the defaults when the track clears,
+but the screensaver keeps the hues of the last cover it had (it stays on the default hues, 255 to
+285, until the first cover since the page loaded). The token still drops an out of order result,
+including one that lands after a clear. Tests: `tests/js/cover-color.test.js`.
 
 ## Panel screensaver
 
@@ -582,7 +587,16 @@ starts at the first pick); every `screensaver_change_min` minutes it crossfades 
 pick, the same by day and night, and the old layer stops when the fade ends. Preview never moves the
 pointer or the timer. While the ambient Now Playing view or a hidden page covers it, every style stops;
 when the ambient view ends the same style returns (pointer unchanged) and the timer restarts. A style
-gets `setNight(true)` during quiet hours and is told again when the hour passes while it runs. Canvas
+gets `setNight(true)` during quiet hours and is told again when the hour passes while it runs. Screensaver colors are
+richer than the page tokens: `tintColor` (`aurora-math.js`, used by Aurora, Flow field, Contours, Game of
+Life and Harmonograph) gives OKLCH chroma `0.19 * max(0.8, chromaScale(chroma))`, so a grey or missing
+cover and the default hues are still a visible colour, and spreads the two album hues at least
+`MIN_SPREAD` (110) degrees apart (the shorter way from h1 to h2 is kept, equal hues spread upward, a
+wider spread is left alone). Night keeps its lower lightness. The screensaver keeps the last cover's
+hues after the track clears (see Cover color). Of the styles, Aurora, Flow, Contours, Life,
+Harmonograph and the Covers fallback Aurora follow `setHues`; Weird facts and Quotes take only `h1`
+for their glow; the Clock, Night sky, Planets, Moon and the Covers mosaic ignore it; the ambient Now
+Playing view tints from the page's `--h`. Canvas
 styles cap at 60 fps (Aurora, Flow field, Contours, Game of Life and Harmonograph, each in one named constant: `AURORA_MAX_FPS`, `FLOW.maxFps`, `CONTOURS.maxFps`, `LIFE.maxFps`, `HARMONO.maxFps`; motion is time based, so a lower cap only coarsens it); the Clock is DOM text.
 
 **Clock style.** `clock-style.js` over `clock-model.js` (`clockText`, `msToNextMinute`, `moveDue`,
@@ -625,7 +639,9 @@ value noise with time as the third axis). Tests: `tests/js/{noise-math,flow-mode
 - **Flow field** (`flow-model.js`, `flow-style.js`): 320x192 canvas, 60 fps, 600 threads by day and 220 at night in typed
   arrays. Each thread moves 16 canvas px a second along `flowAngle` (`fbm3 * 4 pi`); the field drifts at 0.015 time units a
   second; a thread restarts elsewhere when it leaves the canvas or at 0.24 chance a second. Trails are the canvas faded by a
-  low-alpha black rect each frame (0.07 day, 0.12 night) with only this frame's segments stroked, batched into one stroke per
+  black rect each frame with only this frame's segments stroked (`trailFade`: 0.07 day, 0.12 night
+  at a 30 fps frame gap, rescaled by the real `dt` so trails last the same seconds at 60 fps; stroke alpha
+  `trailAlpha`: 0.65 by day, 0.32 at night), batched into one stroke per
   color bin (12). Night: fewer, fainter, darker threads.
 - **Contours** (`contours-model.js`, `contours-style.js`): 400x240 canvas, 60 fps (the field moves slowly, and `t` advances by `dt`), a 51x31 grid of
   8 px cells over `fbm3`. `marchLevel` is marching squares with linear interpolation; the two saddle cells join their high
