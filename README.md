@@ -10,6 +10,11 @@ On a freshly flashed machine, clone this repo and run `sudo ./bootstrap.sh`. It
 installs the tools, writes the local settings file, runs the first apply, and
 turns on the self-update timer.
 
+The first run opens `/etc/snaphouse/local.yml` in `$EDITOR` (vi by default), so run
+it from a terminal. Without one (for example `ssh host sudo ./bootstrap.sh` without
+`-t`), it writes the file, stops before the first apply, and asks you to edit the
+file and run it again.
+
 A machine selects its config by hostname, so it must already be named after its
 inventory key in `vars/hosts.yml` (`house`, `office`, or `nightstand`). When you
 repurpose a machine that still carries another name (the ZimaBlade shipped as
