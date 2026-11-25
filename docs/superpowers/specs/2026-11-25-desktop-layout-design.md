@@ -143,7 +143,7 @@ always wins and never enters desktop mode.
 - **The rail is the existing `<nav id="tabs">`**, restyled, so `nav-model.js`, `syncTabs` and
   `aria-current` are unchanged. "Everything off" stays its own node, placed in the rail column
   under the title. The 800x480 kiosk rules are scoped to `html[data-panel]` and never apply.
-- **Fader steps** match the phone slider: integer 0 to 100, arrows step 1, Page Up/Down step 10,
+- **Fader steps** match the phone slider: integer 0 to 100, arrows step 2, Page Up/Down step 10,
   the same haptics and the same `volume-controller.js` rules.
 
 ## Constraints
