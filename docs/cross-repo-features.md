@@ -372,6 +372,8 @@ background and the index is republished as they land. Shape:
       "id": "Photos/beach.jpg", "folder": "Photos", "file": "beach.jpg",
       "title": "Beach", "artist": null, "source_url": null,
       "width": 4032, "height": 3024, "landscape": true,
+      "crop": {"x": 0.1, "y": 0.05, "w": 0.6, "h": 0.6048},
+      "auto_crop": {"x": 0.0, "y": 0.0, "w": 0.9921, "h": 1.0},
       "size": 2481234, "mtime": 1794125000,
       "thumb": "/art-thumbs/3f2a....jpg", "url": "/art/Photos/beach.jpg"
     },
@@ -379,6 +381,7 @@ background and the index is republished as they land. Shape:
       "id": "ente-a1B2c3/9f8e7d.jpg", "folder": "ente-a1B2c3", "file": "9f8e7d.jpg",
       "title": "Album One", "artist": null, "source_url": null,
       "width": 1600, "height": 1067, "landscape": true,
+      "crop": null, "auto_crop": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 0.9987},
       "size": 412345, "mtime": 1794125000,
       "thumb": "/art-thumbs/7c1d....jpg", "url": "/art/ente-a1B2c3/9f8e7d.jpg",
       "source": "ente"
@@ -396,7 +399,24 @@ background and the index is republished as they land. Shape:
 root, at most one folder deep; `url` and `thumb` are percent-encoded per path segment, while
 `id` is raw. `landscape` is true when the aspect is at least `settings.min_aspect` from the
 "Art control file" (default 1.1, the frame's landscape rule); pieces below the cutoff stay
-listed but do not rotate. `trash` entries are restorable for 30 days.
+listed but do not rotate, except that a piece with a saved `crop` reports `landscape: true`
+(informational: the frame decides eligibility from the crop it syncs, see "Frame crop"). `trash`
+entries are restorable for 30 days.
+
+`crop` and `auto_crop` are additive (an older consumer ignores them; a consumer must tolerate their
+absence). Each is `{"x", "y", "w", "h"}` or `null`: the left, top, width and height of a 5:3 box
+(the 800x480 panel's shape) as fractions of the UPRIGHT picture, that is after EXIF orientation is
+applied (a file that still carries an orientation tag over SMB is measured upright; `width` and
+`height` above are as stored). The box satisfies `w * W / (h * H) = 800 / 480` within rounding, with
+every value in [0, 1], `x + w <= 1` and `y + h <= 1`. `crop` is the owner's saved box (`null` when
+none). `auto_crop` is the automatic box: the hub's port of the window nightstand's `detail_crop`
+picks today (scale to cover 800x480, slide along the overflowing axis toward the busiest edge
+energy, centered when the picture is within 0.1 of 5:3). It is computed once per picture on the
+thumbnail pass and cached beside the thumbnail, so it is `null` until that pass has reached the
+piece (like `thumb`) and `null` for a picture that cannot be measured; Ente and museum pieces both
+carry one. The box to show or cut is `crop` when set, else `auto_crop`. A crop is kept through a
+move, a trash and restore, and an Ente re-sync; it is dropped when its picture is purged or no
+longer exists.
 
 Ente albums are additive and optional. A folder whose `name` starts with `ente-` (the reserved
 prefix, matched case-insensitively) is an Ente Photos album mirrored read-only by the hub: its
@@ -451,6 +471,29 @@ a command written before per-frame commands has no `frame` key and the hub repub
 a known frame id (an unknown id is a 404, a malformed id a 400) or absent for every frame. `seq`
 only increases, so a frame acts on a `seq` greater than the last one it applied; a frame that
 starts up and sees an existing command records its `seq` without replaying it.
+
+**Frame crop (`POST /api/art/crop`).** The page writes, the hub stores and publishes, nightstand
+reads. Body `{"id": "<piece id>", "crop": {"x", "y", "w", "h"} | null}`; a box saves, `null`
+removes ("Automatic"). Same guard as the other art writes (`X-Snaphouse: 1`, no origin rule; nginx
+already proxies `/api/art/`). Reply `{"id", "crop"}` with the stored box (`h` snapped to the exact
+5:3 aspect, values rounded to six decimals) or `null`. Errors are `{"error": "<short sentence>"}`:
+400 for a missing `id` or `crop`, a value that is not a finite number (a bool or a string is not
+one), a value outside [0, 1], a box that leaves the picture, an aspect more than 1 percent off 5:3,
+or a box smaller than 400 px of the upright picture's width (a picture too small for that only
+accepts the largest box that fits); 404 for an unknown id (an Ente piece whose rendition does not
+exist yet is unknown). Ente pieces can be cropped: the crop is a note in `crops.json` in the art
+state directory (`/var/lib/snaphouse/artadmin/`, keyed by piece id), never a write to the Ente
+mirror or cache, so the read-only 409 does not apply. After a save the service republishes the
+index and wakes the thumbnail pass. `POST /api/art/command` with `show` accepts a piece that has a
+crop whatever its aspect. A rename done over SMB is outside the API: the new name is a new piece
+and starts automatic, and the old crop is pruned on the next scan.
+
+The frame side (nightstand, a later PR): cut the effective box (`crop` else `auto_crop`) from the
+upright picture (apply `exif_transpose` first) and resize it to 800x480 with Lanczos before
+dithering; fall back to its own `detail_crop` only when both are absent or invalid. Redraw the shown
+piece on the next cycle, the way a command redraws, when its effective box changes. A piece with a
+`crop` is eligible whatever its aspect or `min_aspect`; a folder whose rotation switch is off still
+keeps its pieces out.
 
 **Frame control file.** snaphouse produces, nightstand and the room-picker page consume. The
 `snaphouse-artadmin` service writes `/var/lib/snaphouse/public/art/frame-control.json` atomically

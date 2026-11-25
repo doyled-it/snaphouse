@@ -977,6 +977,38 @@ thread reads `now-playing.json` every 10 s (`track`, else the paused `resume` bl
 last answer for 2 minutes after reads fail, then dims as before. With no URL the daemon behaves
 as it did.
 
+## Frame crop (hub)
+
+Each picture can carry a saved 5:3 crop box that the frames cut instead of guessing (design:
+`docs/superpowers/specs/2026-11-25-frame-crop-design.md`; contract in `docs/cross-repo-features.md`,
+"Frame crop"). This section is the hub half; the frame and the page are separate PRs.
+
+`lib/snaphouse/framecrop.py` is pure. `validate_crop` takes a box and the UPRIGHT picture size:
+finite real numbers only (a bool or a string is not one), all in [0, 1], inside the picture, at least
+400 px wide in picture pixels (or the largest box that fits, for a picture too small for that), aspect
+within 1 percent of 5:3 and then `h` snapped to the exact value. `auto_window` and `auto_crop` are a
+port of the window choice in nightstand's `detail_crop` (not the dither): they return the box as
+fractions of the picture. `tests/python/test_framecrop.py` pins the port with a golden table: pictures
+generated in the test (no photos), expected windows recorded by running nightstand's `detail_crop` on
+them once (the file says how to regenerate). If nightstand's algorithm ever changes, regenerate the
+table and bump `AUTO_CROP_VERSION` in `artlib.py` so cached boxes recompute.
+
+`Library.set_crop` (served by `POST /api/art/crop`, `X-Snaphouse` guard only) stores `crops.json`
+beside the control state file (`/var/lib/snaphouse/artadmin/`), `{"version": 1, "crops": {id: box}}`,
+atomic, written under the admin lock like every other library write. Move, trash, restore and folder
+rename re-key it after the file has moved (a failed move leaves the crop on the old id). It is never a
+write to a picture, so Ente pieces can be cropped; their crops are keyed by Ente id and survive
+re-syncs. `scan` prunes a crop whose picture is gone, judged by directory listings (art files, trash
+files, the Ente album listing) and never by the rendition cache, and skips Ente ids while the mirror
+root is unreadable. A rename over SMB is outside the API: the new name starts automatic and the old
+crop is pruned (accepted, not fixed).
+
+The index gains `crop` and `auto_crop` on every piece, and `landscape` is true for a piece with a
+crop. `auto_crop` is computed in `_ensure_thumbnail` (the thumbnail pass) and cached as
+`<thumbnail stem>.crop.json` in the thumbnail directory, pruned with its thumbnail; a thumbnail from
+before this feature gets its cache on the next pass. Tests: `tests/python/test_framecrop.py`,
+and the crop sections of `test_artlib.py` and `test_artadmin.py`.
+
 ## Tooling
 
 - Python: `uv run pytest tests/python`. Dev deps (pytest, pyyaml) are in
