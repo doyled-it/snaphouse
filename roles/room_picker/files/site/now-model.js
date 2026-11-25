@@ -77,3 +77,19 @@ export function nextMusicView(prev, { hasTrack, hadTrack, justEntered, lastTouch
   if (prev === "rooms" && returnDue(lastTouchMs, nowMs)) return "now";
   return prev === "rooms" ? "rooms" : "now";
 }
+
+// The progress bars update once a second; between updates they glide (a 1 s linear
+// transition on the transform, in panel.css under data-glide). A glide would look
+// wrong when the bar jumps, so it resets without one when the track changes, the
+// position goes backwards, or it moves forward by more than a few seconds.
+export const GLIDE_JUMP_S = 3;
+
+// `prev` is the last result's `mem` (or null); `key` is trackKey(track) (null for
+// no track); `elapsed` is the position in seconds. Returns { glide, mem }.
+export function progressGlide(prev, key, elapsed) {
+  if (key === null || key === undefined || !Number.isFinite(elapsed)) return { glide: false, mem: null };
+  const mem = { key, elapsed };
+  if (!prev || prev.key !== key) return { glide: false, mem };
+  const step = elapsed - prev.elapsed;
+  return { glide: step >= 0 && step <= GLIDE_JUMP_S, mem };
+}

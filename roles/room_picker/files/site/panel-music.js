@@ -1,5 +1,6 @@
 // The panel's Music screen: a now-playing bar over one tall column per room.
 import { createVolumeController, valueFromPointerVertical } from "./volume-controller.js";
+import { progressGlide, trackKey } from "./now-model.js";
 import { columnFit, nowPlayingBar, progressFraction, roomColumn, snapVolume, stepVolume } from "./panel-model.js";
 import { swapImage } from "./cover-color.js";
 import { formatDuration } from "./rooms-model.js";
@@ -110,6 +111,8 @@ export function createMusicScreen(panel) {
   });
 
   let coverSrc = null;
+  let barGlide = null;
+  let nowGlide = null;
 
   function buildColumn(room) {
     const col = el("div", "p-col");
@@ -219,7 +222,10 @@ export function createMusicScreen(panel) {
     }
     progress.hidden = model.mode !== "track";
     const p = model.mode === "track" ? host.progress() : null;
+    const g = progressGlide(barGlide, p ? trackKey(st.nowTrack) : null, p ? p.elapsed : NaN);
+    progressFill.dataset.glide = g.glide ? "1" : "0";
     progressFill.style.transform = `scaleX(${progressFraction(p).toFixed(4)})`;
+    barGlide = g.mem;
   }
 
   function renderColumns() {
@@ -282,7 +288,10 @@ export function createMusicScreen(panel) {
       setText(elapsedText, formatDuration(p.elapsed));
       setText(totalText, formatDuration(p.total));
     }
+    const g = progressGlide(nowGlide, p ? trackKey(host.state.nowTrack) : null, p ? p.elapsed : NaN);
+    nowFill.dataset.glide = g.glide ? "1" : "0";
     nowFill.style.transform = `scaleX(${progressFraction(p).toFixed(4)})`;
+    nowGlide = g.mem;
     setText(roomsLabel, roomsButtonLabel(host.rooms()));
   }
   let nowCover = null;

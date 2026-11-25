@@ -1249,3 +1249,49 @@ html[data-panel] .p-saver-preview-hint {
   font-size: 20px;
   color: oklch(1 0 0 / 0.6);
 }
+
+/* ---- Motion ---- */
+html[data-panel] .p-stage {
+  position: relative;
+}
+html[data-panel] .p-screen-in {
+  animation: p-screen-in 150ms ease-out;
+}
+html[data-panel] .p-screen-out {
+  position: absolute;
+  inset: 0 14px 10px;
+  pointer-events: none;
+  animation: p-screen-out 150ms ease-out forwards;
+}
+@keyframes p-screen-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes p-screen-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+html[data-panel] .p-now-fill[data-glide="1"],
+html[data-panel] .p-np-progress-fill[data-glide="1"],
+html[data-panel] .p-amb-fill[data-glide="1"] {
+  transition: transform 1s linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-panel] .p-screen-in,
+  html[data-panel] .p-screen-out {
+    animation: none;
+  }
+  html[data-panel] .p-now-fill[data-glide="1"],
+  html[data-panel] .p-np-progress-fill[data-glide="1"],
+  html[data-panel] .p-amb-fill[data-glide="1"] {
+    transition: none;
+  }
+}

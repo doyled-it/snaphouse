@@ -588,7 +588,7 @@ styles cap at 30 fps; the Clock is DOM text.
 **Clock style.** `clock-style.js` over `clock-model.js` (`clockText`, `msToNextMinute`, `moveDue`,
 `pickSpot`): a large thin 12-hour time without AM/PM, the date below, in the panel's local time, redrawn
 once at each whole minute (one timer, none while stopped) and moved to a new spot every
-`MOVE_EVERY_MIN` (4) minutes. At night it is smaller, dim warm grey on black.
+`MOVE_EVERY_MIN` (4) minutes (the spot change glides over 6 s). It has no box behind it: the text sits straight on the black overlay. At night it is smaller, dim warm grey on black.
 
 **Weird facts and Quotes styles.** `reader-style.js` (the two factories, `createFactsStyle` and
 `createQuotesStyle`) over `reader-model.js` (`createDeck`, `holdMs`, `textSize`, `pickPlace`, `parseEntries`; tests in
@@ -772,6 +772,12 @@ More is a 2 by 3 grid: Frames, Gallery, Bluetooth, House health, Screen and Scre
 when the kiosk URL carries a `pid`, see Panel settings; `moreTiles` takes a `settings` input and leaves them
 out when it is null). More's tile line stays "All good" or "N need attention", but the House health screen lists every machine with a status (`healthRows` in `health-model.js`: OK, Needs attention with the short reason, or Not set up yet; problems first).
 
+Switching screens crossfades for 150 ms (`SCREEN_FADE_MS`, `screenFade` in `panel-model.js`): `panel.js` puts
+`p-screen-in` on the new screen and keeps the old one up as `p-screen-out`, absolutely placed with
+`pointer-events: none`, so a tap lands on the new screen at once and nothing waits for the fade. Reduced motion
+turns it off. Phones get none of it. The `panel` role also installs `grim`, so a change can be checked on the
+real screen with a Wayland screenshot.
+
 Garage on the panel: the fill is how closed the door is, from `position` when it is a number (also while
 stopped), else full when closed, empty when open, and a fixed 15 s sweep while opening or closing
 (`TRAVEL_MS`). A down link or unknown state shows no fill, UNKNOWN with "Last seen", and a disabled button.
@@ -872,6 +878,11 @@ never runs while the ambient view is up. "Paused under 5 minutes" is each device
 from the moment it first sees the track paused (`pausedClock`), never a hub timestamp, so a
 kiosk restart during a pause restarts the count. The first touch only dismisses and lands on
 Now playing (`#listen`, `showNow`) when there is a track.
+
+The progress bars (the Now playing bar, the Rooms bar and the ambient line) glide between the once a second
+updates: `data-glide="1"` on the fill turns on a 1 s linear transform transition (`panel.css`, off under reduced
+motion). `progressGlide` in `now-model.js` decides: it sets `data-glide="0"` (no transition) for the first reading, a new track
+(`trackKey`), a position that goes backwards, or a forward jump over `GLIDE_JUMP_S` (3 s).
 
 While the same rule holds (`MusicWatch` in `backlight.py`, stdlib only) the night dim is skipped and the
 backlight sits at the screensaver brightness (Brightness when the screensaver is off), no longer at full:

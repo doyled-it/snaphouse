@@ -233,3 +233,12 @@ export function comfortStep(current, dir, away) {
 // Re-exported for the panel tests; defined in rooms-model.js so phones never load
 // this module.
 export { pairInstructionPanel } from "./rooms-model.js";
+
+// Switching panel screens crossfades for 150 ms: the new screen fades in while the
+// old one fades out on top of it, untouchable, so a tap never waits.
+export const SCREEN_FADE_MS = 150;
+
+export function screenFade(prev, next) {
+  if (!prev || prev === next) return { fade: false, leaving: null };
+  return { fade: true, leaving: prev };
+}

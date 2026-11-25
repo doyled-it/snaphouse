@@ -328,6 +328,13 @@ def test_kiosk_packages_are_hardware_skipped_in_the_container():
     assert "hardware" in (apt[0].get("tags") or [])
 
 
+def test_grim_is_installed_with_the_kiosk_packages_for_panel_screenshots():
+    apt = [t for t in _tasks() if _module(t)[0].endswith("apt")]
+    names = _module(apt[0])[1].get("name")
+    assert "grim" in names
+    assert "hardware" in (apt[0].get("tags") or [])
+
+
 def test_role_installs_the_verify_check_with_a_static_dest():
     installed = [
         _module(t)[1] for t in _tasks()

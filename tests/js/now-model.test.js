@@ -130,3 +130,37 @@ test("nextMusicView: Rooms returns to Now playing after 30 s without a touch", (
   assert.equal(nextMusicView("rooms", ctx({ nowMs: 30000 })), "now");
   assert.equal(nextMusicView("now", ctx({ nowMs: 99999 })), "now");
 });
+
+// ---- progress glide -------------------------------------------------------
+
+import { GLIDE_JUMP_S, progressGlide } from "../../roles/room_picker/files/site/now-model.js";
+
+test("progressGlide: the first reading has nothing to glide from", () => {
+  const r = progressGlide(null, "a", 10);
+  assert.equal(r.glide, false);
+  assert.deepEqual(r.mem, { key: "a", elapsed: 10 });
+});
+
+test("progressGlide: the next second of the same track glides", () => {
+  assert.equal(progressGlide({ key: "a", elapsed: 10 }, "a", 11).glide, true);
+  assert.equal(progressGlide({ key: "a", elapsed: 10 }, "a", 10).glide, true);
+});
+
+test("progressGlide: a new track resets without a transition", () => {
+  assert.equal(progressGlide({ key: "a", elapsed: 200 }, "b", 1).glide, false);
+});
+
+test("progressGlide: a position that goes backwards resets", () => {
+  assert.equal(progressGlide({ key: "a", elapsed: 50 }, "a", 12).glide, false);
+});
+
+test("progressGlide: a jump forward of more than a few seconds resets", () => {
+  assert.equal(progressGlide({ key: "a", elapsed: 10 }, "a", 10 + GLIDE_JUMP_S).glide, true);
+  assert.equal(progressGlide({ key: "a", elapsed: 10 }, "a", 10 + GLIDE_JUMP_S + 1).glide, false);
+});
+
+test("progressGlide: no track clears the memory", () => {
+  const r = progressGlide({ key: "a", elapsed: 10 }, null, 0);
+  assert.equal(r.glide, false);
+  assert.equal(r.mem, null);
+});
