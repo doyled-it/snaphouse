@@ -296,6 +296,13 @@ a {
 
 /* --- Sections ------------------------------------------------------------ */
 
+/* Desktop Home only (desktop.css shows them at 1100 px and wider). */
+.home-strip,
+.np-airplay,
+.ph-empty {
+  display: none;
+}
+
 /* The one surface: a frosted, cover-tinted panel. Cards and borders stay only
    for separate objects (tiles, history rows). */
 .panel {

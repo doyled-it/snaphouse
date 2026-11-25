@@ -130,6 +130,6 @@ test("a chip is absent when its module is unavailable", () => {
 
 test("chip copy never names the machinery and has no dashes", () => {
   for (const c of chips({ garage: garage({ obstruction: true }) })) {
-    assert.doesNotMatch(c.text, /homebody|matter|api|esphome|board|hub|[–—]/i);
+    assert.doesNotMatch(c.text, /homebody|matter|api|esphome|board|hub|[\u2013\u2014]/iu);
   }
 });

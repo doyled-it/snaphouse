@@ -95,7 +95,9 @@ import {
   viewOf as changeView,
 } from "./frame-change-model.js";
 import { createAutosave, changedKeys, saveStatus } from "./autosave-queue.js";
-import { DESKTOP_QUERY, climatePollShown, everythingOffHidden, garagePollShown, isDesktop } from "./desktop-model.js";
+import { renderStatusStrip } from "./desktop-home.js";
+import { statusChips } from "./desktop-status-model.js";
+import { DESKTOP_QUERY, climatePollShown, everythingOffHidden, garagePollShown, heroTransport, isDesktop } from "./desktop-model.js";
 import { climateTabVisible, frameTabVisible, garageTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
 import {
   afterCommandPoll,
@@ -312,6 +314,8 @@ const els = {
   np: document.getElementById("np"),
   npSource: document.getElementById("np-source"),
   npHowto: document.getElementById("np-howto"),
+  homeStrip: document.getElementById("home-strip"),
+  npAirplay: document.getElementById("np-airplay"),
   everythingOff: document.getElementById("everything-off"),
   npProgress: document.getElementById("np-progress"),
   npFill: document.getElementById("np-fill"),
@@ -663,6 +667,28 @@ function syncEverythingOff() {
   els.everythingOff.hidden = everythingOffHidden(state.screen, desktopMode);
 }
 
+// The Home status strip (desktop width). Drawn from the climate and garage
+// documents the polls already keep; a chip is absent when its tab is hidden.
+function renderHomeStrip() {
+  if (!desktopMode) {
+    // A phone or the wall panel never draws the strip.
+    els.homeStrip.hidden = true;
+    els.homeStrip.replaceChildren();
+    return;
+  }
+  const visible = navVisible();
+  renderStatusStrip(
+    els.homeStrip,
+    statusChips({
+      climate: state.climate,
+      garage: state.garage,
+      climateVisible: visible.climate,
+      garageVisible: visible.garage,
+      now: Date.now(),
+    }),
+  );
+}
+
 // At desktop width the title and Everything off move into the side rail (ids and
 // listeners intact); below it they go back to the top bar. The tab bar itself is
 // restyled by desktop.css, so nav-model, syncTabs and aria-current are untouched.
@@ -687,6 +713,11 @@ function applyDesktop(matches, initial = false) {
     }
   }
   syncEverythingOff();
+  for (const entry of state.cards.values()) {
+    entry.slider.setOrientation(desktopMode ? "vertical" : "horizontal");
+  }
+  renderHomeStrip();
+  renderPlaybackControls();
   if (next && !initial && state.screen === "listen") {
     refreshClimate();
     refreshGarage();
@@ -835,6 +866,7 @@ function buildCards() {
     const entry = { card, toggle, only, stateEl, slider: null };
     entry.slider = createVolumeSlider({
       label: `${room.label} volume`,
+      orientation: desktopMode ? "vertical" : "horizontal",
       onSend: (p) => {
         // Dragging an off room wakes it: unmute first, then the volume.
         if (entry.toggle.getAttribute("aria-checked") !== "true") {
@@ -2305,8 +2337,10 @@ function updateNowPlayingCard(track) {
 // any other source. The play/pause icon follows the track's status.
 function renderPlaybackControls() {
   const controls = playbackControls(state.nowTrack);
-  els.npControls.hidden = !controls.visible;
-  if (!controls.visible) return;
+  const transport = heroTransport(state.nowTrack, desktopMode);
+  els.npAirplay.hidden = !transport.airplay;
+  els.npControls.hidden = !controls.visible || !transport.buttons;
+  if (els.npControls.hidden) return;
   els.npPlayPause.dataset.state = controls.playing ? "playing" : "paused";
   els.npPlayPause.setAttribute("aria-label", controls.playing ? "Pause" : "Play");
 }
@@ -4118,6 +4152,7 @@ function applyClimate(doc) {
     }
     renderClimate();
   }
+  renderHomeStrip();
   if (state.screen === "climate" && !navVisible().climate) {
     applyHash();
   } else {
@@ -4519,6 +4554,7 @@ function applyGarage(doc) {
     garageQueue.seed(garageWritten);
     renderGarage();
   }
+  renderHomeStrip();
   if (state.screen === "garage" && !navVisible().garage) {
     applyHash();
   } else {

@@ -50,3 +50,19 @@ test("garage polls at the shown rate on its tab, and on Listen at desktop width"
   assert.equal(garagePollShown("listen", false), false);
   assert.equal(garagePollShown("frame", true), false);
 });
+
+import { heroTransport } from "../../roles/room_picker/files/site/desktop-model.js";
+
+test("heroTransport: buttons only for a Bluetooth track with a player; AirPlay says control from the phone", () => {
+  const bt = (over = {}) => ({ source: "bluetooth", title: "T", controllable: true, ...over });
+  assert.deepEqual(heroTransport(bt(), true), { buttons: true, airplay: false });
+  assert.deepEqual(heroTransport(bt({ controllable: false }), true), { buttons: false, airplay: false });
+  assert.deepEqual(heroTransport(bt({ controllable: undefined }), true), { buttons: false, airplay: false });
+  assert.deepEqual(heroTransport({ source: "airplay", title: "T" }, true), { buttons: false, airplay: true });
+  assert.deepEqual(heroTransport(null, true), { buttons: false, airplay: false });
+});
+
+test("heroTransport: the phone keeps today's rule (buttons for any Bluetooth track, never the AirPlay line)", () => {
+  assert.deepEqual(heroTransport({ source: "bluetooth", title: "T", controllable: false }, false), { buttons: true, airplay: false });
+  assert.deepEqual(heroTransport({ source: "airplay", title: "T" }, false), { buttons: false, airplay: false });
+});

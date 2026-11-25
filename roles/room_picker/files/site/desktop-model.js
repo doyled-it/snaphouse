@@ -23,3 +23,19 @@ export function climatePollShown(screen, desktop) {
 export function garagePollShown(screen, desktop) {
   return screen === "garage" || (desktop && screen === "listen");
 }
+
+// Which transport the Home hero shows. The phone keeps its rule (buttons for any
+// Bluetooth track). On the desktop a Bluetooth track with no player shows no
+// buttons, and an AirPlay track says to control it from the phone.
+export function heroTransport(track, desktop) {
+  if (!track) {
+    return { buttons: false, airplay: false };
+  }
+  if (!desktop) {
+    return { buttons: track.source === "bluetooth", airplay: false };
+  }
+  return {
+    buttons: track.source === "bluetooth" && track.controllable === true,
+    airplay: track.source === "airplay",
+  };
+}
