@@ -19,6 +19,21 @@ export const FLOW = Object.freeze({
   maxFps: 60,
 });
 
+// The per frame black fade that leaves the trails. Tuned at 30 fps (0.07 by day, 0.12 at
+// night per frame), so it is rescaled by the real frame gap: the trails last the same
+// number of seconds at any frame rate.
+export const FADE_REF_FPS = 30;
+export function trailFade(nightMix, dt) {
+  const base = lerp(0.07, 0.12, nightMix);
+  return 1 - (1 - base) ** (dt * FADE_REF_FPS);
+}
+
+// Stroke alpha of a trail segment: 0.65 by day (was 0.5, raised with the richer colors,
+// chosen by eye against the 30 fps mockup), 0.32 at night.
+export function trailAlpha(nightMix) {
+  return lerp(0.65, 0.32, nightMix);
+}
+
 export function flowAngle(x, y, t) {
   return fbm3(x * FLOW.scale, y * FLOW.scale, t) * Math.PI * 4;
 }

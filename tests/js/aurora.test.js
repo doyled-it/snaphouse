@@ -125,7 +125,9 @@ test("setHues crossfades over 3 s and lands on the target", () => {
     aurora.frame(clock.now);
     seen.push(spread(firstStop(ctx)));
   }
-  assert.ok(seen[1] > seen[0]);
+  // The default hues already give a visible colour (chroma floor), so the early steps
+  // can clip to the same channel spread; the target is clearly richer.
+  assert.ok(seen[1] >= seen[0]);
   assert.ok(seen[2] > seen[1]);
   assert.equal(seen[2], seen[3]);
 });

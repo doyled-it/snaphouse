@@ -73,3 +73,31 @@ test("night has fewer threads, and the count eases between", () => {
   const mid = activeCount(0.5);
   assert.ok(mid < FLOW.dayCount && mid > FLOW.nightCount);
 });
+
+import { trailFade } from "../../roles/room_picker/files/site/flow-model.js";
+
+test("trailFade matches the 30 fps look at 1/30 s and is dt based", () => {
+  assert.ok(Math.abs(trailFade(0, 1 / 30) - 0.07) < 1e-9);
+  assert.ok(Math.abs(trailFade(1, 1 / 30) - 0.12) < 1e-9);
+});
+
+test("trailFade at 60 fps twice over leaves the same as one 30 fps frame", () => {
+  for (const night of [0, 1]) {
+    const keep60 = (1 - trailFade(night, 1 / 60)) ** 2;
+    const keep30 = 1 - trailFade(night, 1 / 30);
+    assert.ok(Math.abs(keep60 - keep30) < 1e-9);
+  }
+});
+
+test("trailFade is 0 for no time and below 1 for a long gap", () => {
+  assert.equal(trailFade(0, 0), 0);
+  assert.ok(trailFade(0, 0.25) < 1);
+});
+
+import { trailAlpha } from "../../roles/room_picker/files/site/flow-model.js";
+
+test("trailAlpha is brighter by day than the old 0.5 and stays dim at night", () => {
+  assert.equal(trailAlpha(0), 0.65);
+  assert.equal(trailAlpha(1), 0.32);
+  assert.ok(trailAlpha(0.5) < trailAlpha(0) && trailAlpha(0.5) > trailAlpha(1));
+});

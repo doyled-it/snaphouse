@@ -71,3 +71,41 @@ test("ribbonStops pins the four gradient stops", () => {
     "rgba(1,2,3,0)",
   ]);
 });
+
+const sat = (c) => Math.max(...c) - Math.min(...c);
+
+test("tintColor at zero chroma is still a visible colour, never grey", () => {
+  for (const k of [0, 0.5, 1]) {
+    assert.ok(sat(tintColor({ h1: 255, h2: 285, chroma: 0 }, 0.68, k)) >= 20);
+  }
+});
+
+test("tintColor is richer than the old 0.17 chroma at full chroma", () => {
+  const old = oklchToRgb(0.68, 0.17, 255);
+  assert.ok(sat(tintColor({ h1: 255, h2: 255, chroma: 1 }, 0.68, 0)) > sat(old));
+});
+
+test("tintColor widens a narrow spread to 110 degrees the short way", () => {
+  const end = tintColor({ h1: 255, h2: 285, chroma: 1 }, 0.68, 1);
+  assert.deepEqual(end, oklchToRgb(0.68, 0.19, 255 + 110));
+  const down = tintColor({ h1: 285, h2: 255, chroma: 1 }, 0.68, 1);
+  assert.deepEqual(down, oklchToRgb(0.68, 0.19, 285 - 110));
+});
+
+test("tintColor keeps a spread of 110 degrees or more as it is", () => {
+  const end = tintColor({ h1: 20, h2: 200, chroma: 1 }, 0.68, 1);
+  assert.deepEqual(end, oklchToRgb(0.68, 0.19, 20 + shortHueDiff(20, 200)));
+  const mid = tintColor({ h1: 350, h2: 100, chroma: 1 }, 0.68, 0.5);
+  assert.deepEqual(mid, oklchToRgb(0.68, 0.19, 350 + shortHueDiff(350, 100) * 0.5));
+});
+
+test("tintColor with equal hues spreads upward", () => {
+  const end = tintColor({ h1: 100, h2: 100, chroma: 1 }, 0.68, 1);
+  assert.deepEqual(end, oklchToRgb(0.68, 0.19, 210));
+});
+
+test("tintColor keeps the lower night lightness", () => {
+  const hues = { h1: 255, h2: 285, chroma: 1 };
+  const lum = (c) => c[0] + c[1] + c[2];
+  assert.ok(lum(tintColor(hues, 0.5, 0.5)) < lum(tintColor(hues, 0.78, 0.5)));
+});
