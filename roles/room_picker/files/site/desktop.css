@@ -1,0 +1,254 @@
+/* Desktop layout: a window 1100 px wide or more. Loaded with the same media query
+   (index.html) and scoped away from the wall panel. The tab bar becomes a left rail,
+   banners and the Undo toast float over the main area, and the wider screens use two
+   columns. Home's own arrangement is a separate change. Under 1100 px none of this
+   applies. rooms.js moves the title and Everything off into the rail (desktop-model.js
+   decides when).
+
+   The sideways-phone block in style.css (min-width 720, max-height 540) also matches a
+   short desktop window, so the rules below reset what it would otherwise change. */
+
+@media (min-width: 1100px) {
+  html:not([data-panel]) body {
+    --rail: 200px;
+    --desk-pad: 40px;
+    --gutter-l: var(--desk-pad);
+    --gutter-r: var(--desk-pad);
+    max-width: none;
+    margin: 0;
+    padding: 0 var(--desk-pad) 56px calc(var(--rail) + var(--desk-pad));
+  }
+
+  html:not([data-panel]) .topbar {
+    display: none;
+  }
+
+  html:not([data-panel]) main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding-top: 32px;
+  }
+
+  /* --- The side rail ------------------------------------------------------ */
+
+  html:not([data-panel]) .tabs {
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: auto;
+    width: var(--rail);
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 4px;
+    padding: 28px 12px 24px;
+    border-top: none;
+    border-right: 1px solid var(--line-strong);
+    background: oklch(0.18 calc(0.02 * var(--k)) var(--h) / 0.78);
+    -webkit-backdrop-filter: blur(24px) saturate(1.3);
+    backdrop-filter: blur(24px) saturate(1.3);
+    overflow-y: auto;
+  }
+
+  html:not([data-panel]) .tabs .house {
+    margin: 0;
+    padding: 0 12px 14px;
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+
+  html:not([data-panel]) .tabs .everything-off {
+    width: 100%;
+    min-height: 44px;
+    margin: 0 0 14px;
+  }
+
+  html:not([data-panel]) .tab {
+    flex: 0 0 auto;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    min-height: 48px;
+    padding: 0 12px;
+    font-size: 0.98rem;
+  }
+
+  html:not([data-panel]) .tab svg {
+    flex: 0 0 auto;
+  }
+
+  /* --- Banners and the Undo toast float; nothing moves the layout --------- */
+
+  html:not([data-panel]) .banner {
+    position: fixed;
+    z-index: 7;
+    top: 14px;
+    left: calc(var(--rail) + (100vw - var(--rail)) / 2);
+    transform: translateX(-50%);
+    width: min(720px, calc(100vw - var(--rail) - 2 * var(--desk-pad)));
+    margin: 0;
+    padding: 11px 16px;
+    font-size: 0.95rem;
+    box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(24px) saturate(1.3);
+    backdrop-filter: blur(24px) saturate(1.3);
+  }
+
+  html:not([data-panel]) .banner.health {
+    background: color-mix(in srgb, var(--yellow) 22%, oklch(0.2 0.02 var(--h)));
+  }
+
+  html:not([data-panel]) .banner.connection {
+    background: oklch(0.27 calc(0.02 * var(--k)) var(--h));
+  }
+
+  /* More than one banner at once stack downward instead of overlapping. */
+  html:not([data-panel]) .banner:not([hidden]) ~ .banner:not([hidden]) {
+    display: block;
+    top: 70px;
+  }
+
+  html:not([data-panel]) .banner:not([hidden]) ~ .banner:not([hidden]) ~ .banner:not([hidden]) {
+    top: 126px;
+  }
+
+  html:not([data-panel]) .toast {
+    left: calc(var(--rail) + (100vw - var(--rail)) / 2);
+    transform: translateX(-50%);
+    bottom: 32px;
+    max-width: min(560px, calc(100vw - var(--rail) - 2 * var(--desk-pad)));
+  }
+
+  /* --- Listen: today's content in a comfortable column --------------------- */
+
+  /* Undo the sideways-phone Listen (one viewport, two columns) on a short window. */
+  html:not([data-panel]):has(#screen-listen:not([hidden])) body {
+    height: auto;
+    display: block;
+    overflow: visible;
+  }
+
+  html:not([data-panel]):has(#screen-listen:not([hidden])) body > main {
+    display: block;
+  }
+
+  html:not([data-panel]) #screen-listen {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas: none;
+    max-width: 760px;
+    margin-inline: auto;
+    column-gap: 0;
+  }
+
+  html:not([data-panel]) #now-playing,
+  html:not([data-panel]) #rooms-section,
+  html:not([data-panel]) #play-history-section {
+    grid-area: auto;
+  }
+
+  html:not([data-panel]) #play-history-section {
+    display: block;
+  }
+
+  html:not([data-panel]) #np-history-list {
+    overflow-y: visible;
+  }
+
+  /* --- The other screens: up to 1200 px, two columns where there is room --- */
+
+  html:not([data-panel]) #screen-frame,
+  html:not([data-panel]) #screen-gallery,
+  html:not([data-panel]) #screen-settings,
+  html:not([data-panel]) #screen-climate,
+  html:not([data-panel]) #screen-garage {
+    max-width: none;
+    margin-inline: 0;
+  }
+
+  /* Climate: people and thermostat left, automatic changes right. */
+  html:not([data-panel]) .climate-cols {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 20px;
+    align-items: start;
+  }
+
+  /* Garage: the door left, settings and Recent right. */
+  html:not([data-panel]) #screen-garage {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    column-gap: 20px;
+    align-items: start;
+  }
+
+  html:not([data-panel]) #ga-panel {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  html:not([data-panel]) #ga-settings-panel {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  html:not([data-panel]) #ga-recent-panel {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  /* Settings: pairing left, paired phones and Not set up yet right. */
+  html:not([data-panel]) #screen-settings {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto auto 1fr;
+    column-gap: 20px;
+    align-items: start;
+  }
+
+  html:not([data-panel]) #pairing {
+    grid-column: 1;
+    grid-row: 1 / span 4;
+  }
+
+  html:not([data-panel]) #devices {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  html:not([data-panel]) #needs-attention {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  html:not([data-panel]) #not-set-up {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  /* Frame: the mirror and its controls left, history and settings right. */
+  html:not([data-panel]) #screen-frame {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    column-gap: 20px;
+    align-items: start;
+  }
+
+  html:not([data-panel]) #screen-frame > #frame {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  html:not([data-panel]) #screen-frame > #art-history-section {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  html:not([data-panel]) #screen-frame > #frame-settings {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  /* Gallery: the grid fills the width with larger tiles. */
+  html:not([data-panel]) #library .grid {
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  }
+}
