@@ -7,6 +7,7 @@
 import { createAuroraStyle } from "./aurora-style.js";
 import { createClockStyle } from "./clock-style.js";
 import { createContoursStyle } from "./contours-style.js";
+import { createCoversStyle } from "./covers-style.js";
 import { createFlowStyle } from "./flow-style.js";
 import { createHarmonographStyle } from "./harmonograph-style.js";
 import { createLifeStyle } from "./life-style.js";
@@ -19,6 +20,7 @@ export const FACTORIES = {
   aurora: createAuroraStyle,
   facts: createFactsStyle,
   quotes: createQuotesStyle,
+  covers: createCoversStyle,
   clock: createClockStyle,
   sky: createSkyStyle,
   planets: createPlanetsStyle,

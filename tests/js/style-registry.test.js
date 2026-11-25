@@ -25,5 +25,5 @@ test("a factory builds the common interface with a node to mount", () => {
 });
 
 test("an id with no module has no style", () => {
-  assert.equal(createStyle("covers", {}), null);
+  assert.equal(createStyle("nope", {}), null);
 });

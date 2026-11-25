@@ -55,6 +55,7 @@ from typing import Callable, Optional
 from urllib.parse import urlsplit
 
 from .artlookup import ArtLookup, keep_for_history, prune_history_covers, urllib_fetch
+from .coverarchive import CoverArchive
 
 # A track's identity: title, artist, album. Artist and album may be absent
 # (internet radio, some apps); the title is always present when there is a track.
@@ -835,6 +836,7 @@ class Service:
         house_stream: str,
         tracker: Tracker,
         art_lookup,
+        cover_archive: CoverArchive | None = None,
         now: Callable[[], datetime] | None = None,
         log: logging.Logger | None = None,
         monotonic: Callable[[], float] = time.monotonic,
@@ -852,6 +854,8 @@ class Service:
         self._house_stream = house_stream
         self._tracker = tracker
         self._art_lookup = art_lookup
+        self._cover_archive = cover_archive
+        self._archived_marker: tuple | None = None
         self._now = now if now is not None else (lambda: datetime.now().astimezone())
         self._log = log if log is not None else logging.getLogger("snaphouse.nowplaying")
         self._monotonic = monotonic
@@ -891,6 +895,7 @@ class Service:
         # On the hub this directory already exists (ansible creates it owned by
         # snapserver), so this is a no-op; off-hub and in tests it is created.
         self._state_dir.mkdir(parents=True, exist_ok=True)
+        self._start_archive()
         self._write_all(self._now())
         self._start_worker()
         try:
@@ -958,6 +963,7 @@ class Service:
             self._last_tick = now_mono
         self._drain_art_results()
         self._pump_art_requests()
+        self._archive_current()
         self._write_if_dirty(self._now())
 
     def _handle_message(self, line: bytes) -> None:
@@ -1051,6 +1057,40 @@ class Service:
             else:
                 self._tracker.art_missing(key, _route_signature(key, kind, genre))
 
+    # -- cover collection -------------------------------------------------
+
+    def _start_archive(self) -> None:
+        """Seed an empty collection from history and the lookup cache, then publish."""
+        if self._cover_archive is None:
+            return
+        try:
+            self._cover_archive.seed(self._tracker.history_doc()["plays"])
+            self._cover_archive.publish()
+        except Exception:
+            self._log.exception("cover collection start failed")
+
+    def _archive_current(self) -> None:
+        """Add the current track's cover once per (cover, album, artist)."""
+        if self._cover_archive is None:
+            return
+        track = self._tracker.now_playing_doc(self._now())["track"]
+        if not track or not track.get("art_url"):
+            return
+        marker = (track["art_url"], track.get("album"), track.get("artist"))
+        if marker == self._archived_marker:
+            return
+        self._archived_marker = marker
+        try:
+            self._cover_archive.add_file(
+                track["art_url"],
+                track.get("album"),
+                track.get("artist"),
+                kind=track.get("kind"),
+                genre=track.get("genre"),
+            )
+        except Exception:
+            self._log.exception("cover collection add failed")
+
     # -- writing ----------------------------------------------------------
 
     def _write_all(self, now: datetime) -> None:
@@ -1111,6 +1151,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         house_stream=args.house_stream,
         tracker=tracker,
         art_lookup=art_lookup,
+        cover_archive=CoverArchive(public_root, log=log),
         log=log,
     )
     service.run()

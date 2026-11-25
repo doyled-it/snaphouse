@@ -177,19 +177,19 @@ test("the More tile line names one style or counts several", () => {
   assert.equal(tileLines({ ...SETTINGS_DEFAULTS, screensaver_on: false }).saver, "Off");
 });
 
-test("stylesView lists only shipped styles in registry order with checks", () => {
+test("stylesView lists the shipped styles in registry order with checks", () => {
   const view = stylesView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["aurora", "clock"] });
-  assert.deepEqual(view.tiles.map((t) => t.id), ["aurora", "facts", "quotes", "clock", "sky", "planets", "moon", "flow", "contours", "life", "harmonograph"]);
-  assert.deepEqual(view.tiles.map((t) => t.name), ["Aurora", "Weird facts", "Quotes", "Clock", "Night sky", "Planets", "Moon", "Flow field", "Contours", "Game of Life", "Harmonograph"]);
-  assert.deepEqual(view.tiles.map((t) => t.on), [true, false, false, true, false, false, false, false, false, false, false]);
+  assert.deepEqual(view.tiles.map((t) => t.id), ["aurora", "facts", "quotes", "covers", "clock", "sky", "planets", "moon", "flow", "contours", "life", "harmonograph"]);
+  assert.deepEqual(view.tiles.map((t) => t.name), ["Aurora", "Weird facts", "Quotes", "Album covers", "Clock", "Night sky", "Planets", "Moon", "Flow field", "Contours", "Game of Life", "Harmonograph"]);
+  assert.deepEqual(view.tiles.map((t) => t.on), [true, false, false, false, true, false, false, false, false, false, false, false]);
   assert.equal(view.columns, 4);
 });
 
 test("stylesView locks the last picked tile", () => {
   const one = stylesView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["clock"] });
-  assert.deepEqual(one.tiles.map((t) => [t.id, t.on, t.locked]), [["aurora", false, false], ["facts", false, false], ["quotes", false, false], ["clock", true, true], ["sky", false, false], ["planets", false, false], ["moon", false, false], ["flow", false, false], ["contours", false, false], ["life", false, false], ["harmonograph", false, false]]);
+  assert.deepEqual(one.tiles.map((t) => [t.id, t.on, t.locked]), [["aurora", false, false], ["facts", false, false], ["quotes", false, false], ["covers", false, false], ["clock", true, true], ["sky", false, false], ["planets", false, false], ["moon", false, false], ["flow", false, false], ["contours", false, false], ["life", false, false], ["harmonograph", false, false]]);
   const two = stylesView({ ...SETTINGS_DEFAULTS, screensaver_styles: ["aurora", "clock"] });
-  assert.deepEqual(two.tiles.map((t) => t.locked), [false, false, false, false, false, false, false, false, false, false, false]);
+  assert.deepEqual(two.tiles.map((t) => t.locked), Array(12).fill(false));
 });
 
 test("changeView hides or disables Change every with one pick and marks the choice", () => {

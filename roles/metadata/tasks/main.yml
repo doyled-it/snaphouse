@@ -52,6 +52,18 @@
     group: snapserver
     mode: "0755"
 
+# The cover collection (lib/snaphouse/coverarchive.py) keeps distinct music covers
+# here, named by content hash, for the panel's Album cover mosaic. It sits under
+# the snapserver-owned cover directory (hub_input), so nginx serves it at
+# /cover/archive/ through the existing /cover/ location.
+- name: Ensure the cover collection directory exists
+  ansible.builtin.file:
+    path: /var/lib/snaphouse/public/cover/archive
+    state: directory
+    owner: snapserver
+    group: snapserver
+    mode: "0755"
+
 - name: Install the now-playing service unit
   ansible.builtin.template:
     src: snaphouse-nowplaying.service.j2
@@ -96,7 +108,8 @@
 
 # The now-playing service runs the code in place from /opt/snaphouse, so restart
 # it when its modules change on a self-update rather than waiting for a reboot.
-# nowplaying.py is the service; artlookup.py is the cover lookup it imports.
+# nowplaying.py is the service; artlookup.py is the cover lookup it imports;
+# coverarchive.py is the cover collection it feeds.
 - name: Record the now-playing module digests so the service restarts when they change
   ansible.builtin.copy:
     content: "{{ lookup('ansible.builtin.file', '/opt/snaphouse/lib/snaphouse/' ~ item) | hash('sha1') }}\n"
@@ -107,6 +120,7 @@
   loop:
     - nowplaying.py
     - artlookup.py
+    - coverarchive.py
   when: common_systemd_init
   notify: Restart the now-playing service
 
