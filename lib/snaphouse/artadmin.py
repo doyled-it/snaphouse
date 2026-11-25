@@ -3,7 +3,7 @@
 This is the one hub service that writes the art library. It wraps
 ``snaphouse.artlib.Library`` in a stdlib ``ThreadingHTTPServer`` bound to
 ``127.0.0.1:8781`` and exposes the small POST API the room-picker page calls
-(upload, delete, restore, move, folders, settings, commands). nginx proxies
+(upload, delete, restore, move, folders, settings, commands, crops). nginx proxies
 ``/api/art/`` to it and caps the upload size; the service runs as the ``art``
 user that owns the library, so SMB access keeps working.
 
@@ -225,6 +225,7 @@ class ArtAdmin:
             "/api/art/folder/enable": self._folder_enable,
             "/api/art/settings": self._settings,
             "/api/art/command": self._command,
+            "/api/art/crop": self._crop,
             "/api/frame/settings": self._frame_settings,
             "/api/frame/pin": self._frame_pin,
             "/api/frame/unpin": self._frame_unpin,
@@ -470,6 +471,16 @@ class ArtAdmin:
         if frame is not None:
             self.frame.require_frame(frame)
         return {"command": self.library.command(action, piece, frame)}
+
+    def _crop(self, handler: "_Handler", body: bytes, prepared=None) -> dict:
+        """Save or remove a piece's frame crop (a note on the hub, so an Ente
+        picture can be cropped too; the library refuses nothing here but a bad
+        box or an unknown piece)."""
+        data = _json_body(body)
+        piece_id = _require_str(data, "id")
+        if "crop" not in data:
+            raise ArtError(400, "A required field was missing.")
+        return {"id": piece_id, "crop": self.library.set_crop(piece_id, data["crop"])}
 
     # -- panel settings endpoint ------------------------------------------- #
 

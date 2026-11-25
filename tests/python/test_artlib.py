@@ -1358,3 +1358,359 @@ def test_collection_piece_named_like_ente_prefix_is_not_refused(tmp_path):
     new_id = library.move("Ente-sunset.jpg", "Photos")
     assert new_id == "Photos/Ente-sunset.jpg"
     assert library.delete(new_id).startswith(".trash/")
+
+
+# --------------------------------------------------------------------------- #
+# Frame crop: storage, moves, trash, Ente, the index fields
+# --------------------------------------------------------------------------- #
+
+CROP_5_3 = {"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5}  # exact 5:3 on a 5:3 picture
+
+
+def _crop_for(width, height, x=0.0, y=0.0, w=0.5):
+    """A valid 5:3 box (exact aspect) for a picture of width x height."""
+    return {"x": x, "y": y, "w": w, "h": w * width / height * 0.6}
+
+
+def _piece(index, piece_id):
+    return next(p for p in index["pieces"] if p["id"] == piece_id)
+
+
+def _crops_file(library):
+    return library.state.parent / "crops.json"
+
+
+def test_set_crop_is_stored_in_crops_json_beside_the_state_file(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    stored = library.set_crop("a.jpg", CROP_5_3)
+    assert stored == CROP_5_3
+    saved = json.loads(_crops_file(library).read_text(encoding="utf-8"))
+    assert saved["crops"]["a.jpg"] == CROP_5_3
+
+
+def test_index_carries_crop_and_auto_crop(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    _write_image(library_root(library) / "b.jpg", size=(2000, 1200))
+    library.set_crop("a.jpg", CROP_5_3)
+    index = library.scan()
+    assert _piece(index, "a.jpg")["crop"] == CROP_5_3
+    assert _piece(index, "b.jpg")["crop"] is None
+    for piece_id in ("a.jpg", "b.jpg"):
+        auto = _piece(index, piece_id)["auto_crop"]
+        assert auto == {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+
+
+def test_metadata_only_scan_has_null_auto_crop_until_the_pass_computes_it(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1000))
+    first = library.scan(ensure_thumbnails=False)
+    assert _piece(first, "a.jpg")["auto_crop"] is None
+    library.ensure_thumbnails()
+    again = library.scan(ensure_thumbnails=False)
+    assert _piece(again, "a.jpg")["auto_crop"] is not None
+
+
+def test_thumbnail_pass_adds_auto_crop_for_a_thumbnail_that_already_exists(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1000))
+    library.scan()
+    for cache in library.thumbs.glob("*.crop.json"):
+        cache.unlink()  # a thumbnail from before this feature
+    assert _piece(library.scan(ensure_thumbnails=False), "a.jpg")["auto_crop"] is None
+    assert library.ensure_thumbnails() == 1
+    assert _piece(library.scan(ensure_thumbnails=False), "a.jpg")["auto_crop"] is not None
+
+
+def test_auto_crop_is_cached_with_the_thumbnail_not_recomputed(tmp_path, monkeypatch):
+    from snaphouse import framecrop
+
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1000))
+    calls = []
+    real = framecrop.auto_crop
+    monkeypatch.setattr(framecrop, "auto_crop", lambda image: calls.append(1) or real(image))
+    library.scan()
+    library.scan()
+    library.ensure_thumbnails()
+    assert len(calls) == 1
+
+
+def test_a_cached_auto_crop_is_pruned_with_its_thumbnail(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1000))
+    library.scan()
+    assert list(library.thumbs.glob("*.crop.json"))
+    (library_root(library) / "a.jpg").unlink()
+    library.scan()
+    assert not list(library.thumbs.iterdir())
+
+
+def test_a_piece_that_cannot_be_measured_gets_null_auto_crop(tmp_path, monkeypatch):
+    from snaphouse import framecrop
+
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1000))
+    monkeypatch.setattr(framecrop, "auto_crop", lambda image: None)
+    assert _piece(library.scan(), "a.jpg")["auto_crop"] is None
+
+
+def test_landscape_is_true_for_a_piece_with_a_crop(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "tall.jpg", size=(1000, 2000))
+    assert _piece(library.scan(), "tall.jpg")["landscape"] is False
+    library.set_crop("tall.jpg", _crop_for(1000, 2000, w=0.8))
+    assert _piece(library.scan(), "tall.jpg")["landscape"] is True
+    library.set_crop("tall.jpg", None)
+    assert _piece(library.scan(), "tall.jpg")["landscape"] is False
+
+
+def test_remove_crop_with_none(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    library.set_crop("a.jpg", CROP_5_3)
+    assert library.set_crop("a.jpg", None) is None
+    assert _piece(library.scan(), "a.jpg")["crop"] is None
+    assert json.loads(_crops_file(library).read_text(encoding="utf-8"))["crops"] == {}
+
+
+def test_removing_a_crop_that_was_never_set_is_fine(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    assert library.set_crop("a.jpg", None) is None
+
+
+def test_set_crop_unknown_piece_is_404(tmp_path):
+    library = _make_library(tmp_path)
+    with pytest.raises(ArtError) as caught:
+        library.set_crop("nope.jpg", CROP_5_3)
+    assert caught.value.status == 404
+
+
+def test_set_crop_bad_value_is_400_and_stores_nothing(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    with pytest.raises(ArtError) as caught:
+        library.set_crop("a.jpg", {"x": 0, "y": 0, "w": 0.5, "h": 0.1})
+    assert caught.value.status == 400
+    assert not _crops_file(library).exists()
+
+
+@pytest.mark.parametrize("bad_id", ["../x.jpg", "/etc/passwd", "a/b/c.jpg", 5, None])
+def test_set_crop_rejects_bad_ids(tmp_path, bad_id):
+    library = _make_library(tmp_path)
+    with pytest.raises(ArtError) as caught:
+        library.set_crop(bad_id, CROP_5_3)
+    assert caught.value.status in (400, 404)
+
+
+def test_crop_is_checked_against_the_upright_picture(tmp_path):
+    # Stored 2000x1200 with an orientation tag that turns it to 1200x2000.
+    library = _make_library(tmp_path)
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    (library_root(library) / "r.jpg").write_bytes(_image_bytes(size=(2000, 1200), exif=exif.tobytes()))
+    with pytest.raises(ArtError):
+        library.set_crop("r.jpg", _crop_for(2000, 1200))
+    upright = _crop_for(1200, 2000, w=0.8)
+    assert library.set_crop("r.jpg", upright)["w"] == 0.8
+
+
+def test_move_keeps_the_crop_under_the_new_id(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    library.create_folder("Trips")
+    library.set_crop("a.jpg", CROP_5_3)
+    new_id = library.move("a.jpg", "Trips")
+    assert new_id == "Trips/a.jpg"
+    index = library.scan()
+    assert _piece(index, "Trips/a.jpg")["crop"] == CROP_5_3
+    assert list(json.loads(_crops_file(library).read_text())["crops"]) == ["Trips/a.jpg"]
+
+
+def test_a_failed_move_leaves_the_crop_on_the_old_id(tmp_path, monkeypatch):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    library.create_folder("Trips")
+    library.set_crop("a.jpg", CROP_5_3)
+
+    def broken(self, source, destination):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(Library, "_move_with_sidecar", broken)
+    with pytest.raises(OSError):
+        library.move("a.jpg", "Trips")
+    assert list(json.loads(_crops_file(library).read_text())["crops"]) == ["a.jpg"]
+
+
+def test_trash_and_restore_keep_the_crop(tmp_path):
+    clock = FakeClock()
+    library = _make_library(tmp_path, clock=clock)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    library.set_crop("a.jpg", CROP_5_3)
+    trash_id = library.delete("a.jpg")
+    index = library.scan()
+    assert index["pieces"] == []
+    assert json.loads(_crops_file(library).read_text())["crops"] == {trash_id: CROP_5_3}
+    restored = library.restore(trash_id)
+    assert _piece(library.scan(), restored)["crop"] == CROP_5_3
+
+
+def test_restore_under_a_suffixed_name_carries_the_crop(tmp_path):
+    clock = FakeClock()
+    library = _make_library(tmp_path, clock=clock)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    library.set_crop("a.jpg", CROP_5_3)
+    trash_id = library.delete("a.jpg")
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    restored = library.restore(trash_id)
+    assert restored == "a-1.jpg"
+    index = library.scan()
+    assert _piece(index, "a-1.jpg")["crop"] == CROP_5_3
+    assert _piece(index, "a.jpg")["crop"] is None
+
+
+def test_purging_the_trash_drops_the_crop(tmp_path):
+    clock = FakeClock()
+    library = _make_library(tmp_path, clock=clock)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    library.set_crop("a.jpg", CROP_5_3)
+    library.delete("a.jpg")
+    clock.now += artlib.TRASH_RETENTION_SECONDS + 10
+    library.scan()
+    assert json.loads(_crops_file(library).read_text())["crops"] == {}
+
+
+def test_renaming_a_folder_re_keys_its_crops(tmp_path):
+    library = _make_library(tmp_path)
+    library.create_folder("Old")
+    _write_image(library_root(library) / "Old" / "a.jpg", size=(2000, 1200))
+    library.set_crop("Old/a.jpg", CROP_5_3)
+    library.rename_folder("Old", "New")
+    assert _piece(library.scan(), "New/a.jpg")["crop"] == CROP_5_3
+
+
+def test_a_crop_for_a_picture_deleted_over_smb_is_pruned_on_scan(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    _write_image(library_root(library) / "b.jpg", size=(2000, 1200))
+    library.set_crop("a.jpg", CROP_5_3)
+    library.set_crop("b.jpg", CROP_5_3)
+    (library_root(library) / "a.jpg").unlink()
+    library.scan(ensure_thumbnails=False)
+    assert list(json.loads(_crops_file(library).read_text())["crops"]) == ["b.jpg"]
+
+
+def test_a_rename_over_smb_loses_the_crop(tmp_path):
+    # Accepted and documented: a rename outside the API is a new id.
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    library.set_crop("a.jpg", CROP_5_3)
+    (library_root(library) / "a.jpg").rename(library_root(library) / "renamed.jpg")
+    index = library.scan(ensure_thumbnails=False)
+    assert _piece(index, "renamed.jpg")["crop"] is None
+    assert json.loads(_crops_file(library).read_text())["crops"] == {}
+
+
+def test_a_corrupt_crops_file_reads_as_empty(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    _crops_file(library).parent.mkdir(parents=True, exist_ok=True)
+    _crops_file(library).write_text("{not json", encoding="utf-8")
+    assert _piece(library.scan(), "a.jpg")["crop"] is None
+    assert library.set_crop("a.jpg", CROP_5_3) == CROP_5_3
+
+
+def test_a_malformed_stored_crop_is_ignored_by_the_index(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "a.jpg", size=(2000, 1200))
+    _crops_file(library).parent.mkdir(parents=True, exist_ok=True)
+    _crops_file(library).write_text(
+        json.dumps({"version": 1, "crops": {"a.jpg": {"x": "bad"}}}), encoding="utf-8"
+    )
+    assert _piece(library.scan(), "a.jpg")["crop"] is None
+
+
+def test_ente_piece_can_be_cropped_and_keeps_it_across_rescans(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (1000, 2000)})
+    piece_id = "ente-alb1/f1.jpg"
+    library.scan()  # the page only offers a picture it has listed
+    crop = _crop_for(1000, 2000, w=0.9)
+    assert library.set_crop(piece_id, crop)["w"] == 0.9
+    for _ in range(2):
+        piece = _piece(library.scan(), piece_id)
+        assert piece["crop"]["w"] == 0.9
+        assert piece["landscape"] is True
+        assert piece["auto_crop"] is not None
+    # A re-sync rewrites the mirror picture; the crop stays on its id.
+    _write_image(tmp_path / "mirror" / "alb1" / "f1.jpg", size=(1000, 2000), color=(1, 2, 3))
+    assert _piece(library.scan(), piece_id)["crop"]["w"] == 0.9
+
+
+def test_cropping_an_ente_piece_writes_nothing_to_the_ente_folders(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (1000, 2000)})
+    library.scan()
+
+    def snapshot():
+        return {
+            str(p): p.stat().st_mtime_ns
+            for base in (tmp_path / "mirror", tmp_path / "public" / "art-ente")
+            for p in base.rglob("*")
+        }
+
+    before = snapshot()
+    library.set_crop("ente-alb1/f1.jpg", _crop_for(1000, 2000, w=0.9))
+    library.set_crop("ente-alb1/f1.jpg", None)
+    assert snapshot() == before
+
+
+def test_ente_crop_is_kept_while_the_cache_is_cold_and_pruned_when_the_picture_goes(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (1000, 2000)})
+    library.scan()
+    piece_id = "ente-alb1/f1.jpg"
+    library.set_crop(piece_id, _crop_for(1000, 2000, w=0.9))
+    # A cold rendition cache (metadata-only scan lists no Ente piece) must not
+    # cost the owner their crop.
+    for rendition in (tmp_path / "public" / "art-ente").rglob("*.jpg"):
+        rendition.unlink()
+    library.scan(ensure_thumbnails=False)
+    assert piece_id in json.loads(_crops_file(library).read_text())["crops"]
+    # The picture really leaving the album drops it.
+    (tmp_path / "mirror" / "alb1" / "f1.jpg").unlink()
+    (tmp_path / "mirror" / "alb1" / "album.json").write_text(
+        json.dumps({"title": "Album One", "updated_at": 2, "files": {}}), encoding="utf-8"
+    )
+    library.scan()
+    assert json.loads(_crops_file(library).read_text())["crops"] == {}
+
+
+def test_ente_crops_are_kept_when_the_mirror_root_is_unreadable(tmp_path):
+    library = _ente_library(tmp_path)
+    _ente_album(tmp_path / "mirror", "alb1", "Album One", {"f1": (1000, 2000)})
+    library.scan()
+    piece_id = "ente-alb1/f1.jpg"
+    library.set_crop(piece_id, _crop_for(1000, 2000, w=0.9))
+    mirror = tmp_path / "mirror"
+    mirror.rename(tmp_path / "mirror-away")  # an unmounted export
+    library.scan(ensure_thumbnails=False)
+    assert piece_id in json.loads(_crops_file(library).read_text())["crops"]
+
+
+def test_ente_piece_unknown_id_is_404(tmp_path):
+    library = _ente_library(tmp_path)
+    with pytest.raises(ArtError) as caught:
+        library.set_crop("ente-alb1/nope.jpg", CROP_5_3)
+    assert caught.value.status == 404
+
+
+def test_command_show_accepts_a_tall_piece_with_a_crop(tmp_path):
+    library = _make_library(tmp_path)
+    _write_image(library_root(library) / "tall.jpg", size=(1000, 2000))
+    with pytest.raises(ArtError):
+        library.command("show", "tall.jpg")
+    library.set_crop("tall.jpg", _crop_for(1000, 2000, w=0.8))
+    assert library.command("show", "tall.jpg")["piece"] == "tall.jpg"
