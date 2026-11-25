@@ -110,3 +110,11 @@ test("setHues is accepted and ignored", () => {
   const s = make(env());
   s.setHues({ h1: 1, h2: 2, chroma: 0.1 });
 });
+
+test("the Clock has no box behind it", async () => {
+  const { readFileSync } = await import("node:fs");
+  const css = readFileSync(new URL("../../roles/room_picker/files/site/style.css", import.meta.url), "utf8");
+  const rule = css.match(/\n\.saver-clock\s*\{[^}]*\}/)[0];
+  assert.doesNotMatch(rule, /background/);
+  assert.match(rule, /--ss-move:\s*6s/);
+});

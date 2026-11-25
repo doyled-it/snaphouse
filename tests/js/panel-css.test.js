@@ -91,3 +91,20 @@ test("More tiles put the icon beside the text so three rows fit the 422px stage"
   assert.match(rule(".p-tile > svg"), /grid-row:\s*1 \/ span 2/);
   assert.match(rule(".p-more"), /grid-auto-rows:\s*minmax\(0, 1fr\)/);
 });
+
+test("screens crossfade in 150ms without trapping taps, and reduced motion turns it off", () => {
+  const raw = readFileSync(new URL("panel.css", site), "utf8");
+  assert.match(raw, /\.p-screen-in\s*\{[^}]*animation:[^;}]*150ms/);
+  const leaving = all.find((r) => /\.p-screen-out$/.test(r.selector));
+  assert.ok(leaving, "no .p-screen-out rule");
+  assert.match(leaving.body, /pointer-events:\s*none/);
+  assert.match(leaving.body, /position:\s*absolute/);
+  assert.match(raw, /prefers-reduced-motion:\s*reduce\)[\s\S]*\.p-screen-in/);
+});
+
+test("the progress fills glide for 1s linear only when marked, and not under reduced motion", () => {
+  const raw = readFileSync(new URL("panel.css", site), "utf8");
+  assert.match(raw, /\.p-np-progress-fill\[data-glide="1"\][^{]*\{[^}]*transition:\s*transform 1s linear/);
+  assert.match(raw, /\.p-amb-fill\[data-glide="1"\]/);
+  assert.match(raw, /prefers-reduced-motion:\s*reduce\)[\s\S]*data-glide/);
+});

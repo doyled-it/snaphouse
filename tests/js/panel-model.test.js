@@ -294,3 +294,16 @@ test("the Styles screen is a More sub-screen routed like Screensaver", () => {
   assert.equal(railActive("screensaver-styles"), "more");
   assert.equal(stripBack("screensaver-styles"), true);
 });
+
+import { SCREEN_FADE_MS, screenFade } from "../../roles/room_picker/files/site/panel-model.js";
+
+test("screenFade: a change of screen fades for 150 ms and names the one leaving", () => {
+  assert.equal(SCREEN_FADE_MS, 150);
+  assert.deepEqual(screenFade("listen", "climate"), { fade: true, leaving: "listen" });
+  assert.deepEqual(screenFade("more", "frame"), { fade: true, leaving: "more" });
+});
+
+test("screenFade: the first screen and a repeat render do not fade", () => {
+  assert.deepEqual(screenFade(null, "listen"), { fade: false, leaving: null });
+  assert.deepEqual(screenFade("listen", "listen"), { fade: false, leaving: null });
+});

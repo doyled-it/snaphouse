@@ -2694,7 +2694,6 @@ a.row-title {
   padding: 24px 40px;
   text-align: center;
   color: oklch(0.9 0.02 255);
-  background: #000;
   --ss-move: 6s;
   --ss-tone: 3s;
   transition: left var(--ss-move) ease-in-out, top var(--ss-move) ease-in-out, translate var(--ss-move) ease-in-out, color var(--ss-tone);

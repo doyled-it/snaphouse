@@ -55,11 +55,13 @@
 # cage (the single-app Wayland compositor) and Chromium are the kiosk stack. They
 # only run on the real display, so the heavy install is tagged hardware and the CI
 # container never pulls them; the container still exercises the rest of the role.
+# grim takes Wayland screenshots, to check a change on the real screen.
 - name: Install the kiosk packages
   ansible.builtin.apt:
     name:
       - cage
       - chromium
+      - grim
     state: present
     update_cache: true
     cache_valid_time: 3600

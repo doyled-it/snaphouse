@@ -9,7 +9,7 @@
 // click never reach a room switch underneath.
 
 import { swapImage as realSwapImage } from "./cover-color.js";
-import { ambientWanted, pausedClock } from "./now-model.js";
+import { ambientWanted, pausedClock, progressGlide, trackKey } from "./now-model.js";
 import { progressAt } from "./rooms-model.js";
 import { createStyle as realCreateStyle } from "./style-registry.js";
 import { nextPick, shippedPicks } from "./style-list.js";
@@ -85,6 +85,7 @@ export function createScreensaver({
   let clock = { key: null, since: null };
   let ambientTimer = null;
   let artSrc = null;
+  let ambGlide = null;
   // Style layers: one instance (style plus its wrapper) per id, made when first needed.
   const styleEnv = { doc, win, now, setTimeout, clearTimeout, random: () => Math.random() };
   const instances = new Map();
@@ -115,7 +116,10 @@ export function createScreensaver({
     }
     const p = progressAt(track, now());
     ambLine.hidden = !p;
+    const g = progressGlide(ambGlide, p ? trackKey(track) : null, p ? p.elapsed : NaN);
+    ambFill.setAttribute("data-glide", g.glide ? "1" : "0");
     ambFill.style.transform = `scaleX(${(p ? p.fraction : 0).toFixed(4)})`;
+    ambGlide = g.mem;
   }
 
   // ---- style layers ------------------------------------------------------ //

@@ -1,7 +1,7 @@
 // The wall panel layout. rooms.js fetches this module only when the URL carries
 // panel=1, so phones never get the attribute, the stylesheet or any panel node.
 // Decisions live in the panel-*-model.js files; this file builds and updates DOM.
-import { BACK_HASH, isSubScreen, railActive, railItems, resolvePanelScreen, stripBack, stripParts } from "./panel-model.js";
+import { BACK_HASH, SCREEN_FADE_MS, isSubScreen, railActive, railItems, resolvePanelScreen, screenFade, stripBack, stripParts } from "./panel-model.js";
 import { garageView } from "./garage-model.js";
 import { createMusicScreen } from "./panel-music.js";
 import { createClimateScreen } from "./panel-climate.js";
@@ -152,6 +152,22 @@ export function initPanel(host) {
     setText(stripTime, parts.time);
   }
 
+  // The screen that just left stays up for the crossfade, on top and untouchable.
+  let shown = null;
+  let leaving = null;
+  let leavingTimer = 0;
+  function reducedMotion() {
+    return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+  function clearLeaving() {
+    window.clearTimeout(leavingTimer);
+    if (leaving) {
+      leaving.classList.remove("p-screen-out");
+      if (leaving !== screens.get(current)?.node) leaving.hidden = true;
+      leaving = null;
+    }
+  }
+
   function render() {
     // A feature that went away (Garage, Climate, Frame) sends the panel to Music.
     const wanted = resolvePanelScreen(window.location.hash, visible()).screen;
@@ -161,8 +177,24 @@ export function initPanel(host) {
     }
     renderRail();
     renderStrip();
+    if (current !== shown) {
+      const change = screenFade(shown, current);
+      shown = current;
+      clearLeaving();
+      const next = screens.get(current);
+      if (change.fade && next && !reducedMotion()) {
+        const old = screens.get(change.leaving);
+        if (old) {
+          leaving = old.node;
+          leaving.classList.add("p-screen-out");
+          leavingTimer = window.setTimeout(clearLeaving, SCREEN_FADE_MS + 50);
+        }
+        next.node.classList.add("p-screen-in");
+        window.setTimeout(() => next.node.classList.remove("p-screen-in"), SCREEN_FADE_MS + 50);
+      }
+    }
     for (const [name, screen] of screens) {
-      screen.node.hidden = name !== current;
+      screen.node.hidden = name !== current && screen.node !== leaving;
     }
     const active = screens.get(current);
     if (active) active.render({ host, screen: current });
