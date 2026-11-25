@@ -102,3 +102,11 @@ test("no em dash or en dash in the new copy", () => {
     assert.doesNotMatch(read(name), /[–—]/, name);
   }
 });
+
+test("leaving the viewer closes an open crop editor, so its key listener never outlives it", () => {
+  const start = rooms.indexOf("function closeViewerView(");
+  assert.ok(start > 0, "closeViewerView exists");
+  const body = rooms.slice(start, rooms.indexOf("\n}\n", start));
+  assert.match(body, /getCropEditor\(\)\.isOpen\(\)/);
+  assert.match(body, /getCropEditor\(\)\.close\(\)/);
+});

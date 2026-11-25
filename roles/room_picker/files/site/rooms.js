@@ -3272,6 +3272,11 @@ function syncViewer() {
 }
 
 function closeViewerView(wasOpen) {
+  // Leaving the viewer (Back to gallery, a hash change) ends an open crop edit,
+  // so its document key listener never outlives the piece it was editing.
+  if (getCropEditor().isOpen()) {
+    getCropEditor().close();
+  }
   const lastId = state.viewerId;
   state.viewerId = null;
   state.viewerKind = "grid";
