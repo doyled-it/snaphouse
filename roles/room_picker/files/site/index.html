@@ -28,6 +28,9 @@
     <main>
       <!-- Listen: what is playing on the House stream, the rooms, and the plays. -->
       <section class="screen" id="screen-listen" aria-label="Listen">
+        <!-- Desktop width only: who is home, the thermostat and the garage door. -->
+        <div id="home-strip" class="home-strip" role="group" aria-label="House status" hidden></div>
+
         <!-- Now playing on the House stream, as a compact strip. With no track it
              shows how to start something. -->
         <section id="now-playing" class="section panel" aria-label="Now playing">
@@ -60,6 +63,7 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.8 5H18v14h-2.2zM5 5.5v13a.6.6 0 0 0 .95.5l8.45-6a1.2 1.2 0 0 0 0-2l-8.45-6A.6.6 0 0 0 5 5.5z"/></svg>
               </button>
             </div>
+            <p id="np-airplay" class="np-airplay" hidden>Control from the phone</p>
           </div>
           <p id="np-howto" class="np-howto"></p>
         </section>
@@ -73,6 +77,7 @@
         <section id="play-history-section" class="section panel" aria-labelledby="ph-h" hidden>
           <h2 id="ph-h" class="section-h">Play history</h2>
           <ul id="np-history-list" class="rows"></ul>
+          <p class="ph-empty empty">Nothing played yet.</p>
         </section>
       </section>
 

@@ -32,8 +32,9 @@ function fakeEl() {
     setPointerCapture(id) { el.captured = id; },
     focused: 0,
     focus() { el.focused += 1; },
-    getBoundingClientRect: () => ({ left: 100, width: 226 }),
+    getBoundingClientRect: () => ({ left: 100, width: 226, top: 40, height: 326 }),
     offsetWidth: 226,
+    offsetHeight: 326,
   };
   return el;
 }
@@ -225,4 +226,66 @@ test("a pointer press focuses without the keyboard focus ring; a key brings it b
   el.fire("pointerup", { pointerId: 1 });
   el.fire("keydown", { key: "ArrowRight" });
   assert.ok(!el.classList.contains("pointer-focus"));
+});
+
+test("a horizontal slider has no aria-orientation and keeps the horizontal paint", () => {
+  const { slider } = setup();
+  assert.equal(slider.el.getAttribute("aria-orientation"), null);
+});
+
+test("a vertical slider reports aria-orientation and paints the fill and thumb on the Y axis", () => {
+  const { slider, flushFrames } = setup({ orientation: "vertical" });
+  assert.equal(slider.el.getAttribute("aria-orientation"), "vertical");
+  slider.set(25);
+  flushFrames();
+  assert.equal(slider.el.children[0].style.clipPath, "inset(75% 0px 0px 0px round 8px)");
+  const t = slider.el.children[1].style;
+  assert.match(t.translate, /^0px -[\d.]+px$/);
+  assert.equal(t.transform || "", "");
+  slider.set(0);
+  flushFrames();
+  assert.equal(slider.el.children[1].style.translate, "0px 0px");
+});
+
+test("a vertical drag reads the pointer's y: the top is 100, the bottom is 0", () => {
+  const { slider, sent, advance } = setup({ orientation: "vertical" });
+  const { el } = slider;
+  el.fire("pointerdown", { pointerId: 3, clientX: 999, clientY: 40 + 163 });
+  assert.deepEqual(sent, [50]);
+  el.fire("pointermove", { pointerId: 3, clientX: 0, clientY: 40 });
+  advance(100);
+  assert.deepEqual(sent, [50, 100]);
+  el.fire("pointermove", { pointerId: 3, clientX: 0, clientY: 40 + 326 });
+  advance(100);
+  assert.deepEqual(sent, [50, 100, 0]);
+});
+
+test("a vertical slider takes Up/Down, Page and Home/End keys", () => {
+  const { slider, sent } = setup({ orientation: "vertical" });
+  const { el } = slider;
+  slider.set(50);
+  el.fire("keydown", { key: "ArrowUp" });
+  assert.equal(el.getAttribute("aria-valuenow"), "52");
+  el.fire("keydown", { key: "PageDown" });
+  assert.equal(el.getAttribute("aria-valuenow"), "42");
+  el.fire("keydown", { key: "Home" });
+  assert.equal(el.getAttribute("aria-valuenow"), "0");
+  el.fire("keydown", { key: "End" });
+  assert.equal(el.getAttribute("aria-valuenow"), "100");
+  assert.deepEqual(sent.slice(-1), [100]);
+});
+
+test("setOrientation switches a live slider both ways without losing its value", () => {
+  const { slider, flushFrames } = setup();
+  slider.set(40);
+  slider.setOrientation("vertical");
+  flushFrames();
+  assert.equal(slider.el.getAttribute("aria-orientation"), "vertical");
+  assert.equal(slider.el.getAttribute("aria-valuenow"), "40");
+  assert.match(slider.el.children[0].style.clipPath, /^inset\(60% 0px 0px 0px/);
+  slider.setOrientation("horizontal");
+  flushFrames();
+  assert.equal(slider.el.getAttribute("aria-orientation"), null);
+  assert.equal(slider.el.children[0].style.clipPath, "inset(0px 60% 0px 0px round 8px)");
+  assert.match(slider.el.children[1].style.translate, /^[\d.]+px 0px$/);
 });

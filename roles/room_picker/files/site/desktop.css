@@ -1,7 +1,7 @@
 /* Desktop layout: a window 1100 px wide or more. Loaded with the same media query
    (index.html) and scoped away from the wall panel. The tab bar becomes a left rail,
    banners and the Undo toast float over the main area, and the wider screens use two
-   columns. Home's own arrangement is a separate change. Under 1100 px none of this
+   columns. Under 1100 px none of this
    applies. rooms.js moves the title and Everything off into the rail (desktop-model.js
    decides when).
 
@@ -118,7 +118,7 @@
     max-width: min(560px, calc(100vw - var(--rail) - 2 * var(--desk-pad)));
   }
 
-  /* --- Listen: today's content in a comfortable column --------------------- */
+  /* --- Home (Listen): status strip, hero and mixer on the left, history right -- */
 
   /* Undo the sideways-phone Listen (one viewport, two columns) on a short window. */
   html:not([data-panel]):has(#screen-listen:not([hidden])) body {
@@ -129,30 +129,433 @@
 
   html:not([data-panel]):has(#screen-listen:not([hidden])) body > main {
     display: block;
+    max-width: 1900px;
   }
 
   html:not([data-panel]) #screen-listen {
+    --art: clamp(200px, min(35vh, 22vw), 480px);
+    --pad: clamp(16px, 2.3vh, 28px);
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: none;
+    grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr);
+    grid-template-rows: auto auto minmax(460px, auto);
     grid-template-areas: none;
-    max-width: 760px;
-    margin-inline: auto;
-    column-gap: 0;
+    column-gap: 24px;
+    row-gap: 0;
+    align-items: stretch;
+    max-width: none;
+    margin-inline: 0;
+  }
+
+  /* Fit: a window at least 760 px tall is exactly one viewport, no page scroll.
+     A shorter one scrolls the page instead of crushing the faders. */
+  @media (min-height: 760px) {
+    html:not([data-panel]):has(#screen-listen:not([hidden])) body {
+      box-sizing: border-box;
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding-bottom: 28px;
+    }
+
+    html:not([data-panel]):has(#screen-listen:not([hidden])) body > main {
+      flex: 1 1 0;
+      min-height: 0;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    html:not([data-panel]) #screen-listen {
+      flex: 1 1 0;
+      min-height: 0;
+      grid-template-rows: auto auto minmax(0, 1fr);
+    }
+
+    html:not([data-panel]) #screen-listen > #play-history-section {
+      max-height: none;
+    }
+  }
+
+  html:not([data-panel]) #screen-listen > * {
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* Status strip: quiet chips, each a link to its screen. */
+  html:not([data-panel]) #home-strip:not([hidden]) {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  html:not([data-panel]) .home-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 0 18px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+    -webkit-backdrop-filter: blur(24px) saturate(1.3);
+    backdrop-filter: blur(24px) saturate(1.3);
+    color: var(--ink);
+    font-size: 16px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    text-decoration: none;
+  }
+
+  html:not([data-panel]) .home-chip:hover {
+    background: var(--fill-hover);
+  }
+
+  html:not([data-panel]) .home-chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  html:not([data-panel]) .home-chip-dot {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ink-2);
+  }
+
+  html:not([data-panel]) .home-chip[data-state="warn"] {
+    background: color-mix(in srgb, var(--yellow) 22%, transparent);
+    border-color: color-mix(in srgb, var(--yellow) 55%, transparent);
+  }
+
+  html:not([data-panel]) .home-chip[data-state="warn"] .home-chip-dot {
+    background: var(--yellow);
+  }
+
+  html:not([data-panel]) .home-chip[data-state="alert"] {
+    background: color-mix(in srgb, var(--red) 40%, transparent);
+    border-color: color-mix(in srgb, var(--red-text) 55%, transparent);
+    color: var(--red-text);
+  }
+
+  html:not([data-panel]) .home-chip[data-state="alert"] .home-chip-dot {
+    background: var(--red-text);
   }
 
   html:not([data-panel]) #now-playing,
   html:not([data-panel]) #rooms-section,
   html:not([data-panel]) #play-history-section {
     grid-area: auto;
+    margin-top: 20px;
   }
 
-  html:not([data-panel]) #play-history-section {
+  html:not([data-panel]) #screen-listen:has(#home-strip[hidden]) > #now-playing,
+  html:not([data-panel]) #screen-listen:has(#home-strip[hidden]) > #play-history-section {
+    margin-top: 0;
+  }
+
+  /* Now playing: the art box sets the height in every state. */
+  html:not([data-panel]) #now-playing {
+    grid-column: 1;
+    grid-row: 2;
+    box-sizing: border-box;
+    height: calc(var(--art) + 2 * var(--pad));
+    padding: var(--pad) clamp(18px, 2vw, 32px);
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: var(--art) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: clamp(20px, 2.1vw, 40px);
+    row-gap: clamp(10px, 1.5vh, 18px);
+    align-items: center;
+  }
+
+  html:not([data-panel]) #np:not([hidden]) {
+    display: contents;
+  }
+
+  html:not([data-panel]) .np-cover {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  html:not([data-panel]) .np-art-img,
+  html:not([data-panel]) .np-art-ph {
+    width: var(--art);
+    height: var(--art);
+    border-radius: 20px;
+  }
+
+  html:not([data-panel]) .np-art-ph::before {
+    font-size: 5rem;
+  }
+
+  /* Paused: the art dims, as on the panel. */
+  html:not([data-panel]) #now-playing:has(#np-status:not([hidden])) .np-art-img {
+    opacity: 0.55;
+  }
+
+  html:not([data-panel]) .np-info {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    gap: 6px;
+  }
+
+  html:not([data-panel]) .np-title {
+    font-size: clamp(26px, 2.1vw, 40px);
+    line-height: 1.1;
+    font-weight: 650;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  html:not([data-panel]) .np-source {
+    font-size: clamp(0.95rem, 0.9vw, 1.15rem);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  html:not([data-panel]) .np-progress {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    width: 100%;
+    margin-top: clamp(10px, 1.7vh, 20px);
+  }
+
+  html:not([data-panel]) .np-track {
+    height: 6px;
+  }
+
+  html:not([data-panel]) .np-times {
+    justify-content: space-between;
+    gap: 8px;
+    white-space: nowrap;
+    font-size: clamp(0.8rem, 0.75vw, 0.95rem);
+  }
+
+  html:not([data-panel]) .np-status {
+    font-size: 1rem;
+  }
+
+  html:not([data-panel]) .np-controls:not([hidden]) {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: start;
+    justify-content: flex-start;
+    gap: clamp(12px, 1.1vw, 20px);
+    margin: 0;
+  }
+
+  html:not([data-panel]) .np-btn {
+    width: clamp(44px, 3vw, 56px);
+    height: clamp(44px, 3vw, 56px);
+  }
+
+  html:not([data-panel]) .np-btn svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  html:not([data-panel]) .np-btn-main {
+    width: clamp(60px, 4vw, 76px);
+    height: clamp(60px, 4vw, 76px);
+  }
+
+  html:not([data-panel]) .np-btn-main svg {
+    width: 34px;
+    height: 34px;
+  }
+
+  html:not([data-panel]) .np-airplay:not([hidden]) {
     display: block;
+    grid-column: 2;
+    grid-row: 2;
+    align-self: start;
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 1.1rem;
+  }
+
+  /* Nothing playing: an empty art tile, and the how-to line beside it. */
+  html:not([data-panel]) #now-playing:has(#np[hidden])::before {
+    content: "\266A";
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--art);
+    height: var(--art);
+    border-radius: 20px;
+    background: var(--fill);
+    color: var(--ink-2);
+    font-size: 5rem;
+  }
+
+  html:not([data-panel]) .np-howto:not([hidden]) {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+    font-size: 1.2rem;
+    line-height: 1.4;
+  }
+
+  /* Rooms: the mixer. One fader per room, side by side, filling the height. */
+  html:not([data-panel]) #rooms-section {
+    grid-column: 1;
+    grid-row: 3;
+    padding: 16px;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  html:not([data-panel]) .rooms {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-template-columns: none;
+    gap: 16px;
+    min-height: 0;
+  }
+
+  html:not([data-panel]) .room {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(80px, 1fr) auto auto;
+    grid-template-areas: "label" "state" "volume" "toggle" "only";
+    justify-items: center;
+    row-gap: clamp(6px, 0.85vh, 10px);
+    min-height: 0;
+    padding: clamp(12px, 1.7vh, 20px) 12px;
+    border-radius: 20px;
+    background: var(--fill);
+    text-align: center;
+  }
+
+  html:not([data-panel]) .room.disconnected,
+  html:not([data-panel]) .room:has(.room-state[data-mode="text"]) {
+    opacity: 0.55;
+  }
+
+  html:not([data-panel]) .room-name {
+    display: contents;
+  }
+
+  html:not([data-panel]) .room-label {
+    grid-area: label;
+    font-size: clamp(17px, 1.7vh, 20px);
+  }
+
+  html:not([data-panel]) .room-state {
+    grid-area: state;
+    color: var(--ink);
+    font-size: clamp(30px, 3.7vh, 44px);
+    font-weight: 600;
+    line-height: 1.05;
+    font-variant-numeric: tabular-nums;
+  }
+
+  html:not([data-panel]) .room.disconnected .room-state {
+    color: var(--ink-2);
+    font-size: 22px;
+    font-weight: 500;
+  }
+
+  html:not([data-panel]) .room .toggle {
+    grid-area: toggle;
+  }
+
+  /* Hold the slot when "Only here" is not offered, so the switches stay level. */
+  html:not([data-panel]) .room .only-here {
+    grid-area: only;
+    min-height: clamp(36px, 3.8vh, 44px);
+  }
+
+  html:not([data-panel]) .room .only-here[hidden] {
+    display: block !important;
+    visibility: hidden;
+  }
+
+  /* The vertical fader: a 56 px wide hit area, the track inset by half the thumb so
+     the fill ends under the thumb's centre. */
+  html:not([data-panel]) .volume[aria-orientation="vertical"] {
+    grid-area: volume;
+    width: 56px;
+    height: 100%;
+    min-height: 80px;
+    margin: 0;
+    cursor: grab;
+  }
+
+  html:not([data-panel]) .volume[aria-orientation="vertical"]::before,
+  html:not([data-panel]) .volume[aria-orientation="vertical"] .volume-fill {
+    left: 50%;
+    right: auto;
+    top: 13px;
+    bottom: 13px;
+    width: 12px;
+    height: auto;
+    margin: 0 0 0 -6px;
+    border-radius: 12px;
+  }
+
+  html:not([data-panel]) .volume[aria-orientation="vertical"] .volume-fill {
+    background: linear-gradient(0deg, var(--accent), var(--accent-2));
+  }
+
+  html:not([data-panel]) .volume[aria-orientation="vertical"] .volume-thumb {
+    left: 50%;
+    top: auto;
+    bottom: 0;
+    margin: 0 0 0 -13px;
+  }
+
+  html:not([data-panel]) .volume[aria-orientation="vertical"]:focus-visible {
+    border-radius: 14px;
+  }
+
+  /* Play history: the full right column, scrolling inside its own card. */
+  html:not([data-panel]) #play-history-section,
+  html:not([data-panel]) #play-history-section[hidden] {
+    grid-column: 2;
+    grid-row: 2 / span 2;
+    display: flex !important;
+    flex-direction: column;
+    padding: 24px 28px;
+  }
+
+  html:not([data-panel]) #play-history-section .section-h {
+    flex: 0 0 auto;
+    font-size: 0.9rem;
   }
 
   html:not([data-panel]) #np-history-list {
-    overflow-y: visible;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  html:not([data-panel]) #np-history-list:empty {
+    display: none;
+  }
+
+  html:not([data-panel]) #np-history-list:empty ~ .ph-empty {
+    display: block;
+    margin: 4px 0 0;
+  }
+
+  /* Under 760 px tall the page scrolls, so keep the history card from running away. */
+  html:not([data-panel]) #play-history-section {
+    max-height: 900px;
   }
 
   /* --- The other screens: up to 1200 px, two columns where there is room --- */
