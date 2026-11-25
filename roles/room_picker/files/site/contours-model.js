@@ -13,7 +13,7 @@ export const CONTOURS = Object.freeze({
   levels: Object.freeze([0.22, 0.3, 0.38, 0.46, 0.54, 0.62, 0.7, 0.78]),
   freq: 0.18, // noise frequency per grid cell
   timeRate: 0.015, // noise time units per second
-  maxFps: 12,
+  maxFps: 60,
 });
 
 export function fillField(values, cols, rows, t) {

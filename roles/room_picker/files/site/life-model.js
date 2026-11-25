@@ -21,10 +21,31 @@ export const LIFE = Object.freeze({
   flatLen: 40, // steps of population history for the flat check
   flatSpread: 6,
   ghostRate: 1.2, // ghost decays by exp(-rate * seconds)
-  maxFps: 10,
+  maxFps: 60,
+  ghostLevels: 48, // steps of ghost brightness drawn
+  birthS: 0.35, // a newborn cell fades in over this long
 });
 
 export const stepIntervalS = (nightMix) => lerp(LIFE.dayStepS, LIFE.nightStepS, nightMix);
+
+// The ghost brightness step (1 .. ghostLevels) for a ghost value above zero.
+export const ghostLevel = (g) => Math.max(1, Math.round(g * LIFE.ghostLevels));
+
+// Counts generations from frame gaps, so the pace is the same at any redraw rate.
+// The first advance steps at once; the remainder is carried, never dropped.
+export function createStepper() {
+  let acc = stepIntervalS(0);
+  return {
+    advance(dt, nightMix) {
+      acc += dt;
+      const every = stepIntervalS(nightMix);
+      if (acc < every) return 0;
+      const n = Math.min(3, Math.floor(acc / every));
+      acc = Math.min(acc - n * every, every);
+      return n;
+    },
+  };
+}
 
 export function createLife({ cols = LIFE.cols, rows = LIFE.rows, random, lowPop = LIFE.lowPop }) {
   const size = cols * rows;
@@ -32,6 +53,7 @@ export function createLife({ cols = LIFE.cols, rows = LIFE.rows, random, lowPop 
   let next = new Uint8Array(size);
   const age = new Uint16Array(size);
   const ghost = new Float32Array(size);
+  const birth = new Float32Array(size).fill(1); // 0 just born .. 1 full
   let hashes = [];
   let pops = [];
 
@@ -43,6 +65,7 @@ export function createLife({ cols = LIFE.cols, rows = LIFE.rows, random, lowPop 
     },
     age,
     ghost,
+    birth,
 
     seedAll() {
       for (let i = 0; i < size; i += 1) if (random() < LIFE.density) cells[i] = 1;
@@ -54,7 +77,11 @@ export function createLife({ cols = LIFE.cols, rows = LIFE.rows, random, lowPop 
       const y0 = Math.floor(random() * (rows - LIFE.patchH));
       for (let y = y0; y < y0 + LIFE.patchH; y += 1) {
         for (let x = x0; x < x0 + LIFE.patchW; x += 1) {
-          if (random() < LIFE.density) cells[y * cols + x] = 1;
+          if (random() < LIFE.density) {
+            const i = y * cols + x;
+            if (!cells[i]) birth[i] = 0;
+            cells[i] = 1;
+          }
         }
       }
     },
@@ -63,6 +90,7 @@ export function createLife({ cols = LIFE.cols, rows = LIFE.rows, random, lowPop 
       cells.fill(0);
       age.fill(0);
       ghost.fill(0);
+      birth.fill(1);
       for (const [x, y] of list) cells[y * cols + x] = 1;
       hashes = [];
       pops = [];
@@ -89,11 +117,13 @@ export function createLife({ cols = LIFE.cols, rows = LIFE.rows, random, lowPop 
           if (now) {
             next[i] = 1;
             age[i] = was ? age[i] + 1 : 0;
+            if (!was) birth[i] = 0;
             pop += 1;
           } else {
             next[i] = 0;
             if (was) ghost[i] = 1;
             age[i] = 0;
+            birth[i] = 1;
           }
         }
       }
@@ -108,6 +138,15 @@ export function createLife({ cols = LIFE.cols, rows = LIFE.rows, random, lowPop 
         pops = [];
       }
       return { population: pop, reseed };
+    },
+
+    // Move every newborn cell toward full over LIFE.birthS.
+    fadeBirth(dt) {
+      const k = dt / LIFE.birthS;
+      for (let i = 0; i < size; i += 1) {
+        const b = birth[i];
+        if (b < 1) birth[i] = b + k >= 1 ? 1 : b + k;
+      }
     },
 
     decayGhost(dt) {

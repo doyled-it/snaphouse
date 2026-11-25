@@ -344,3 +344,19 @@ test("a failed image during a crossfade never shows the fading cover twice", asy
     style.stop();
   }
 });
+
+test("while a crossfade runs the mosaic redraws about 60 times a second, and idles at the slow tick", async () => {
+  const h = makeEnv({ docs: [archive(100)] });
+  const delays = [];
+  const real = h.env.setTimeout;
+  h.env.setTimeout = (fn, ms) => { delays.push({ ms, fading: !!style.debug().fade }); return real(fn, ms); };
+  const style = createCoversStyle(h.env);
+  style.start();
+  await flush();
+  await h.advance(60000);
+  style.stop();
+  const fading = delays.filter((d) => d.fading && d.ms < 100).map((d) => d.ms);
+  assert.ok(fading.length > 5, "a crossfade ran");
+  assert.ok(fading.every((ms) => ms >= 16 && ms <= 17), `fade ticks ${[...new Set(fading)]}`);
+  assert.ok(delays.some((d) => d.ms === 250), "the idle day tick stays 250 ms");
+});

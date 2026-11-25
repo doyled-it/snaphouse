@@ -5,6 +5,10 @@ import { createFlowStyle } from "../../roles/room_picker/files/site/flow-style.j
 import { createContoursStyle } from "../../roles/room_picker/files/site/contours-style.js";
 import { createLifeStyle } from "../../roles/room_picker/files/site/life-style.js";
 import { createHarmonographStyle } from "../../roles/room_picker/files/site/harmonograph-style.js";
+import { FLOW } from "../../roles/room_picker/files/site/flow-model.js";
+import { CONTOURS } from "../../roles/room_picker/files/site/contours-model.js";
+import { HARMONO } from "../../roles/room_picker/files/site/harmonograph-model.js";
+import { LIFE } from "../../roles/room_picker/files/site/life-model.js";
 
 function fakeCtx() {
   const calls = [];
@@ -221,4 +225,63 @@ test("after a stop, setNight snaps again until the next frame has run", () => {
   s.start();
   tick(100);
   assert.equal(rec.at(-1).view.night, 1, "snapped, not eased from 0");
+});
+
+test("the generative styles redraw at up to 60 fps", () => {
+  assert.equal(FLOW.maxFps, 60);
+  assert.equal(CONTOURS.maxFps, 60);
+  assert.equal(HARMONO.maxFps, 60);
+  assert.equal(LIFE.maxFps, 60);
+  for (const make of [createFlowStyle, createContoursStyle, createLifeStyle, createHarmonographStyle]) {
+    const run = (stepMs) => {
+      const { env, ctx, tick } = fakeEnv();
+      const s = make(env);
+      s.start();
+      tick(0);
+      let drawn = 0;
+      for (let t = stepMs; t <= 1000; t += stepMs) {
+        const before = ctx.calls.length;
+        tick(t);
+        if (ctx.calls.length > before) drawn += 1;
+      }
+      s.stop();
+      return drawn;
+    };
+    assert.ok(run(16.7) >= 58, `${make.name}: 60 Hz ticks all draw`);
+    assert.ok(run(4) <= 70, `${make.name}: faster ticks are thinned to about 60`);
+  }
+});
+
+test("the shell keeps motion time based: the dt it hands out adds up to elapsed time at any cap", () => {
+  const total = (fps) => {
+    const { env, tick } = fakeEnv();
+    const rec = [];
+    const s = createCanvasStyle(env, { ...spec(rec), fps: () => fps });
+    s.start();
+    for (let t = 0; t <= 10000; t += 4) tick(t);
+    return rec.reduce((n, r) => n + r.dt, 0);
+  };
+  for (const fps of [30, 45, 60]) assert.ok(Math.abs(total(fps) - 10) < 0.1, `${fps} fps`);
+});
+
+test("the Game of Life style fades in 48 ghost levels and 12 birth levels from a fixed table", () => {
+  const { env, canvas, tick } = fakeEnv();
+  const styles = new Set();
+  const ctx = {
+    set fillStyle(v) { styles.add(v); },
+    get fillStyle() { return "#000"; },
+    fillRect() {},
+    set globalAlpha(_) {},
+    get globalAlpha() { return 1; },
+  };
+  canvas.getContext = () => ctx;
+  let seed = 7;
+  env.random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const s = createLifeStyle(env);
+  s.start();
+  for (let t = 0; t < 20000; t += 16.7) tick(t);
+  const colored = [...styles].filter((v) => v.startsWith("rgba"));
+  assert.ok(colored.length > 30, `many fade levels used, saw ${colored.length}`);
+  assert.ok(colored.length <= 16 + 49 + 13, `a bounded table, saw ${colored.length}`);
+  s.stop();
 });

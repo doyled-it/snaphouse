@@ -16,7 +16,7 @@ export const HARMONO = Object.freeze({
   ay2: 0.125,
   dayAlpha: 0.6,
   nightAlpha: 0.3,
-  maxFps: 15,
+  maxFps: 60,
 });
 
 const END_ENVELOPE = 0.06;

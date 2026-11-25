@@ -21,7 +21,7 @@ const REFRESH_MS = 10 * 60 * 1000;
 const RETRY_MS = 30000;
 const TICK_DAY_MS = 250;
 const TICK_NIGHT_MS = 500;
-const TICK_FADE_MS = 40;
+const TICK_FADE_MS = 16; // about 60 fps while a crossfade runs
 const MAX_DT_S = 5;
 const RADIUS = 6;
 

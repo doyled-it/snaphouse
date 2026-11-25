@@ -1,11 +1,12 @@
 // Canvas drawing for the panel screensaver's Aurora style. The math is in
 // aurora-math.js. A small offscreen-sized canvas (about 200 px wide) is scaled up
 // by CSS, so the browser's smooth upscale gives the soft look. One rAF loop,
-// capped at maxFps (30), and no loop at all while stopped.
+// capped at maxFps (AURORA_MAX_FPS, 60), and no loop at all while stopped.
 
 import { DEFAULT_HUES } from "./cover-color.js";
 import { RIBBONS, mixHues, ribbonColumn, ribbonStops, smoothstep, tintColor } from "./aurora-math.js";
 
+export const AURORA_MAX_FPS = 60;
 const FADE_S = 3;
 const COLUMN_STEP = 2;
 const COLUMN_WIDTH = 2.5;
@@ -17,7 +18,7 @@ export function createAurora({
   caf,
   nowMs,
   baseWidth = 200,
-  maxFps = 30,
+  maxFps = AURORA_MAX_FPS,
 }) {
   const ctx = canvas.getContext("2d", { alpha: false });
   let W = baseWidth;
