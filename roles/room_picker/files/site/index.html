@@ -317,16 +317,55 @@
           </div>
           <div id="viewer-stage" class="viewer-stage">
             <button id="viewer-prev" class="viewer-step viewer-prev" type="button" aria-label="Previous picture">&#8249;</button>
-            <img id="viewer-image" class="viewer-image" alt="" decoding="async" />
+            <!-- The frame is exactly as big as the picture, so the crop box can
+                 be placed in percent of it. -->
+            <div id="viewer-frame" class="viewer-frame">
+              <img id="viewer-image" class="viewer-image" alt="" decoding="async" />
+              <div id="viewer-crop" class="viewer-crop" hidden>
+                <div id="viewer-crop-box" class="vc-box">
+                  <span id="viewer-crop-label" class="vc-label"></span>
+                  <i class="vc-grid vc-grid-v1"></i><i class="vc-grid vc-grid-v2"></i>
+                  <i class="vc-grid vc-grid-h1"></i><i class="vc-grid vc-grid-h2"></i>
+                  <b class="vc-handle vc-nw" data-corner="nw" hidden></b>
+                  <b class="vc-handle vc-ne" data-corner="ne" hidden></b>
+                  <b class="vc-handle vc-sw" data-corner="sw" hidden></b>
+                  <b class="vc-handle vc-se" data-corner="se" hidden></b>
+                </div>
+              </div>
+            </div>
             <button id="viewer-next" class="viewer-step viewer-next" type="button" aria-label="Next picture">&#8250;</button>
           </div>
           <div class="viewer-meta">
             <span id="viewer-title" class="viewer-title"></span>
             <span id="viewer-sub" class="viewer-sub"></span>
           </div>
+          <div id="crop-panel" class="crop-panel" hidden>
+            <p id="crop-hint" class="crop-hint">Drag the box to move it. Drag a corner to resize it.</p>
+            <div class="crop-preview-wrap">
+              <canvas id="crop-preview" class="crop-preview" width="800" height="480" role="img" aria-label="How the frame will show this crop"></canvas>
+              <span class="crop-preview-note">On the frame, in its six colors</span>
+            </div>
+            <p id="crop-status" class="crop-status" role="status"></p>
+            <div class="crop-buttons">
+              <button id="crop-save" class="btn btn-primary" type="button">Save</button>
+              <button id="crop-cancel" class="btn" type="button">Cancel</button>
+              <button id="crop-auto" class="btn btn-ghost" type="button">Automatic</button>
+            </div>
+          </div>
           <div id="viewer-actions" class="viewer-actions">
-            <button id="viewer-show" class="btn" type="button">Show on the frame</button>
-            <button id="viewer-pin" class="btn" type="button">Keep it there</button>
+            <button id="viewer-edit-crop" class="btn" type="button" disabled>Edit crop</button>
+            <label id="viewer-frame-pick" class="viewer-pick" hidden>
+              <span class="viewer-pick-label">Frame</span>
+              <select id="viewer-frame-select" class="select" aria-label="Frame"></select>
+            </label>
+            <div class="viewer-act">
+              <button id="viewer-show" class="btn" type="button">Show now on the frame</button>
+              <span id="viewer-show-hint" class="viewer-hint">Rotation carries on</span>
+            </div>
+            <div class="viewer-act">
+              <button id="viewer-pin" class="btn" type="button">Pin to the frame</button>
+              <span id="viewer-pin-hint" class="viewer-hint">Stays until you unpin it</span>
+            </div>
             <label class="viewer-move">
               <span class="viewer-move-label">Move to</span>
               <select id="viewer-move" class="select" aria-label="Move to folder"></select>

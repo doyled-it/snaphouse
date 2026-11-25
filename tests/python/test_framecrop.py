@@ -114,6 +114,29 @@ def test_small_wide_picture_allows_the_largest_box_that_fits():
         validate_crop(_box(0, 0, 0.5, img=(400, 200)), 400, 200)
 
 
+# The page's editor (roles/room_picker/files/site/crop-model.js) clamps to the same
+# smallest and largest width. tests/js/crop-model.test.js carries this table; keep
+# the two in step.
+PAGE_RULE_TABLE = [
+    # (W, H, smallest width fraction, largest width fraction)
+    (2000, 1500, 0.2, 1.0),
+    (1500, 2000, 400 / 1500, 1.0),
+    (300, 800, 1.0, 1.0),
+    (400, 200, 1 / 1.2, 1 / 1.2),
+    (4032, 3024, 400 / 4032, 1.0),
+]
+
+
+@pytest.mark.parametrize("iw, ih, smallest, largest", PAGE_RULE_TABLE)
+def test_hub_accepts_the_page_clamp_limits_and_rejects_just_outside(iw, ih, smallest, largest):
+    for w in (smallest, largest):
+        box = _box(0, 0, w, img=(iw, ih))
+        assert validate_crop(box, iw, ih)["w"] == pytest.approx(w, abs=1e-6)
+    if smallest > 1e-3 and smallest < largest:
+        with pytest.raises(CropError):
+            validate_crop(_box(0, 0, smallest * 0.95, img=(iw, ih)), iw, ih)
+
+
 def test_zero_sized_image_is_rejected():
     with pytest.raises(CropError):
         validate_crop({"x": 0, "y": 0, "w": 1, "h": 1}, 0, 100)

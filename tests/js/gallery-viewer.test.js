@@ -11,6 +11,8 @@ import {
   idAfterRemoval,
   historyViewerItem,
   viewerControls,
+  frameButtons,
+  framePickerView,
 } from "../../roles/room_picker/files/site/gallery-viewer.js";
 
 const items = (n) =>
@@ -148,4 +150,80 @@ test("the history viewer keeps Move and Move to trash for an art piece", () => {
   const unknown = historyViewerItem({ piece: { file: "a.jpg", title: "a" }, id: "a.jpg", origId: "a.jpg", known: null, fallbackUrl: "/art/a.jpg" });
   assert.equal(unknown.url, "/art/a.jpg");
   assert.equal(unknown.folder, "");
+});
+
+// ---- frame buttons, the picker, and a cropped tall piece ----------------------
+
+test("a tall art piece with a saved crop can be shown and pinned", () => {
+  const tall = { id: "a", landscape: false };
+  assert.equal(viewerState([tall], 0, "grid").showBlockedReason, "Too tall to show on the frame.");
+  const cropped = { id: "a", landscape: false, crop: { x: 0, y: 0.2, w: 1, h: 0.45 } };
+  assert.equal(viewerState([cropped], 0, "grid").showBlockedReason, null);
+});
+
+test("an unusable crop does not unblock a tall piece", () => {
+  assert.equal(
+    viewerState([{ id: "a", landscape: false, crop: { x: 2 } }], 0, "grid").showBlockedReason,
+    "Too tall to show on the frame."
+  );
+});
+
+test("the two frame buttons name the frame and say what each does", () => {
+  const buttons = frameButtons("Nightstand");
+  assert.deepEqual(buttons.show, { label: "Show now on Nightstand", hint: "Rotation carries on" });
+  assert.deepEqual(buttons.pin, { label: "Pin to Nightstand", hint: "Stays until you unpin it" });
+});
+
+test("with no known frame the buttons say 'the frame'", () => {
+  assert.equal(frameButtons(null).show.label, "Show now on the frame");
+  assert.equal(frameButtons("").pin.label, "Pin to the frame");
+});
+
+test("the frame picker is hidden for fewer than two frames", () => {
+  assert.equal(framePickerView([], "a").visible, false);
+  assert.equal(framePickerView([{ id: "a", label: "A", offline: false }], "a").visible, false);
+});
+
+test("the frame picker lists every frame and marks the shared selection", () => {
+  const rows = [
+    { id: "nightstand", label: "Nightstand", offline: false },
+    { id: "office", label: "Office", offline: true },
+  ];
+  const view = framePickerView(rows, "office");
+  assert.equal(view.visible, true);
+  assert.deepEqual(
+    view.options.map((o) => [o.id, o.label, o.selected]),
+    [
+      ["nightstand", "Nightstand", false],
+      ["office", "Office", true],
+    ]
+  );
+  assert.equal(view.selectedLabel, "Office");
+});
+
+test("an unknown selection falls back to the first frame in the picker", () => {
+  const rows = [
+    { id: "nightstand", label: "Nightstand", offline: false },
+    { id: "office", label: "Office", offline: false },
+  ];
+  const view = framePickerView(rows, "gone");
+  assert.equal(view.selectedLabel, "Nightstand");
+  assert.equal(view.options[0].selected, true);
+});
+
+test("a history item carries the library piece's crop, automatic box and eligibility", () => {
+  const known = {
+    folder: "Photos",
+    url: "/art/Photos/a.jpg",
+    crop: { x: 0, y: 0, w: 1, h: 0.5 },
+    autoCrop: { x: 0, y: 0.1, w: 1, h: 0.5 },
+    landscape: true,
+  };
+  const item = historyViewerItem({ piece: { file: "a.jpg", title: "A" }, id: "Photos/a.jpg", origId: "x", known, fallbackUrl: "/art/a.jpg" });
+  assert.deepEqual(item.crop, known.crop);
+  assert.deepEqual(item.autoCrop, known.autoCrop);
+  assert.equal(item.landscape, true);
+  const unknown = historyViewerItem({ piece: { file: "a.jpg", title: "A" }, id: "a.jpg", origId: "x", known: null, fallbackUrl: "/art/a.jpg" });
+  assert.equal(unknown.crop, null);
+  assert.equal(unknown.autoCrop, null);
 });

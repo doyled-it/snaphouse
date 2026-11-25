@@ -2956,3 +2956,279 @@ a.row-title {
     transition: none;
   }
 }
+
+/* --- Frame crop: overlay, editor, tiles ---------------------------------- */
+
+/* The frame is exactly the picture, so the crop box is placed in percent of it. */
+.viewer-frame {
+  position: relative;
+  display: block;
+  flex: 0 1 auto;
+  max-width: 100%;
+  line-height: 0;
+  overflow: hidden;
+}
+
+.viewer-crop {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.viewer-crop[hidden] {
+  display: none;
+}
+
+.vc-box {
+  position: absolute;
+  outline: 2px solid #fff;
+  outline-offset: -2px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.28);
+}
+
+.vc-box[data-tone="saved"],
+.vc-box[data-tone="editing"] {
+  outline-color: #8fd0ff;
+}
+
+.vc-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: max-content;
+  max-width: min(280px, 100%);
+  padding: 3px 9px;
+  border-radius: 0 0 6px 0;
+  background: #fff;
+  color: #0d0f12;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.vc-box[data-anchor="right"] .vc-label {
+  left: auto;
+  right: 0;
+  border-radius: 0 0 0 6px;
+}
+
+.vc-box[data-tone="saved"] .vc-label {
+  background: #8fd0ff;
+}
+
+.vc-box[data-tone="warn"] .vc-label {
+  background: var(--yellow);
+  color: var(--on-yellow);
+}
+
+.vc-box[data-tone="editing"] .vc-label {
+  display: none;
+}
+
+.vc-grid,
+.vc-handle {
+  display: none;
+}
+
+.viewer-frame.is-editing .vc-box {
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.62);
+  pointer-events: auto;
+  cursor: move;
+  touch-action: none;
+}
+
+.viewer-frame.is-editing {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.viewer-frame.is-editing .vc-grid {
+  display: block;
+  position: absolute;
+  background: rgba(255, 255, 255, 0.38);
+  pointer-events: none;
+}
+
+.vc-grid-v1 { left: 33.333%; top: 0; bottom: 0; width: 1px; }
+.vc-grid-v2 { left: 66.666%; top: 0; bottom: 0; width: 1px; }
+.vc-grid-h1 { top: 33.333%; left: 0; right: 0; height: 1px; }
+.vc-grid-h2 { top: 66.666%; left: 0; right: 0; height: 1px; }
+
+/* The handles sit inside the corners, so the picture's clip never cuts one off
+   and the dim never spills. The touch target is 44 px, less on a very small box
+   so the box can still be grabbed to move it. */
+.viewer-frame.is-editing .vc-handle {
+  display: block;
+  position: absolute;
+  width: min(44px, 45%);
+  height: min(44px, 45%);
+  touch-action: none;
+}
+
+.viewer-frame.is-editing .vc-handle[hidden] {
+  display: none;
+}
+
+.vc-handle::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.vc-nw { left: 0; top: 0; cursor: nwse-resize; }
+.vc-nw::after { left: 4px; top: 4px; }
+.vc-ne { right: 0; top: 0; cursor: nesw-resize; }
+.vc-ne::after { right: 4px; top: 4px; }
+.vc-sw { left: 0; bottom: 0; cursor: nesw-resize; }
+.vc-sw::after { left: 4px; bottom: 4px; }
+.vc-se { right: 0; bottom: 0; cursor: nwse-resize; }
+.vc-se::after { right: 4px; bottom: 4px; }
+
+.vc-box:focus-visible {
+  outline: 3px solid var(--accent);
+}
+
+/* While the editor is open the picture is the only thing that moves. */
+#gallery-viewer.is-cropping .viewer-step,
+#gallery-viewer.is-cropping .viewer-actions,
+#gallery-viewer.is-cropping #viewer-note {
+  display: none;
+}
+
+.crop-panel[hidden] {
+  display: none;
+}
+
+.crop-panel {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.crop-hint {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+  text-wrap: balance;
+}
+
+.crop-preview-wrap {
+  display: grid;
+  gap: 4px;
+  width: min(100%, 190px);
+}
+
+.crop-preview {
+  display: block;
+  width: 100%;
+  aspect-ratio: 5 / 3;
+  border-radius: 6px;
+  background: #1a1a1a;
+  image-rendering: pixelated;
+}
+
+.crop-preview-note {
+  color: var(--ink-2);
+  font-size: 0.78rem;
+}
+
+.crop-status {
+  margin: 0;
+  min-height: 1.3em;
+  color: var(--yellow);
+  font-size: 0.9rem;
+}
+
+.crop-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.crop-buttons .btn {
+  min-height: 44px;
+}
+
+.crop-buttons .btn[hidden] {
+  display: none;
+}
+
+/* Frame actions in the viewer: each button carries its one-line hint. */
+.viewer-act {
+  display: grid;
+  gap: 3px;
+  justify-items: start;
+}
+
+.viewer-hint {
+  color: var(--ink-2);
+  font-size: 0.78rem;
+  padding-left: 4px;
+}
+
+.viewer-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.viewer-pick[hidden] {
+  display: none;
+}
+
+.viewer-pick-label {
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+/* A grid tile shows the frame's 5:3 view of the picture. */
+.tile .tile-cropped {
+  aspect-ratio: 5 / 3;
+  border-radius: var(--radius-sm);
+  background-color: var(--fill);
+  background-repeat: no-repeat;
+}
+
+.badge-crop {
+  background: var(--fill-hover);
+  color: var(--ink);
+  backdrop-filter: blur(6px);
+}
+
+@media (min-width: 800px) {
+  /* The panel sits under the picture, with the preview left and the hint, status
+     and buttons right, so the picture itself never moves when the editor opens. */
+  .crop-panel {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "preview hint"
+      "preview status"
+      "preview buttons";
+    grid-template-rows: auto auto 1fr;
+    align-items: start;
+    column-gap: 24px;
+  }
+
+  .crop-hint {
+    grid-area: hint;
+  }
+
+  .crop-preview-wrap {
+    grid-area: preview;
+    width: 320px;
+  }
+
+  .crop-status {
+    grid-area: status;
+  }
+
+  .crop-buttons {
+    grid-area: buttons;
+    align-self: end;
+  }
+}
