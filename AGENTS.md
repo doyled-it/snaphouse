@@ -789,9 +789,8 @@ hub-decided confirm.
 ## Desktop layout
 
 At 1100 px wide and over the same page becomes a desktop dashboard (design:
-`docs/superpowers/specs/2026-11-25-desktop-layout-design.md`); under 1100 px nothing changes. This
-is the shell; Home's new content (status strip, now-playing hero, mixer faders, vertical slider)
-arrives in the next change, so Listen at desktop width keeps today's content in a 760 px column.
+`docs/superpowers/specs/2026-11-25-desktop-layout-design.md`); under 1100 px nothing changes. The
+shell (rail, floating banners, two-column screens) is below, then Home.
 
 Detection is `desktop-model.js` (pure, `tests/js/desktop-model.test.js`): `DESKTOP_QUERY`
 (`(min-width: 1100px)`) and `isDesktop({ matches, panel })`. `rooms.js` (`wireDesktop`,
@@ -819,6 +818,42 @@ Polling: climate (15 s) and garage (5 s) use their "shown" rate while their own 
 while Listen shows at desktop width, because Home's chips read them (`climatePollShown`,
 `garagePollShown`). Both stay registered with `page-timers.js`, so they sleep while the tab is hidden.
 Entering desktop width on Listen refreshes both once.
+
+**Home (Listen at desktop width).** A status strip across the top, then a left zone (about 60%) of
+the Now playing hero over the mixer, and Play history (about 40%) on the right. Nothing new is
+fetched. The strip is `#home-strip`, drawn by `desktop-home.js` (keyed patch) from `statusChips`
+in `desktop-status-model.js` (pure, `tests/js/desktop-status-model.test.js`) over the parsed climate
+and garage documents; `renderHomeStrip` in `rooms.js` runs after each poll and when desktop mode
+changes, and draws nothing on a phone or the panel. Chips: who is home (the names, "Away" or "Not
+sure who is home"), the thermostat (`thermostatView`: "68°, cooling to 74°", ", held" on override,
+"Can't reach the thermostat", "Checking the thermostat"), and the garage ("Closed for 12 h 3 min").
+Each is a link to `#climate` or `#garage` and is absent when its tab is hidden. Color: yellow when
+the garage is open, opening or closing, or every person reads Not sure yet; red when the garage
+reports an obstruction or lockout or its link is down; nothing else colors a chip.
+
+The hero keeps one height in every state, `--art + 2 * --pad`, where `--art` is
+`clamp(200px, min(35vh, 22vw), 480px)` (about 420 px at 1200 px tall). The existing `#np` nodes
+and ids are restyled in place (`#np` is `display: contents` inside the `#now-playing` grid). Nothing
+playing: a CSS music tile and the how-to line beside it. Paused: art dimmed, "Paused" and Play.
+`heroTransport` (`desktop-model.js`) decides the transport: buttons only for a Bluetooth track
+with a player (`controllable`), `#np-airplay` ("Control from the phone") for AirPlay, nothing for a
+Bluetooth track without one; the phone keeps its own rule. A missing album shows the artist alone
+and a missing ends time shows nothing.
+
+The mixer is one `li.room` card per room: name, a large percentage ("Off" or "Not responding" when
+so), the fader, the switch, then Only here (its slot is held, hidden, so the switches stay level).
+`volume-slider.js` takes `orientation` and `setOrientation`: vertical sets `aria-orientation`,
+reads the pointer's y (top is 100; `slider-model.js` `pointerValue`, tests in
+`tests/js/slider-model.test.js`), paints the fill with `clip-path` and the thumb with `translate`
+(up from the bottom), and keeps the same keys (arrows 2, Page 10, Home/End) and the same
+`volume-controller.js` rules. `applyDesktop` switches every card's slider when the window crosses
+1100 px, so a resize needs no reload; the phone keeps horizontal sliders. Play history keeps its
+card when empty ("Nothing played yet.") and scrolls inside it.
+
+Fit: with a window at least 760 px tall (a nested `@media (min-height: 760px)` in `desktop.css`)
+Home is exactly one viewport, the two zones end on the same bottom edge and nothing scrolls on the
+page. Shorter windows scroll the page instead of crushing the faders (the mixer keeps 460 px).
+Room and hero sizes scale with `vh` so 1100x760 still fits.
 
 ## Panel settings
 
