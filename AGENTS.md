@@ -632,7 +632,7 @@ value noise with time as the third axis). Tests: `tests/js/{noise-math,flow-mode
   corners only when the cell average is above the level. Eight levels, every fourth heavier (`levelView`); at night the odd
   levels fade out (weight `1 - night`), leaving four dimmer lines on black.
 - **Game of Life** (`life-model.js`, `life-style.js`): 320x192 canvas of 4 px cells, 80x48 torus, redrawn at 60 fps, a step every 0.5 s (1.5 s at night, eased; `createStepper` counts
-  steps from frame gaps and carries the remainder, so the pace is the same at any rate). A dying cell leaves a ghost that decays by `exp(-1.2 t)` drawn in 48 levels (`LIFE.ghostLevels`), and a newborn cell fades in over 0.35 s (`LIFE.birthS`, per-cell `birth` state in the model, 12 alpha levels from a table rebuilt only with the hues).
+  steps from frame gaps and carries the remainder, so the pace is the same at any rate). A dying cell leaves a ghost that decays by `exp(-1.2 t)` drawn in 48 levels (`LIFE.ghostLevels`), and a newborn cell fades in over 0.35 s (`LIFE.birthS`, per-cell `birth` state in the model, 12 alpha levels from a table rebuilt only when the hues or the night mix change).
   `step()` reports a stall and adds a 20x18 patch at 30 percent density when the state hash repeats (`still`, or a `cycle` of
   up to 12 states), the population stays within 6 for 40 steps (`flat`), or it falls under 60 (`low`). Cells are colored by
   age; night is dim.
