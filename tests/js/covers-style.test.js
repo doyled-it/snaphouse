@@ -34,7 +34,7 @@ function makeEnv({ docs = [archive(60)], failImages = new Set() } = {}) {
         tag, children: [], className: "", width: 0, height: 0, hidden: false,
         style: { setProperty() {} },
         classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) },
-        append(...c) { node.children.push(...c); },
+        append(...c) { for (const k of c) k.removed = false; node.children.push(...c); },
         getContext: () => ctx,
       };
       nodes.push(node);
@@ -42,6 +42,7 @@ function makeEnv({ docs = [archive(60)], failImages = new Set() } = {}) {
     },
   };
   const fallback = { started: 0, stopped: 0, hues: null, night: null, node: { tag: "fallback", classList: { toggle() {}, add() {}, remove() {} }, style: {} } };
+  fallback.node.remove = () => { fallback.node.removed = true; };
   const env = {
     doc, win: {}, now: () => t, random,
     setTimeout: (fn, ms) => { const n = id++; timers.push({ n, fn, at: t + ms }); return n; },
@@ -280,4 +281,66 @@ test("memory stays bounded: only images on the grid are kept", async () => {
   const d = style.debug();
   assert.ok(d.cached <= d.cols * d.rowCount + 4, `cached ${d.cached}`);
   style.stop();
+});
+
+const attached = (h, style) => style.node.children.includes(h.fallback.node) && !h.fallback.node.removed;
+
+test("after recovery from Aurora the fallback node is no longer in the tree", async () => {
+  const h = makeEnv({ docs: [archive(5), archive(60)] });
+  const style = createCoversStyle(h.env);
+  style.start();
+  await flush();
+  assert.equal(attached(h, style), true);
+  await h.advance(REFRESH_MS + 100);
+  assert.equal(style.debug().mode, "mosaic");
+  assert.equal(attached(h, style), false);
+  style.stop();
+});
+
+test("Aurora can be shown again after a recovery", async () => {
+  const h = makeEnv({ docs: [archive(5), archive(60), archive(3)] });
+  const style = createCoversStyle(h.env);
+  style.start();
+  await flush();
+  await h.advance(REFRESH_MS + 100);
+  await h.advance(REFRESH_MS + 100);
+  assert.equal(style.debug().mode, "aurora");
+  assert.equal(attached(h, style), true);
+  style.stop();
+});
+
+test("a refresh that leaves too few covers in mosaic mode falls back to Aurora", async () => {
+  const h = makeEnv({ docs: [archive(60), archive(5)] });
+  const style = createCoversStyle(h.env);
+  style.start();
+  await flush();
+  assert.equal(style.debug().mode, "mosaic");
+  await h.advance(REFRESH_MS + 100);
+  assert.equal(style.debug().mode, "aurora");
+  assert.equal(h.fallback.started, 1);
+  assert.equal(style.debug().cols, 0);
+  await h.advance(120000);
+  assert.equal(h.timers.filter((t) => t.at < 1e9).length <= 1, true, "only the refresh timer remains");
+  style.stop();
+});
+
+test("a failed image during a crossfade never shows the fading cover twice", async () => {
+  for (let k = 0; k < 8; k++) {
+    const h = makeEnv({ docs: [archive(MIN_COVERS)] });
+    let n = 0;
+    const real = h.env.loadImage;
+    h.env.loadImage = async (u) => { n += 1; if (n > 12 && n % 2 === 0) throw new Error("bad"); return real(u); };
+    let s = 3 + k;
+    h.env.random = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    const style = createCoversStyle(h.env);
+    style.start();
+    await flush();
+    for (let i = 0; i < 300; i++) {
+      await h.advance(1000);
+      const d = style.debug();
+      const all = [...d.rows.flat(), ...(d.fade ? [d.fade.from] : [])].filter(Boolean);
+      assert.equal(dupes(all), 0, `k=${k} step ${i}`);
+    }
+    style.stop();
+  }
 });

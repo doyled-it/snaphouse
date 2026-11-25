@@ -123,14 +123,14 @@ export function createGrid(layout, pool0, random) {
   };
 
   // A cover that failed to load leaves the pool and is replaced where it sits.
-  grid.drop = (url) => {
+  grid.drop = (url, extraTaken = new Set()) => {
     grid.pool = grid.pool.filter((u) => u !== url);
     const changed = [];
     for (let r = 0; r < grid.rows.length; r++) {
       for (let c = 0; c < grid.rows[r].length; c++) {
         if (grid.rows[r][c] !== url) continue;
         grid.rows[r][c] = null;
-        const [next] = pickCovers(grid.pool, onGrid(), 1, random);
+        const [next] = pickCovers(grid.pool, new Set([...onGrid(), ...extraTaken]), 1, random);
         grid.rows[r][c] = next || null;
         changed.push({ r, c, url: next || null });
       }

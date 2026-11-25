@@ -155,3 +155,16 @@ test("cropRect takes the centred square of a wide or tall image", () => {
   assert.deepEqual(cropRect(600, 800), { sx: 0, sy: 100, s: 600 });
   assert.deepEqual(cropRect(0, 0), { sx: 0, sy: 0, s: 0 });
 });
+
+test("a drop during a crossfade never picks the fading pair", () => {
+  const l = chooseLayout(MIN_COVERS);
+  for (let seed = 1; seed < 60; seed++) {
+    const grid = createGrid(l, urls(MIN_COVERS), seeded(seed));
+    const free = urls(MIN_COVERS).filter((u) => !flat(grid).includes(u));
+    const fading = new Set(free.slice(0, 1));
+    const bad = grid.rows[1][1];
+    const changed = grid.drop(bad, fading);
+    for (const c of changed) assert.ok(!fading.has(c.url), `seed ${seed}`);
+    assert.equal(dupes(flat(grid)), 0);
+  }
+});

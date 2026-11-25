@@ -164,19 +164,29 @@ class CoverArchive:
         )
         return True
 
-    def _trim(self) -> None:
+    def _trim(self) -> list[Path]:
+        """Drop the oldest entries over the cap; return their files to delete
+        once the index no longer names them."""
+        doomed = []
         while len(self.entries) > self._cap:
             old = self.entries.pop()
+            doomed.append(self._dir / old["url"].rsplit("/", 1)[1])
+        return doomed
+
+    @staticmethod
+    def _delete(files: list[Path]) -> None:
+        for path in files:
             try:
-                (self._dir / old["url"].rsplit("/", 1)[1]).unlink()
+                path.unlink()
             except OSError:
                 pass
 
     def add_bytes(self, data: bytes, album: object, artist: object) -> bool:
         added = self._add(data, _clean(album), _clean(artist), self._clock().isoformat())
         if added:
-            self._trim()
+            doomed = self._trim()
             self.publish()
+            self._delete(doomed)
         return added
 
     def _read_cover(self, art_url: object) -> Optional[bytes]:
@@ -262,6 +272,7 @@ class CoverArchive:
                 if self._add(data, _clean(album), _clean(artist), stamp or self._clock().isoformat()):
                     count += 1
         self.entries.sort(key=lambda e: e["added_at"], reverse=True)
-        self._trim()
+        doomed = self._trim()
         self.publish()
+        self._delete(doomed)
         return count

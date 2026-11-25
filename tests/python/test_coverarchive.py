@@ -291,3 +291,22 @@ def test_seed_never_reads_the_archive_directory_itself(root):
 def test_publish_writes_an_empty_document_at_start(root):
     make(root).publish()
     assert published(root) == {"covers": []}
+
+
+def test_trim_publishes_the_index_before_deleting_the_file(root, monkeypatch):
+    archive = make(root, cap=2)
+    archive.add_bytes(jpeg(1), "A1", "X")
+    archive.add_bytes(jpeg(2), "A2", "X")
+    oldest = (root / "cover" / "archive" / (hashlib.sha256(jpeg(1)).hexdigest() + ".jpg"))
+    seen = {}
+    real_unlink = Path.unlink
+
+    def spy(self, *a, **k):
+        if self == oldest:
+            seen["index"] = published(root)
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", spy)
+    archive.add_bytes(jpeg(3), "A3", "X")
+    assert [c["album"] for c in seen["index"]["covers"]] == ["A3", "A2"]
+    assert not oldest.exists()

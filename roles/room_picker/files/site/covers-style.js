@@ -88,9 +88,16 @@ export function createCoversStyle(env) {
   function leaveAurora() {
     fallback.stop();
     node.classList.remove("is-aurora");
+    // Aurora's canvas is opaque and last in the tree, so a stopped one would paint over the mosaic.
+    if (fallbackMounted) {
+      fallback.node.remove();
+      fallbackMounted = false;
+    }
   }
 
   // ---- loading ----------------------------------------------------------- //
+
+  const fadingPair = () => (fade ? new Set([fade.from, fade.to]) : new Set());
 
   function onGrid(url) {
     if (!grid) return false;
@@ -115,7 +122,7 @@ export function createCoversStyle(env) {
       .catch(() => {
         inflight.delete(url);
         if (mine !== gen || !running || !grid) return;
-        for (const cell of grid.drop(url)) want(cell.url);
+        for (const cell of grid.drop(url, fadingPair())) want(cell.url);
         draw();
       });
   }
@@ -234,7 +241,7 @@ export function createCoversStyle(env) {
         schedule();
       })
       .catch(() => {
-        if (mine === gen && grid) grid.drop(grabbed);
+        if (mine === gen && grid) grid.drop(grabbed, fadingPair());
       })
       .finally(() => {
         if (mine === gen) scheduleSwap();
@@ -271,11 +278,11 @@ export function createCoversStyle(env) {
 
   function apply() {
     if (!running) return;
-    if (mode === "mosaic") {
+    const layout = chooseLayout(pool.length);
+    if (mode === "mosaic" && layout) {
       grid.setPool(pool);
       return;
     }
-    const layout = chooseLayout(pool.length);
     if (layout) enterMosaic(layout);
     else showAurora();
   }
@@ -338,6 +345,7 @@ export function createCoversStyle(env) {
       recycled,
       cached: cache.size,
       gap: GAP,
+      fade: fade ? { from: fade.from, to: fade.to } : null,
     }),
   };
 }
