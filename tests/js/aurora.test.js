@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAurora } from "../../roles/room_picker/files/site/aurora.js";
+import { AURORA_MAX_FPS, createAurora } from "../../roles/room_picker/files/site/aurora.js";
 
 function fakeCtx() {
   const ctx = {
@@ -55,14 +55,38 @@ test("canvas is 200 wide with the window aspect", () => {
   assert.equal(canvas.height, 120);
 });
 
-test("frames inside the 30 fps interval are skipped", () => {
+test("the cap is 60 fps: 60 Hz frames all draw, faster ones are thinned", () => {
+  assert.equal(AURORA_MAX_FPS, 60);
   const { aurora, ctx } = setup();
   assert.equal(aurora.frame(1000), true);
   const after = ctx.fills;
-  assert.equal(aurora.frame(1016), false);
+  assert.equal(aurora.frame(1008), false);
   assert.equal(ctx.fills, after);
-  assert.equal(aurora.frame(1034), true);
+  assert.equal(aurora.frame(1016.7), true);
   assert.ok(ctx.fills > after);
+});
+
+test("motion is time based: 30 Hz and 60 Hz frames land on the same picture", () => {
+  const nums = (s) => s.split(",").map(Number);
+  const last = (stepMs) => {
+    const { aurora, ctx, clock } = setup();
+    aurora.frame(1000);
+    for (let t = 1000 + stepMs; t <= 3000; t += stepMs) {
+      clock.now = t;
+      aurora.frame(t);
+    }
+    ctx.transforms.length = 0;
+    clock.now = 3000 + stepMs;
+    aurora.frame(3000 + stepMs);
+    return ctx.transforms;
+  };
+  const a = last(16);
+  const b = last(32);
+  assert.equal(a.length, b.length);
+  for (let i = 0; i < a.length; i += 1) {
+    const [x, y] = [nums(a[i]), nums(b[i])];
+    for (let k = 0; k < x.length; k += 1) assert.ok(Math.abs(x[k] - y[k]) < 0.05, `${a[i]} vs ${b[i]}`);
+  }
 });
 
 test("start queues one rAF, twice still one, stop cancels", () => {

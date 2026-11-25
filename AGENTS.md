@@ -583,7 +583,7 @@ pick, the same by day and night, and the old layer stops when the fade ends. Pre
 pointer or the timer. While the ambient Now Playing view or a hidden page covers it, every style stops;
 when the ambient view ends the same style returns (pointer unchanged) and the timer restarts. A style
 gets `setNight(true)` during quiet hours and is told again when the hour passes while it runs. Canvas
-styles cap at 30 fps; the Clock is DOM text.
+styles cap at 60 fps (Aurora, Flow field, Contours, Game of Life and Harmonograph, each in one named constant: `AURORA_MAX_FPS`, `FLOW.maxFps`, `CONTOURS.maxFps`, `LIFE.maxFps`, `HARMONO.maxFps`; motion is time based, so a lower cap only coarsens it); the Clock is DOM text.
 
 **Clock style.** `clock-style.js` over `clock-model.js` (`clockText`, `msToNextMinute`, `moveDue`,
 `pickSpot`): a large thin 12-hour time without AM/PM, the date below, in the panel's local time, redrawn
@@ -622,21 +622,21 @@ at 0.25 s. Colors come from `gen-color.js` (`buildColors`, `rgba`, on aurora's `
 `hueVersion` or the night mix changes, never per thread or per cell. Noise is `noise-math.js` (`hash3`, `noise3`, `fbm3`,
 value noise with time as the third axis). Tests: `tests/js/{noise-math,flow-model,contours-model,life-model,harmonograph-model,canvas-style}.test.js`.
 
-- **Flow field** (`flow-model.js`, `flow-style.js`): 320x192 canvas, 30 fps, 600 threads by day and 220 at night in typed
+- **Flow field** (`flow-model.js`, `flow-style.js`): 320x192 canvas, 60 fps, 600 threads by day and 220 at night in typed
   arrays. Each thread moves 16 canvas px a second along `flowAngle` (`fbm3 * 4 pi`); the field drifts at 0.015 time units a
   second; a thread restarts elsewhere when it leaves the canvas or at 0.24 chance a second. Trails are the canvas faded by a
   low-alpha black rect each frame (0.07 day, 0.12 night) with only this frame's segments stroked, batched into one stroke per
   color bin (12). Night: fewer, fainter, darker threads.
-- **Contours** (`contours-model.js`, `contours-style.js`): 400x240 canvas, 12 fps (the field moves slowly), a 51x31 grid of
+- **Contours** (`contours-model.js`, `contours-style.js`): 400x240 canvas, 60 fps (the field moves slowly, and `t` advances by `dt`), a 51x31 grid of
   8 px cells over `fbm3`. `marchLevel` is marching squares with linear interpolation; the two saddle cells join their high
   corners only when the cell average is above the level. Eight levels, every fourth heavier (`levelView`); at night the odd
   levels fade out (weight `1 - night`), leaving four dimmer lines on black.
-- **Game of Life** (`life-model.js`, `life-style.js`): 320x192 canvas of 4 px cells, 80x48 torus, redrawn at 10 fps so the
-  ghosts fade smoothly, a step every 0.5 s (1.5 s at night, eased). A dying cell leaves a ghost that decays by `exp(-1.2 t)`.
+- **Game of Life** (`life-model.js`, `life-style.js`): 320x192 canvas of 4 px cells, 80x48 torus, redrawn at 60 fps, a step every 0.5 s (1.5 s at night, eased; `createStepper` counts
+  steps from frame gaps and carries the remainder, so the pace is the same at any rate). A dying cell leaves a ghost that decays by `exp(-1.2 t)` drawn in 48 levels (`LIFE.ghostLevels`), and a newborn cell fades in over 0.35 s (`LIFE.birthS`, per-cell `birth` state in the model, 12 alpha levels from a table rebuilt only when the hues or the night mix change).
   `step()` reports a stall and adds a 20x18 patch at 30 percent density when the state hash repeats (`still`, or a `cycle` of
   up to 12 states), the population stays within 6 for 40 steps (`flat`), or it falls under 60 (`low`). Cells are colored by
   age; night is dim.
-- **Harmonograph** (`harmonograph-model.js`, `harmonograph-style.js`): 400x240 canvas, 15 fps. `createHarmonograph` is the phase
+- **Harmonograph** (`harmonograph-model.js`, `harmonograph-style.js`): 400x240 canvas, 60 fps. `createHarmonograph` is the phase
   clock: draw 60 s, hold 20 s, fade 6 s, then a new random figure (`newFigure`: two pendulums per axis with ratios from small
   integers plus a hair of detune, damping 0.0045 to 0.0075; it ends where the envelope falls to 6 percent). Only the new
   stretch of line is drawn each frame and nothing during the hold; the fade is a black rect with alpha set so it reaches 2 percent
@@ -653,7 +653,7 @@ down to 3) whose grid plus 2 spare the collection fills, so a small collection g
 `MIN_COVERS` (14, the three column grid plus spare) the style shows Aurora itself (its own `createAuroraStyle`
 inside `.saver-covers`, `is-aurora`) and switches to the mosaic when a refresh brings enough. Columns never change
 while it runs, and a refresh only grows the pool, so nothing jumps. Cost: a timer, never a rAF loop (a redraw every
-250 ms by day, 500 ms at night, 40 ms while a crossfade runs); images decode off the hot path (`img.decode()`), only the
+250 ms by day, 500 ms at night, 16 ms, about 60 fps, while a crossfade runs); images decode off the hot path (`img.decode()`), only the
 ones on the grid are kept, and a cover that fails to load leaves the pool. Night is CSS on the canvas (brightness and
 saturation down) with a radial shade to black at the edges. Tests: `tests/js/covers-{model,style}.test.js`.
 
@@ -666,7 +666,7 @@ clears the shell's `started` flag, so a night change while stopped snaps instead
 - **Night sky** (`sky-model.js`, `sky-style.js`): 400x240 canvas scaled up. 1400 stars from a seeded random (stable
   field, size and brightness varied, about 8 percent warm or cool tinted) on a ring around a pole 130 px above the
   screen, turning 15 degrees an hour from the clock (`rotationAt`, so a restart never resets the sky). About one star
-  in seven is on screen. Redraws at 5 fps (the stars move about 0.02 px a second), 24 fps only while a shooting star
+  in seven is on screen. Redraws at 5 fps (the stars move about 0.02 px a second), 60 fps only while a shooting star
   crosses; a star every 90 to 270 s by day and 600 to 1200 s at night, about a second long. Night: black sky, 650
   stars at 55 percent alpha in warm grey, shooting star alpha 0.4.
 - **Planets** (`planets-model.js`, `planets-style.js`): 800x480 canvas at 1 fps (8 fps only during the night fade).
@@ -694,10 +694,10 @@ clears the shell's `started` flag, so a night change while stopped snaps instead
 The mockup ran these sped up; the real speeds are the ones above. Per-frame math measured on a laptop (no canvas drawing):
 flow 58 us a frame, contours 240 us, life 22 us a step, harmonograph under 1 us; the browser's drawing is the real cost, so
 the CPU budget (about 25 percent of one core on the Pi 5) is measured on the panel. The remedy order if one is over:
-smaller canvas, lower fps, then a shader (back to the coordinator first).
+lower the style's one fps constant (60, then 45, then 30; night uses the same rate as day, so it never costs more), then a smaller canvas, then a shader (back to the coordinator first).
 
 Modules in `roles/room_picker/files/site/`: `aurora-math.js` (pure colors, hue mixing,
-ribbon curves), `aurora.js` (canvas drawing, 200 px wide, one rAF loop capped at 30 fps,
+ribbon curves), `aurora.js` (canvas drawing, 200 px wide, one rAF loop capped at `AURORA_MAX_FPS` (60),
 3 s hue crossfade, no loop while stopped), `screensaver-model.js` (parameter parsing,
 quiet-hours and idle rules, browser local time), `screensaver.js` (the overlay). Hues come
 from `followCover` in `rooms.js`; with nothing playing the chroma is 0 and the tint uses
@@ -712,7 +712,7 @@ wakes the screen and dismisses the overlay. The evdev grab from #184 stays for a
 screensaver off. `panel_backlight.grab_wake_tap: true` becomes `--force-grab` (grab whenever the night
 dim shows); the role no longer passes `--no-grab`. `dim_pct` is
 tuned separately on the live panel, never in a screensaver change. Pass mark on the board at
-the 30 fps cap: at most 20 percent total CPU on the Pi 3, 10 percent on the Pi 5.
+the 60 fps cap: at most 20 percent total CPU on the Pi 3, 10 percent on the Pi 5.
 
 ## The cover collection
 

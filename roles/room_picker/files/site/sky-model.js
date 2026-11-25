@@ -15,7 +15,7 @@ export const SKY = Object.freeze({
   seed: 2024,
   degPerHour: 15,
   idleFps: 5, // the stars barely move: a few redraws a second
-  shotFps: 24, // only while a shooting star is crossing
+  shotFps: 60, // only while a shooting star is crossing
   shotS: 1,
   dayDelayS: [90, 270], // a shooting star every few minutes
   nightDelayS: [600, 1200],

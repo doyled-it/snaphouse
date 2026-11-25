@@ -127,3 +127,8 @@ test("a shot is dimmer at night", () => {
   };
   assert.ok(peak(1) < peak(0));
 });
+
+test("the shooting star redraws at 60 fps; the idle star rotation rate stays 5", () => {
+  assert.equal(SKY.shotFps, 60);
+  assert.equal(SKY.idleFps, 5);
+});

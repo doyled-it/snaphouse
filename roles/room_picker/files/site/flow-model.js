@@ -16,7 +16,7 @@ export const FLOW = Object.freeze({
   timeRate: 0.015, // noise time units per second: the currents change slowly
   scale: 0.00875, // noise frequency per canvas px
   respawnPerS: 0.24, // chance per second that a thread restarts somewhere else
-  maxFps: 30,
+  maxFps: 60,
 });
 
 export function flowAngle(x, y, t) {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LIFE, createLife, stepIntervalS } from "../../roles/room_picker/files/site/life-model.js";
+import { LIFE, createLife, createStepper, ghostLevel, stepIntervalS } from "../../roles/room_picker/files/site/life-model.js";
 
 const empty = (opts = {}) => createLife({ random: () => 1, lowPop: 0, ...opts });
 const alive = (life) => {
@@ -135,4 +135,68 @@ test("night steps every 1.5 s and day every 0.5 s, easing between", () => {
   assert.equal(stepIntervalS(0), 0.5);
   assert.equal(stepIntervalS(1), 1.5);
   assert.equal(stepIntervalS(0.5), 1);
+});
+
+test("ghosts have 48 levels and the faintest visible one is level 1", () => {
+  assert.equal(LIFE.ghostLevels, 48);
+  const seen = new Set();
+  for (let g = 0.02; g <= 1; g += 0.0005) seen.add(ghostLevel(g));
+  assert.equal(seen.size, 48);
+  assert.equal(ghostLevel(1), 48);
+  assert.equal(ghostLevel(0.02), 1);
+});
+
+test("a newborn cell starts invisible and fades in over 0.35 s; a survivor stays full", () => {
+  assert.equal(LIFE.birthS, 0.35);
+  const life = empty();
+  life.setCells([[10, 9], [10, 10], [10, 11]]);
+  life.step();
+  const born = 10 * 80 + 9;
+  const kept = 10 * 80 + 10;
+  assert.equal(life.cells[born], 1);
+  assert.equal(life.birth[born], 0);
+  assert.equal(life.birth[kept], 1);
+  life.fadeBirth(0.175);
+  assert.ok(Math.abs(life.birth[born] - 0.5) < 1e-6);
+  life.fadeBirth(0.2);
+  assert.equal(life.birth[born], 1);
+  life.fadeBirth(1);
+  assert.equal(life.birth[born], 1);
+});
+
+test("the birth fade does not depend on the frame rate", () => {
+  const fade = (frames) => {
+    const life = empty();
+    life.setCells([[10, 9], [10, 10], [10, 11]]);
+    life.step();
+    for (let i = 0; i < frames; i += 1) life.fadeBirth(0.2 / frames);
+    return life.birth[10 * 80 + 9];
+  };
+  assert.ok(Math.abs(fade(1) - fade(12)) < 1e-5);
+  assert.ok(Math.abs(fade(12) - fade(60)) < 1e-5);
+});
+
+test("a cell that dies loses its fade state, and one that is reborn fades again", () => {
+  const life = empty();
+  life.setCells([[10, 10]]);
+  life.step();
+  assert.equal(life.cells[10 * 80 + 10], 0);
+  assert.equal(life.birth[10 * 80 + 10], 1);
+  life.setCells([[10, 9], [10, 10], [10, 11]]);
+  assert.equal(life.birth[10 * 80 + 10], 1, "cells given by setCells are full at once");
+});
+
+test("the stepper steps on the old timing at any frame rate", () => {
+  const steps = (fps, night) => {
+    const st = createStepper();
+    let n = 0;
+    const frames = Math.round(30.2 * fps);
+    for (let i = 0; i < frames; i += 1) n += st.advance(1 / fps, night);
+    return n;
+  };
+  assert.equal(steps(10, 0), steps(60, 0));
+  assert.equal(steps(60, 0), 61, "an immediate first step, then one per 0.5 s for 30 s");
+  assert.equal(steps(60, 1), 20, "1.5 s at night");
+  assert.equal(steps(10, 1), 20);
+  assert.ok(Math.abs(steps(45, 0) - 61) <= 1);
 });

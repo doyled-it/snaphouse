@@ -4,8 +4,8 @@
 // covers-model.js; this module fetches, decodes and draws.
 //
 // Cost: one 2d canvas at the panel size, redrawn from a timer (not a rAF loop): four
-// times a second by day and twice at night (the wall moves a pixel a second), about
-// 25 times a second only while a crossfade runs. Images are decoded off the hot path
+// times a second by day and twice at night (the wall moves a pixel a second), up to
+// 60 times a second only while a crossfade runs. Images are decoded off the hot path
 // (img.decode) and only the ones on the grid are kept. Nothing runs while stopped.
 //
 // With too few covers for three columns the style shows Aurora itself (the fallback
@@ -21,7 +21,7 @@ const REFRESH_MS = 10 * 60 * 1000;
 const RETRY_MS = 30000;
 const TICK_DAY_MS = 250;
 const TICK_NIGHT_MS = 500;
-const TICK_FADE_MS = 40;
+const TICK_FADE_MS = 16; // about 60 fps while a crossfade runs
 const MAX_DT_S = 5;
 const RADIUS = 6;
 
