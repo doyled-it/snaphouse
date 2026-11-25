@@ -5,8 +5,8 @@
 // flow-model.js, loop and hues in canvas-style.js.
 
 import { createCanvasStyle } from "./canvas-style.js";
-import { buildColors, lerp, rgba } from "./gen-color.js";
-import { FLOW, activeCount, createFlow, stepFlow, trailAlpha, trailFade } from "./flow-model.js";
+import { buildColors, rgba } from "./gen-color.js";
+import { FLOW, activeCount, createFlow, stepFlow, trailAlpha, trailFade, trailLightness } from "./flow-model.js";
 
 export function createFlowStyle(env) {
   return createCanvasStyle(env, {
@@ -33,7 +33,7 @@ export function createFlowStyle(env) {
             keyVersion = view.hueVersion;
             keyNight = view.night;
             const a = trailAlpha(view.night);
-            styles = buildColors(view.hues, FLOW.bins, lerp(0.78, 0.5, view.night)).map((c) => rgba(c, a));
+            styles = buildColors(view.hues, FLOW.bins, trailLightness(view.night)).map((c) => rgba(c, a));
           }
           for (let b = 0; b < FLOW.bins; b += 1) {
             ctx.strokeStyle = styles[b];
