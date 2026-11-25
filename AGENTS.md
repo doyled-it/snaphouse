@@ -786,6 +786,40 @@ The first tap arms the button for 4 s (amber, "Tap to open" or "Tap to close"); 
 (`onGarageTap(action, true)`): never a third tap, one send, the 2 s polling after it. Phones keep the
 hub-decided confirm.
 
+## Desktop layout
+
+At 1100 px wide and over the same page becomes a desktop dashboard (design:
+`docs/superpowers/specs/2026-11-25-desktop-layout-design.md`); under 1100 px nothing changes. This
+is the shell; Home's new content (status strip, now-playing hero, mixer faders, vertical slider)
+arrives in the next change, so Listen at desktop width keeps today's content in a 760 px column.
+
+Detection is `desktop-model.js` (pure, `tests/js/desktop-model.test.js`): `DESKTOP_QUERY`
+(`(min-width: 1100px)`) and `isDesktop({ matches, panel })`. `rooms.js` (`wireDesktop`,
+`applyDesktop`) sets `html[data-desktop]` from a `matchMedia` change listener, so resizing across
+1100 px switches with no reload. `?panel=1` never enters desktop mode and registers no listener.
+`desktop.css` is linked with `media="(min-width: 1100px)"`, every rule scoped by
+`html:not([data-panel])` (`tests/js/desktop-wiring.test.js` pins this), and it resets what the
+sideways-phone block (`min-width: 720px` and `max-height: 540px`) would change, so a short desktop
+window gets the desktop shell, never the sideways layout.
+
+Shell: the `<nav id="tabs">` becomes a 200 px left rail (restyle only; `nav-model.js`, `syncTabs`
+and `aria-current` are unchanged). `applyDesktop` moves the House title and `#everything-off` into
+the rail (title first, then Everything off, then the destinations) and back to the top bar below
+1100 px; ids and listeners are untouched. Everything off shows on every screen at desktop width
+(`everythingOffHidden(screen, desktop)`); the phone keeps Listen only. The health and speaker banners
+float over the top of the main area and the Undo toast floats at the bottom centre of it, none of
+them changing layout height; the speaker banner still disables the room controls.
+
+Other screens are up to 1200 px wide with CSS grid on the existing nodes: Climate (people and
+thermostat left, automatic changes right), Garage (door left, settings and Recent right), Settings
+(pairing left, paired phones and Not set up yet right), Frame (mirror and controls left, history and
+settings right) and Gallery (the grid fills the width with larger tiles).
+
+Polling: climate (15 s) and garage (5 s) use their "shown" rate while their own tab shows, and also
+while Listen shows at desktop width, because Home's chips read them (`climatePollShown`,
+`garagePollShown`). Both stay registered with `page-timers.js`, so they sleep while the tab is hidden.
+Entering desktop width on Listen refreshes both once.
+
 ## Panel settings
 
 The owner changes the panel's screen settings on the panel itself (design:

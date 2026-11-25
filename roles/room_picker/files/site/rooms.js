@@ -95,6 +95,7 @@ import {
   viewOf as changeView,
 } from "./frame-change-model.js";
 import { createAutosave, changedKeys, saveStatus } from "./autosave-queue.js";
+import { DESKTOP_QUERY, climatePollShown, everythingOffHidden, garagePollShown, isDesktop } from "./desktop-model.js";
 import { climateTabVisible, frameTabVisible, garageTabVisible, resolveScreen, visibleTabs } from "./nav-model.js";
 import {
   afterCommandPoll,
@@ -163,6 +164,9 @@ const RECONNECT_MS = 3000;
 const haptics = createHaptics();
 // The kiosk URL's panel=1: the panel layout replaces the phone chrome.
 const PANEL_MODE = new URLSearchParams(location.search).get("panel") === "1";
+// Desktop layout: a window 1100 px or wider (never the panel) gets the side rail.
+// html[data-desktop] is the CSS hook; desktopMode feeds the pure rules.
+let desktopMode = false;
 // The hub writes now-playing.json continuously and play-history.json only when a
 // play lands, so the card polls quickly and the history slowly. The card's
 // progress bar ticks client-side every second from the position anchor.
@@ -494,6 +498,7 @@ async function start() {
   els.npHowto.textContent = howToText(null);
   connect();
   wireChrome();
+  wireDesktop();
   els.everythingOff.addEventListener("click", onEverythingOff);
   els.npPrev.addEventListener("click", () => onPlayback("previous"));
   els.npPlayPause.addEventListener("click", () => onPlayback("playPause"));
@@ -638,7 +643,7 @@ function showScreen(name) {
     el.hidden = key !== screen;
   }
   syncTabs();
-  els.everythingOff.hidden = screen !== "listen";
+  syncEverythingOff();
   if (changed) {
     window.scrollTo({ top: 0, behavior: "auto" });
   }
@@ -652,6 +657,49 @@ function showScreen(name) {
   if (screen === "garage" && changed) {
     refreshGarage();
   }
+}
+
+function syncEverythingOff() {
+  els.everythingOff.hidden = everythingOffHidden(state.screen, desktopMode);
+}
+
+// At desktop width the title and Everything off move into the side rail (ids and
+// listeners intact); below it they go back to the top bar. The tab bar itself is
+// restyled by desktop.css, so nav-model, syncTabs and aria-current are untouched.
+function applyDesktop(matches, initial = false) {
+  const next = isDesktop({ matches, panel: PANEL_MODE });
+  if (next === desktopMode && document.documentElement.hasAttribute("data-desktop") === next) {
+    return;
+  }
+  desktopMode = next;
+  const root = document.documentElement;
+  const title = document.querySelector(".topbar .house, #tabs .house");
+  if (next) {
+    root.setAttribute("data-desktop", "");
+    if (title) els.tabs.prepend(title);
+    els.tabs.insertBefore(els.everythingOff, title ? title.nextSibling : els.tabs.firstChild);
+  } else {
+    root.removeAttribute("data-desktop");
+    const bar = document.querySelector(".topbar");
+    if (bar) {
+      if (title) bar.append(title);
+      bar.append(els.everythingOff);
+    }
+  }
+  syncEverythingOff();
+  if (next && !initial && state.screen === "listen") {
+    refreshClimate();
+    refreshGarage();
+  }
+}
+
+function wireDesktop() {
+  if (PANEL_MODE) {
+    return;
+  }
+  const query = window.matchMedia(DESKTOP_QUERY);
+  applyDesktop(query.matches, true);
+  query.addEventListener("change", (event) => applyDesktop(event.matches));
 }
 
 // Show the tabs that are visible, in bar order, and mark the current one.
@@ -4079,7 +4127,7 @@ function applyClimate(doc) {
 
 function climateTick() {
   climateTicks += 1;
-  if (PANEL_MODE || state.screen === "climate" || climateTicks % CLIMATE_IDLE_EVERY === 0) {
+  if (PANEL_MODE || climatePollShown(state.screen, desktopMode) || climateTicks % CLIMATE_IDLE_EVERY === 0) {
     refreshClimate();
   }
 }
@@ -4493,7 +4541,7 @@ function followGarageMovement(doc) {
 
 function garageTick() {
   garageTicks += 1;
-  if (PANEL_MODE || state.screen === "garage" || garageTicks % GARAGE_IDLE_EVERY === 0) {
+  if (PANEL_MODE || garagePollShown(state.screen, desktopMode) || garageTicks % GARAGE_IDLE_EVERY === 0) {
     refreshGarage();
   }
 }
