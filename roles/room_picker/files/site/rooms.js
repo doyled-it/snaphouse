@@ -34,6 +34,7 @@ import {
   parseArtIndex,
   isReadOnlyFolder,
   isReadOnlyPiece,
+  libraryTileSignature,
   enteSyncView,
   folderDisplayName,
   parseArtControl,
@@ -140,7 +141,12 @@ import { createVolumeSlider } from "./volume-slider.js";
 import { createHaptics } from "./haptics.js";
 import { patchKeyed } from "./keyed-list.js";
 import { createPageTimers } from "./page-timers.js";
+import { cropRequest, effectiveBox, tileCropStyle } from "./crop-model.js";
+import { createCropEditor } from "./crop-editor.js";
+import { paintCropOverlay } from "./crop-overlay.js";
 import {
+  frameButtons,
+  framePickerView,
   galleryHash,
   historyViewerItem,
   idAfterRemoval,
@@ -343,6 +349,21 @@ const els = {
   viewerSub: document.getElementById("viewer-sub"),
   viewerShow: document.getElementById("viewer-show"),
   viewerPin: document.getElementById("viewer-pin"),
+  viewerShowHint: document.getElementById("viewer-show-hint"),
+  viewerPinHint: document.getElementById("viewer-pin-hint"),
+  viewerFramePick: document.getElementById("viewer-frame-pick"),
+  viewerFrameSelect: document.getElementById("viewer-frame-select"),
+  viewerEditCrop: document.getElementById("viewer-edit-crop"),
+  viewerFrame: document.getElementById("viewer-frame"),
+  viewerCrop: document.getElementById("viewer-crop"),
+  viewerCropBox: document.getElementById("viewer-crop-box"),
+  viewerCropLabel: document.getElementById("viewer-crop-label"),
+  cropPanel: document.getElementById("crop-panel"),
+  cropPreview: document.getElementById("crop-preview"),
+  cropStatus: document.getElementById("crop-status"),
+  cropSave: document.getElementById("crop-save"),
+  cropCancel: document.getElementById("crop-cancel"),
+  cropAuto: document.getElementById("crop-auto"),
   viewerMove: document.getElementById("viewer-move"),
   viewerTrash: document.getElementById("viewer-trash"),
   viewerNote: document.getElementById("viewer-note"),
@@ -459,6 +480,9 @@ const state = {
   // so the viewer and the rows follow the piece.
   historyMoved: new Map(),
   viewerPushed: false,
+  // The id of the piece the crop editor is open on, or null.
+  cropEditId: null,
+  cropEditor: null,
   gridScroll: 0,
   folderConfirm: null,
   folderSig: "",
@@ -808,6 +832,9 @@ function selectFrame(id) {
   state.selectedFrame = id;
   renderFrameSwitcher();
   renderFrameControl();
+  if (!els.galleryViewer.hidden) {
+    syncViewer();
+  }
   if (frameContextChanged()) {
     refreshFrame();
     refreshArt();
@@ -2800,8 +2827,7 @@ function renderLibraryGrid() {
   const folderNames = index.folders.map((f) => f.name).join("\u0001");
   patchKeyed(els.artGrid, slice, {
     key: (piece) => String(piece.id),
-    sig: (piece) =>
-      JSON.stringify([piece.title, piece.artist, piece.thumb, piece.landscape, piece.source, piece.folder, folderNames]),
+    sig: (piece) => libraryTileSignature(piece, folderNames),
     create: (piece) => libraryTile(piece),
   });
   els.artGridEmpty.hidden = pieces.length > 0;
@@ -2825,8 +2851,14 @@ function libraryTile(piece) {
 
   const wrap = document.createElement("div");
   wrap.className = "tile-thumb-wrap";
-  wrap.append(thumbNode(piece.thumb, piece.title, "row-thumb tile-thumb"));
-  if (!piece.landscape && !isReadOnlyPiece(piece)) {
+  wrap.append(tileThumb(piece));
+  if (piece.crop) {
+    const badge = document.createElement("span");
+    badge.className = "badge badge-crop";
+    badge.textContent = "Cropped";
+    badge.title = "You chose what the frames show of this picture.";
+    wrap.append(badge);
+  } else if (!piece.landscape && !isReadOnlyPiece(piece)) {
     const badge = document.createElement("span");
     badge.className = "badge";
     badge.textContent = "Too tall";
@@ -3240,6 +3272,11 @@ function syncViewer() {
 }
 
 function closeViewerView(wasOpen) {
+  // Leaving the viewer (Back to gallery, a hash change) ends an open crop edit,
+  // so its document key listener never outlives the piece it was editing.
+  if (getCropEditor().isOpen()) {
+    getCropEditor().close();
+  }
   const lastId = state.viewerId;
   state.viewerId = null;
   state.viewerKind = "grid";
@@ -3273,6 +3310,8 @@ function renderViewer(list, idx) {
   els.viewerSub.textContent = [piece.artist, pieceFolder ? folderDisplayName(pieceFolder) : piece.folder].filter(Boolean).join(", ");
   els.viewerPrev.disabled = !view.canPrev;
   els.viewerNext.disabled = !view.canNext;
+  renderViewerCrop(piece);
+  renderViewerFrameControls();
   els.viewerShow.disabled = view.showBlockedReason !== null;
   els.viewerPin.disabled = view.showBlockedReason !== null;
   els.viewerNote.hidden = view.showBlockedReason === null;
@@ -3306,6 +3345,41 @@ function renderViewer(list, idx) {
       new Image().src = near.url;
     }
   }
+}
+
+// The overlay on the whole picture, and whether Edit crop is on offer. While the
+// editor is open it owns the box, so a refresh never moves it; a step to another
+// piece (a hash change) closes it.
+function renderViewerCrop(piece) {
+  if (getCropEditor().isOpen()) {
+    if (state.cropEditId === piece.id) {
+      return;
+    }
+    getCropEditor().close();
+  }
+  paintCropOverlay({ layer: els.viewerCrop, box: els.viewerCropBox, label: els.viewerCropLabel }, piece);
+  els.viewerEditCrop.disabled = !(els.viewerImage.complete && els.viewerImage.naturalWidth > 0);
+}
+
+// "Show now on <frame>" and "Pin to <frame>" for the chosen frame, and the frame
+// picker (two or more frames). It reads and writes state.selectedFrame, the
+// same selection the Frame tab uses.
+function renderViewerFrameControls() {
+  const rows = frameList(state.frameControl, state.mirrors);
+  const picker = framePickerView(rows, state.selectedFrame);
+  const name = picker.selectedLabel || (rows.find((r) => r.id === state.selectedFrame) || {}).label || "";
+  const labels = frameButtons(name);
+  els.viewerShow.textContent = labels.show.label;
+  els.viewerShowHint.textContent = labels.show.hint;
+  els.viewerPin.textContent = labels.pin.label;
+  els.viewerPinHint.textContent = labels.pin.hint;
+  els.viewerFramePick.hidden = !picker.visible;
+  const sig = JSON.stringify(picker.options.map((o) => [o.id, o.label]));
+  if (els.viewerFrameSelect.dataset.sig !== sig) {
+    els.viewerFrameSelect.dataset.sig = sig;
+    fillSelect(els.viewerFrameSelect, picker.options.map((o) => ({ value: o.id, label: o.label })), picker.selectedId);
+  }
+  els.viewerFrameSelect.value = picker.selectedId || "";
 }
 
 // The title, a link to the catalogue page when the piece carries one (same
@@ -3471,6 +3545,62 @@ async function trashViewerPiece() {
   syncViewer();
 }
 
+// The crop editor on the viewer's own picture. Save and Automatic post to the
+// service, then the library is read again so the grid, the overlay and the label
+// follow at once; the service's own sentence shows on a refusal.
+// Made on first use (start() runs before this point of the file).
+function getCropEditor() {
+  if (!state.cropEditor) {
+    state.cropEditor = createCropEditor({
+      frame: els.viewerFrame,
+      layer: els.viewerCrop,
+      img: els.viewerImage,
+      boxEl: els.viewerCropBox,
+      handles: els.viewerCropBox.querySelectorAll(".vc-handle"),
+      canvas: els.cropPreview,
+      status: els.cropStatus,
+      save: els.cropSave,
+      cancel: els.cropCancel,
+      auto: els.cropAuto,
+    });
+  }
+  return state.cropEditor;
+}
+
+function startCropEdit() {
+  const here = currentViewerPiece();
+  if (!here) {
+    return;
+  }
+  const piece = here.piece;
+  state.cropEditId = piece.id;
+  const opened = getCropEditor().open(piece, {
+    save: async (box) => {
+      const { path, body } = cropRequest(piece.id, box);
+      const result = await postApi(path, body);
+      if (!result.ok) {
+        return result;
+      }
+      await refreshLibrary();
+      showToast(box ? "Saved" : "The frames choose this crop again.");
+      return { ok: true };
+    },
+    closed: () => {
+      state.cropEditId = null;
+      els.galleryViewer.classList.remove("is-cropping");
+      els.cropPanel.hidden = true;
+      syncViewer();
+      els.viewerEditCrop.focus({ preventScroll: true });
+    },
+  });
+  if (opened) {
+    els.galleryViewer.classList.add("is-cropping");
+    els.cropPanel.hidden = false;
+  } else {
+    state.cropEditId = null;
+  }
+}
+
 function wireViewer() {
   els.viewerClose.addEventListener("click", closeViewer);
   els.viewerPrev.addEventListener("click", () => stepViewer(-1));
@@ -3490,15 +3620,20 @@ function wireViewer() {
   });
   els.viewerMove.addEventListener("change", () => moveViewerPiece(els.viewerMove.value));
   els.viewerTrash.addEventListener("click", trashViewerPiece);
+  els.viewerFrameSelect.addEventListener("change", () => selectFrame(els.viewerFrameSelect.value));
+  els.viewerEditCrop.addEventListener("click", startCropEdit);
+  els.viewerImage.addEventListener("load", () => {
+    els.viewerEditCrop.disabled = false;
+  });
 
   // Swipe: the finger moves left to go on. Mostly vertical moves are left to
   // the page (the stage allows vertical panning only).
   let start = null;
   els.viewerStage.addEventListener("pointerdown", (event) => {
-    start = { x: event.clientX, y: event.clientY };
+    start = getCropEditor().isOpen() ? null : { x: event.clientX, y: event.clientY };
   });
   els.viewerStage.addEventListener("pointerup", (event) => {
-    if (!start) {
+    if (!start || getCropEditor().isOpen()) {
       return;
     }
     const dir = swipeDirection(start.x - event.clientX, event.clientY - start.y);
@@ -3766,6 +3901,25 @@ function thumbNode(src, label, className) {
     img.replaceWith(thumbPlaceholder(className));
   });
   return img;
+}
+
+// A grid tile's picture: the part of the thumbnail the frames show (the saved
+// crop, else the automatic box), so the grid reads as the frames do. A piece
+// with neither box, or with no thumbnail yet, shows the whole thumbnail.
+function tileThumb(piece) {
+  const current = effectiveBox(piece);
+  if (!current || !piece.thumb) {
+    return thumbNode(piece.thumb, piece.title, "row-thumb tile-thumb");
+  }
+  const style = tileCropStyle(current.box);
+  const node = document.createElement("div");
+  node.className = "tile-thumb tile-cropped";
+  node.setAttribute("role", "img");
+  node.setAttribute("aria-label", piece.title);
+  node.style.backgroundImage = `url("${piece.thumb.replace(/"/g, "%22")}")`;
+  node.style.backgroundSize = style.size;
+  node.style.backgroundPosition = style.position;
+  return node;
 }
 
 function thumbPlaceholder(className) {

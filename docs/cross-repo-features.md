@@ -488,6 +488,18 @@ index and wakes the thumbnail pass. `POST /api/art/command` with `show` accepts 
 crop whatever its aspect. A rename done over SMB is outside the API: the new name is a new piece
 and starts automatic, and the old crop is pruned on the next scan.
 
+The page side (the room-picker page, snaphouse): the Gallery viewer draws the effective box (`crop`, else
+`auto_crop`) over the whole picture with the labels "Your crop", "Automatic" and, for an uncropped non-Ente
+portrait, "Automatic · not on the frames until cropped". It measures the picture from the loaded image's
+rendered size, never the index `width` and `height`, because the fractions are of the upright picture. Edit
+crop (phones and desktops, not the wall panel) posts `{"id", "crop": {x, y, w, h} | null}` with
+`X-Snaphouse: 1`, shows the service's own `error` sentence on a 400 or 404, and reads the index again after a
+write. The page clamps to the same minimum as the hub (400 px of the upright width, or the largest box that
+fits) so an editor box is never refused for size. Grid tiles show the effective box over the existing
+thumbnail. The preview is drawn in the page (the box dithered to nightstand's six panel colors), so no
+endpoint is involved. The viewer's frame picker shares the Frame tab's selection, and Show now and Pin are
+offered for a tall piece that has a saved crop.
+
 The frame side (nightstand, a later PR): cut the effective box (`crop` else `auto_crop`) from the
 upright picture (apply `exif_transpose` first) and resize it to 800x480 with Lanczos before
 dithering; fall back to its own `detail_crop` only when both are absent or invalid. Redraw the shown

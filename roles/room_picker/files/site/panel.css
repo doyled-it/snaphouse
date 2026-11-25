@@ -791,13 +791,32 @@ html[data-panel] .p-viewer {
   display: flex;
   gap: 10px;
 }
-html[data-panel] .p-viewer-img {
+html[data-panel] .p-viewer-stage {
   flex: 1 1 auto;
   min-width: 0;
-  max-height: 100%;
-  object-fit: contain;
+  min-height: 0;
+  container-type: size;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* The frame is exactly the picture, so the crop box can sit on it in percent. */
+html[data-panel] .p-viewer-frame {
+  position: relative;
+  line-height: 0;
+  overflow: hidden;
   border-radius: 14px;
   background: oklch(0.18 0.02 var(--h, 255));
+}
+html[data-panel] .p-viewer-img {
+  display: block;
+  max-width: 100cqw;
+  max-height: 100cqh;
+}
+html[data-panel] .p-viewer-frame .vc-label {
+  font-size: 20px;
+  padding: 4px 10px;
+  max-width: 100%;
 }
 html[data-panel] .p-viewer-side {
   width: 250px;

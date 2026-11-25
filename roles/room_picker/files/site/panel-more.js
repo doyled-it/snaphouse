@@ -2,6 +2,7 @@
 // House health (Screen and Screensaver live in panel-settings.js). Bluetooth and
 // health move the page's existing sections in, so the existing pairing, devices and
 // health code keeps drawing them.
+import { buildCropOverlay, paintCropOverlay } from "./crop-overlay.js";
 import { galleryHash, pieceIdFromHash } from "./gallery-viewer.js";
 import { galleryPage, moreTiles, showButtons } from "./panel-gallery-model.js";
 import { button, el, icon, setText } from "./panel-dom.js";
@@ -143,14 +144,21 @@ export function createMoreScreens(panel) {
   });
   pager.append(prev, pagerLabel, nextPage);
   const viewer = el("div", "p-viewer");
+  // The overlay (the frame's crop, with its label) over the whole picture. The
+  // panel only looks; changing a crop is for phones and desktops.
+  const viewerStage = el("div", "p-viewer-stage");
+  const viewerFrame = el("div", "p-viewer-frame");
   const viewerImg = el("img", "p-viewer-img");
+  const overlay = buildCropOverlay(document);
+  viewerFrame.append(viewerImg, overlay.layer);
+  viewerStage.append(viewerFrame);
   const viewerSide = el("div", "p-viewer-side");
   const viewerTitle = el("div", "p-viewer-title");
   const viewerArtist = el("div", "p-viewer-artist");
   const viewerNote = el("div", "p-viewer-note");
   const viewerButtons = el("div", "p-viewer-buttons");
   viewerSide.append(viewerTitle, viewerArtist, viewerNote, viewerButtons);
-  viewer.append(viewerImg, viewerSide);
+  viewer.append(viewerStage, viewerSide);
   gallery.append(grid, pager, viewer);
   let galleryAt = 0;
   let gridKey = "";
@@ -194,6 +202,7 @@ export function createMoreScreens(panel) {
     const shown = showButtons(piece, frames);
     const key = JSON.stringify([piece.id, shown]);
     if (viewerImg.getAttribute("src") !== piece.url) viewerImg.src = piece.url;
+    paintCropOverlay(overlay, piece);
     setText(viewerTitle, piece.title);
     setText(viewerArtist, piece.artist || "");
     setText(viewerNote, shown.note || "");

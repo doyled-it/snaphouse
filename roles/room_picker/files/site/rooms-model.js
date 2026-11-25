@@ -9,6 +9,8 @@
 // machine status files (the cross-repo status schema). The requests it builds
 // are snapserver JSON-RPC calls the page sends back.
 
+import { parseBox } from "./crop-model.js";
+
 // Parse a JSON-RPC message without ever throwing.
 //
 // snapserver can embed cover art and track metadata straight into a
@@ -685,12 +687,31 @@ function validateArtPiece(raw) {
     width: positiveNumberOrNull(raw.width),
     height: positiveNumberOrNull(raw.height),
     landscape: raw.landscape === true,
+    crop: parseBox(raw.crop),
+    autoCrop: parseBox(raw.auto_crop),
     size: nonNegativeNumberOrNull(raw.size),
     mtime: nonNegativeNumberOrNull(raw.mtime),
     thumb,
     url,
     ...(raw.source === "ente" ? { source: "ente" } : {}),
   };
+}
+
+// What decides whether a grid tile's DOM is stale: everything it draws, the
+// saved crop and the automatic box included, so a crop change replaces only
+// that tile. `folderNames` is the joined folder list the move menu reads.
+export function libraryTileSignature(piece, folderNames) {
+  return JSON.stringify([
+    piece.title,
+    piece.artist,
+    piece.thumb,
+    piece.landscape,
+    piece.source,
+    piece.folder,
+    folderNames,
+    piece.crop,
+    piece.autoCrop,
+  ]);
 }
 
 function validateTrashEntry(raw) {
