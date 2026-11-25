@@ -400,6 +400,54 @@ The page hides Rename, Remove, upload, per-piece Move and Move to trash for them
 (`isReadOnlyFolder`, `isReadOnlyPiece`); the hub's 409 is the real guard. A tall Ente
 piece rotates and can be shown, unlike a tall art piece.
 
+**Frame crop on the page** (design: `docs/superpowers/specs/2026-11-25-frame-crop-design.md`; hub
+half in "Frame crop (hub)"). The pure rules are `crop-model.js` (tests in
+`tests/js/crop-model.test.js`, `crop-index.test.js`); `crop-overlay.js`, `crop-editor.js` and
+`rooms.js` only draw and wire.
+
+- **Overlay and labels.** The viewer shows the whole picture (contain) inside `#viewer-frame`, a wrapper
+  exactly as big as the picture, so the effective box (`crop`, else `auto_crop`) is placed in percent of it,
+  with an outline, a light dim outside it and a label from `cropLabel`: "Your crop" for a saved crop,
+  "Automatic", "Automatic · not on the frames until cropped" for an uncropped non-Ente portrait (the
+  rotation rule still leaves it out), and plain "Automatic" for an Ente portrait (it rotates anyway). No
+  box yet (the thumbnail pass has not reached the piece) draws no overlay. The frame history viewer
+  gets the same overlay and buttons (`historyViewerItem` carries `crop`, `autoCrop` and `landscape`).
+- **Rendered size, not index size.** Everything that needs the picture's shape (the 5:3 height, the
+  minimum, the editor's clamps) takes the loaded `<img>`'s `naturalWidth` and `naturalHeight`, never the
+  index `width` and `height`, which are as stored and can differ from the upright grid for an EXIF-tagged
+  SMB file. Fractions are always of the upright picture.
+- **Editor.** Edit crop opens `crop-editor.js` on the same picture (the picture never moves; the preview and
+  buttons appear under it). A 5:3 box with four corner handles: drag inside to move, drag a corner to
+  resize with the opposite corner fixed and the aspect locked (the larger of the two pointer pulls wins),
+  always inside the picture and never under the minimum. Pointer events with `touch-action: none` on the
+  frame, so a drag never scrolls the page or swipes the gallery; handles sit inside the corners with a 44 px
+  target (less on a very small box so it can still be moved). Keys: arrows move 1 percent, Shift with arrows
+  resizes about the centre, Enter saves, Escape cancels; the gallery's arrow keys and swipe are off while it
+  is open. Save, Cancel and Automatic (removes the saved crop, hidden when there is none) post
+  `POST /api/art/crop` through `postApi` (`cropRequest`); a refusal shows the service's own sentence with the
+  button reading Retry; a save reads the library again so the grid, overlay and label follow at once and
+  toasts "Saved". Ente pieces can be cropped (the crop is a note, never a write to Ente).
+- **Minimum size** is the hub's rule (`MIN_BOX_PIXELS` 400 of the upright width, or the largest box that fits
+  a small picture). `tests/js/crop-model.test.js` and `tests/python/test_framecrop.py` carry the same example
+  table; change both together.
+- **Preview.** Drawn in the page, no new endpoint: the box region is drawn onto a canvas at 800x480 and
+  Floyd-Steinberg dithered to the six panel colors (`crop-preview.js`, pure, tests in
+  `tests/js/crop-preview.test.js`). The colors are copied from nightstand's `palette.py` `PANEL` (never
+  imported); retune them there and here together. While a handle is dragged it runs at 200x120 in one
+  `requestAnimationFrame`, and the full 800x480 (about 20 ms) runs 160 ms after the last move.
+- **Thumbnails.** A grid tile shows the frame's view: the effective box applied by CSS background size and
+  position over the existing 320 px thumbnail (`tileCropStyle`), in a 5:3 tile; a saved crop adds a Cropped
+  badge. A piece with neither box, or no thumbnail yet, shows the whole thumbnail as before.
+  `libraryTileSignature` includes `crop` and `autoCrop`, so a crop change replaces only that tile. Limit: a
+  tight crop of a 320 px thumbnail is upscaled in the tile (a box a quarter of the width is soft on a 2x
+  screen); a hub-side cropped thumbnail would fix it if it ever matters.
+- **Buttons and picker.** The viewer's frame buttons read "Show now on <frame>" (rotation carries on) and
+  "Pin to <frame>" (stays until you unpin it), each with its one-line hint, naming the chosen frame
+  (`frameButtons`). Beside them a Frame select (two or more frames, `framePickerView`) reads and writes
+  `state.selectedFrame` through `selectFrame`, the same selection the Frame tab uses, so changing either
+  changes both. A tall piece with a saved crop is offered Show now and Pin (`viewerState` unblocks it on
+  `crop`, matching the hub's `landscape`).
+
 ## Polling sleeps while hidden, lists patch in place
 
 Every polling interval in `rooms.js` registers with `page-timers.js`; the
@@ -793,6 +841,10 @@ Switching screens crossfades for 150 ms (`SCREEN_FADE_MS`, `screenFade` in `pane
 `pointer-events: none`, so a tap lands on the new screen at once and nothing waits for the fade. Reduced motion
 turns it off. Phones get none of it. The `panel` role also installs `grim`, so a change can be checked on the
 real screen with a Wayland screenshot.
+
+The panel's gallery viewer draws the same crop overlay and label (`crop-overlay.js`, read-only) but has no
+Edit crop button and never loads `crop-editor.js` or `crop-preview.js` (`tests/js/rooms-crop-wiring.test.js`);
+cropping is for phones and desktops. Its label text is 20 px.
 
 Garage on the panel: the fill is how closed the door is, from `position` when it is a number (also while
 stopped), else full when closed, empty when open, and a fixed 15 s sweep while opening or closing
