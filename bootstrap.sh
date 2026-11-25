@@ -171,6 +171,24 @@ start_self_update() {
     return "${timer_rc}"
 }
 
+# True when both stdin and stdout are a terminal, so an editor can run.
+has_terminal() {
+    [ -t 0 ] && [ -t 1 ]
+}
+
+# Open the new local.yml in an editor. With no terminal (an ssh command without
+# -t, or automation) an editor would hang or fail, and applying the example's
+# placeholder values would be wrong, so stop and say what to do instead.
+edit_local_file() {
+    local file="$1"
+    if ! has_terminal; then
+        echo "==> No terminal to edit ${file} in." >&2
+        echo "    Edit it by hand, then run bootstrap.sh again." >&2
+        return 1
+    fi
+    "${EDITOR:-vi}" "${file}"
+}
+
 main() {
     parse_args "$@"
 
@@ -206,7 +224,7 @@ main() {
     if [ ! -f "${local_file}" ]; then
         echo "==> Creating ${local_file} from the example; opening it for editing"
         install -m 0600 -o root -g root "${repo_dir}/local.example.yml" "${local_file}"
-        "${EDITOR:-vi}" "${local_file}"
+        edit_local_file "${local_file}" || exit 1
     else
         chmod 0600 "${local_file}"
     fi

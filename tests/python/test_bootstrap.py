@@ -191,3 +191,39 @@ def test_set_hostname_is_idempotent_in_etc_hosts(tmp_path: Path):
     assert mapped == ["127.0.1.1\thouse"], lines
     # The loopback line is untouched.
     assert "127.0.0.1\tlocalhost" in lines
+
+
+def _editor_stub(tmp_path: Path) -> tuple[dict, Path]:
+    """An EDITOR that records the file it was asked to open."""
+    marker = tmp_path / "editor.opened"
+    editor = tmp_path / "fake-editor"
+    editor.write_text(f'#!/usr/bin/env bash\necho "$1" > "{marker}"\n')
+    editor.chmod(0o755)
+    return {"PATH": "/usr/bin:/bin", "EDITOR": str(editor)}, marker
+
+
+def test_edit_local_file_without_a_terminal_stops_instead_of_opening_the_editor(
+    tmp_path: Path,
+):
+    env, marker = _editor_stub(tmp_path)
+    local_file = tmp_path / "local.yml"
+    local_file.write_text("example: true\n")
+    result = _run(f'edit_local_file "{local_file}"', env=env)
+
+    assert result.returncode != 0, result.stdout
+    assert not marker.exists(), "the editor ran with no terminal attached"
+    assert str(local_file) in result.stderr
+    assert "run bootstrap.sh again" in result.stderr
+
+
+def test_edit_local_file_with_a_terminal_opens_the_editor(tmp_path: Path):
+    env, marker = _editor_stub(tmp_path)
+    local_file = tmp_path / "local.yml"
+    local_file.write_text("example: true\n")
+    # Tests have no terminal, so stand in for one.
+    result = _run(
+        f'has_terminal() {{ return 0; }}\nedit_local_file "{local_file}"', env=env
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert marker.read_text().strip() == str(local_file)
