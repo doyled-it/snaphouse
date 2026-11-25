@@ -4,12 +4,14 @@
 // once per animation frame, using a track width cached by a ResizeObserver so no
 // frame reads layout. Haptics fire only from pointer and key handlers.
 
-import { createVolumeController, valueFromPointer, keyStep } from "./volume-controller.js";
+import { createVolumeController } from "./volume-controller.js";
+import { HORIZONTAL, VERTICAL, keyStepFor, pointerValue } from "./slider-model.js";
 
 const THUMB_PX = 26;
 
 export function createVolumeSlider({
   label,
+  orientation = HORIZONTAL,
   onSend,
   onRender,
   haptics,
@@ -38,21 +40,30 @@ export function createVolumeSlider({
 
   let value = 0;
   let enabled = true;
-  let trackWidth = 0;
-  let trackLeft = 0;
+  let trackSize = 0; // width when horizontal, height when vertical
+  let trackRect = { left: 0, top: 0, width: 0, height: 0 };
   let captured = null;
   let frameQueued = false;
 
   function paint() {
     frameQueued = false;
-    if (!(trackWidth > 0) && typeof el.offsetWidth === "number") trackWidth = el.offsetWidth;
+    const vertical = mode === VERTICAL;
+    if (!(trackSize > 0)) {
+      const measured = vertical ? el.offsetHeight : el.offsetWidth;
+      if (typeof measured === "number") trackSize = measured;
+    }
     // clip-path, not scaleX: a scaled fill is rasterized once and stretched,
-    // which showed as blocky stripes on Android while dragging.
-    fill.style.clipPath = `inset(0px ${100 - value}% 0px 0px round 8px)`;
-    const travel = Math.max(0, trackWidth - THUMB_PX);
+    // which showed as blocky stripes on Android while dragging. A vertical
+    // fader fills from the bottom.
+    fill.style.clipPath = vertical
+      ? `inset(${100 - value}% 0px 0px 0px round 8px)`
+      : `inset(0px ${100 - value}% 0px 0px round 8px)`;
+    const travel = Math.max(0, trackSize - THUMB_PX);
     // `translate`, not `transform`: CSS applies the held `scale: 1.2` before
-    // `transform`, which would stretch a translateX and overshoot the track.
-    thumb.style.translate = `${(value / 100) * travel}px 0px`;
+    // `transform`, which would stretch a translate and overshoot the track.
+    // The vertical thumb rests at the bottom and travels up (negative y).
+    const offset = (value / 100) * travel;
+    thumb.style.translate = vertical ? `0px ${offset === 0 ? 0 : -offset}px` : `${offset}px 0px`;
     if (onRender) onRender(value);
   }
 
@@ -67,9 +78,10 @@ export function createVolumeSlider({
 
   if (typeof globalThis.ResizeObserver === "function") {
     new globalThis.ResizeObserver((entries) => {
-      const w = entries[0] && entries[0].contentRect ? entries[0].contentRect.width : 0;
-      if (w > 0 && w !== trackWidth) {
-        trackWidth = w;
+      const box = entries[0] && entries[0].contentRect ? entries[0].contentRect : null;
+      const w = box ? (mode === VERTICAL ? box.height : box.width) : 0;
+      if (w > 0 && w !== trackSize) {
+        trackSize = w;
         render(value);
       }
     }).observe(el);
@@ -82,8 +94,8 @@ export function createVolumeSlider({
     if (haptics) haptics.volume(prev, next);
   }
 
-  function pointerValue(e) {
-    return valueFromPointer(e.clientX, trackLeft, trackWidth);
+  function eventValue(e) {
+    return pointerValue(mode, { x: e.clientX, y: e.clientY }, trackRect);
   }
 
   function release() {
@@ -96,8 +108,8 @@ export function createVolumeSlider({
   el.addEventListener("pointerdown", (e) => {
     if (!enabled || captured !== null) return;
     const rect = el.getBoundingClientRect();
-    trackLeft = rect.left;
-    trackWidth = rect.width;
+    trackRect = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    trackSize = mode === VERTICAL ? rect.height : rect.width;
     captured = e.pointerId;
     try {
       el.setPointerCapture(e.pointerId);
@@ -113,14 +125,14 @@ export function createVolumeSlider({
       // Focus is a convenience so arrow keys work right after a tap.
     }
     el.classList.add("drag");
-    const v = pointerValue(e);
+    const v = eventValue(e);
     change(v);
     controller.begin(v);
     if (e.preventDefault) e.preventDefault();
   });
   el.addEventListener("pointermove", (e) => {
     if (captured === null || e.pointerId !== captured) return;
-    const v = pointerValue(e);
+    const v = eventValue(e);
     change(v);
     controller.move(v);
   });
@@ -141,7 +153,7 @@ export function createVolumeSlider({
     if (e.key === "Home") next = 0;
     else if (e.key === "End") next = 100;
     else {
-      const step = keyStep(e.key);
+      const step = keyStepFor(e.key, mode);
       if (step === null) return;
       next = Math.max(0, Math.min(100, value + step));
     }
@@ -151,10 +163,29 @@ export function createVolumeSlider({
     controller.end();
   });
 
+  function applyMode() {
+    if (mode === VERTICAL) el.setAttribute("aria-orientation", "vertical");
+    else el.removeAttribute("aria-orientation");
+    el.setAttribute("data-orientation", mode);
+  }
+
+  let mode = orientation === VERTICAL ? VERTICAL : HORIZONTAL;
+  applyMode();
   render(0);
 
   return {
     el,
+    // Switch between the phone's horizontal track and the desktop's vertical
+    // fader on a live slider. The cached size is dropped and re-measured.
+    setOrientation(next) {
+      const to = next === VERTICAL ? VERTICAL : HORIZONTAL;
+      if (to === mode) return;
+      release();
+      mode = to;
+      trackSize = 0;
+      applyMode();
+      render(value);
+    },
     set(percent) {
       render(percent);
     },
