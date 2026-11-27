@@ -173,8 +173,10 @@ def test_verify_check_asserts_pairable_and_discoverable_off_on_every_adapter():
     text = VERIFY.read_text()
     # The check enumerates all controllers, not only the two named in local.yml.
     assert "bluetoothctl" in text and "list" in text
-    assert "Discoverable: yes" in text
-    assert "Pairable: yes" in text
+    # The state strings live in btsettle, which the check uses (issue #216).
+    settle = (REPO / "lib/snaphouse/btsettle.py").read_text()
+    assert "Discoverable: yes" in settle
+    assert "Pairable: yes" in settle
 
 
 def test_lockdown_strips_ansi_before_parsing_the_controller_list():

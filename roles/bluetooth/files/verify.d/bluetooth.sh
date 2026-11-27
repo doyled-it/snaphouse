@@ -26,6 +26,7 @@ sys.path.insert(0, "/opt/snaphouse/lib")
 from ruamel.yaml import YAML
 
 from snaphouse.adapters import AdapterNotFound, resolve_adapter
+from snaphouse.btsettle import settle
 
 # bluetoothctl colours its output; strip the escape codes before matching so a
 # coloured "Controller" header or state field is still recognised.
@@ -52,25 +53,32 @@ for key in ("bt_receive_adapter", "bt_send_adapter"):
 listed = subprocess.run(
     ["bluetoothctl", "list"], capture_output=True, text=True, check=False
 ).stdout
+addrs = []
 for line in listed.splitlines():
     parts = _ANSI.sub("", line).split()
-    if len(parts) < 2 or parts[0] != "Controller":
-        continue
-    addr = parts[1]
-    try:
-        label = resolve_adapter(addr)
-    except AdapterNotFound:
-        label = "an adapter"
-    shown = _ANSI.sub(
+    if len(parts) >= 2 and parts[0] == "Controller":
+        addrs.append(parts[1])
+
+
+def show(addr):
+    return _ANSI.sub(
         "",
         subprocess.run(
             ["bluetoothctl", "show", addr], capture_output=True, text=True, check=False
         ).stdout,
     )
-    if "Discoverable: yes" in shown:
-        failures.append(f"adapter {label} is discoverable")
-    if "Pairable: yes" in shown:
-        failures.append(f"adapter {label} is pairable")
+
+
+# A self-update rewrites main.conf and the lockdown service closes the adapters a
+# few seconds later (issue #216), so an open adapter is re-read for a bounded
+# window and fails only if it is still open at the end.
+for addr, flags in settle(addrs, show).items():
+    try:
+        label = resolve_adapter(addr)
+    except AdapterNotFound:
+        label = "an adapter"
+    for flag in sorted(flags):
+        failures.append(f"adapter {label} is {flag}")
 
 for line in failures:
     print(line, file=sys.stderr)
